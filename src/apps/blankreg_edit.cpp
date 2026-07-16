@@ -1,7 +1,7 @@
 extern void blankUI_draw_topbar(char* app_title);
 // ... blankUI table components
 
-void launch_blankreg_edit(void) {
+extern "C" void launch_blankreg_edit(void) {
     blankUI_draw_topbar("blankReg Editor");
     
     // 1. Render left sidebar with a hierarchical tree view of registry keys

@@ -6,7 +6,7 @@ extern void blankUI_animate_fade_in(void* component);
 // Assume BDRM exposes a way to draw an image/bitmap
 extern void bdrm_draw_bitmap(int x, int y, char* image_data);
 
-void launch_loading_screen(void) {
+extern "C" void launch_loading_screen(void) {
     // 1. Clear screen to solid black
     
     // 2. Fade in the BlankOS Logo in the center of the screen

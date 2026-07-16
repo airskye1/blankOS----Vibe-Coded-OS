@@ -7,7 +7,7 @@ extern void blankUI_draw_progress_bar(int x, int y, int width, float percentage)
 // File I/O stub
 extern char* read_file_from_disk(char* path);
 
-void launch_sysinfo(void) {
+extern "C" void launch_sysinfo(void) {
     blankUI_draw_window(600, 600, "System Information");
     
     // Parse version.json dynamically

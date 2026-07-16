@@ -16,7 +16,7 @@ typedef struct {
     char mac_address[18];
 } PeerDevice;
 
-void launch_blankdrop(void) {
+extern "C" void launch_blankdrop(void) {
     blankUI_draw_window(800, 600, "blankDrop");
     
     // 1. Enable BLE and Wi-Fi Direct

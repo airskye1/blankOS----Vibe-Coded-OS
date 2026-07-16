@@ -6,7 +6,7 @@ extern void blankReg_get_string(char* key, char* default_val);
 extern void sha256_hash(char* input_string, uint8_t* output_hash);
 extern int secure_compare(uint8_t* hash1, uint8_t* hash2);
 
-void launch_login_screen(void) {
+extern "C" void launch_login_screen(void) {
     // 1. Draw login background (maybe user's wallpaper with a heavy blur)
     
     // 2. Display the secure login modal

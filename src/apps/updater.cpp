@@ -11,7 +11,7 @@ extern char* http_get(char* url);
 static bool is_updating = false;
 static float update_progress = 0.0f;
 
-void launch_updater(void) {
+extern "C" void launch_updater(void) {
     blankUI_draw_topbar("BlankOS Updater");
     
     // Read the update_url from version.json in a real system

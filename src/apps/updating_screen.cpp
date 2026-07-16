@@ -3,7 +3,7 @@
 extern void blankUI_draw_progress_bar(int x, int y, int width, float percentage);
 extern void blankUI_animate_fade_in(void* component);
 
-void launch_updating_screen(float progress) {
+extern "C" void launch_updating_screen(float progress) {
     // 1. Clear screen to solid black or a deep blur
     // 2. Render text: "Installing BlankOS Updates. Please keep your computer on."
     // 3. Render a glowing blankUI progress bar

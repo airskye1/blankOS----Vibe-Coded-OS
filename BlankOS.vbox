@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<VirtualBox xmlns="http://www.virtualbox.org/" version="1.19-windows">
+  <Machine uuid="{00000000-0000-0000-0000-000000000000}" name="BlankOS" OSType="Other_64" snapshotFolder="Snapshots" lastStateChange="2026-07-16T00:00:00Z">
+    <Hardware>
+      <CPU count="2"/>
+      <Memory RAMSize="2048"/>
+      <Firmware type="EFI"/>
+      <Display VRAMSize="128"/>
+      <StorageControllers>
+        <StorageController name="SATA" type="AHCI" PortCount="1" useHostIOCache="false" Bootable="true">
+          <AttachedDevice type="DVD" hotpluggable="false" port="0" device="0">
+            <Image uuid="{11111111-1111-1111-1111-111111111111}"/>
+          </AttachedDevice>
+        </StorageController>
+      </StorageControllers>
+    </Hardware>
+  </Machine>
+</VirtualBox>

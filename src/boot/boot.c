@@ -1,16 +1,16 @@
 #include <efi.h>
 #include <efilib.h>
 
-extern void kernel_entry(EFI_SYSTEM_TABLE *SystemTable);
+extern void EFIAPI kernel_entry(EFI_SYSTEM_TABLE *SystemTable);
 
-EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     InitializeLib(ImageHandle, SystemTable);
     
     // Reset the console to prevent weird VirtualBox artifacts
     SystemTable->ConOut->Reset(SystemTable->ConOut, FALSE);
     
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"========================================\r\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"  Welcome to BlankOS v1.2.0 Bootloader  \r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"  Welcome to BlankOS v1.2.3 Bootloader  \r\n");
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"========================================\r\n\r\n");
     
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OK ] UEFI Firmware Detected.\r\n");

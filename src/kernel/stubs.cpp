@@ -1,5 +1,4 @@
 #include <stdint.h>
-#include <stdbool.h>
 #include <stddef.h>
 
 // This file contains weak linkage stubs for all external functions to guarantee compilation

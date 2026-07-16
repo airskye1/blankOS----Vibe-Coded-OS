@@ -1,7 +1,7 @@
 #include <efi.h>
 #include <efilib.h>
 
-void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable) {
+extern "C" void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable) {
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n--- BlankOS Out Of Box Experience (OOBE) ---\r\n\r\n");
     
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OOBE ] Probing System Hardware (Universal Auto-Config)...\r\n");

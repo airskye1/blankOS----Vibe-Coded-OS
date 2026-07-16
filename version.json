@@ -2,10 +2,11 @@
   "os_name": "BlankOS",
   "version_major": 1,
   "version_minor": 2,
-  "version_patch": 0,
+  "version_patch": 3,
   "build_date": "2026-07-16",
   "update_url": "https://github.com/airskye1/blankOS----Vibe-Coded-OS",
   "update_logs": [
+    "1.2.3: Critical Architecture Overhaul. Fixed deep CPU ABI mismatch (RCX/RDI), C++ name mangling, and blankUI struct signature mismatches. Added Hybrid Dual-Boot (Legacy BIOS + UEFI) with custom MBR stub. Added VirtualBox and VMware auto-configuring templates.",
     "1.2.0: Major Architectural Teardown. Rewrote the entire OS in native C++ and injected a pure Assembly Kernel Core. Added native Zero-Key Auth to App Store and hardware-accelerated ASCII video decoding to blankBrowser.",
     "1.1.4: Completely overhauled linter.ps1 with advanced OS dev guards to catch ABI mismatches, Makefile omissions, and strict UEFI text encoding rules.",
     "1.1.3: Bootloader fix. + version change",

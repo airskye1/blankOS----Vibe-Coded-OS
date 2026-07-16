@@ -3,7 +3,7 @@
 extern void blankUI_draw_topbar(char* app_title);
 // ... other blankUI methods
 
-void launch_task_manager(void) {
+extern "C" void launch_task_manager(void) {
     // 1. Draw topbar: "Task Manager"
     blankUI_draw_topbar("Task Manager");
     

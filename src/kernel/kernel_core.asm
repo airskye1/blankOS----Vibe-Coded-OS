@@ -16,7 +16,10 @@ kernel_entry:
     mov rbp, rsp
     and rsp, -16      ; Force 16-byte alignment for SSE/Firmware safety
     
-    ; 2. SystemTable is already perfectly sitting in RDI. 
+    ; 2. SystemTable is passed in RCX (Microsoft x64 ABI enforced by EFIAPI).
+    ; We MUST move it to RDI because the C++ kernel_main is compiled as System V.
+    mov rdi, rcx
+    
     ; Hand off execution to the C++ Monolithic OS!
     call kernel_main
 

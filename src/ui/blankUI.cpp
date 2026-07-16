@@ -1,6 +1,7 @@
 #include <stdint.h>
-#include <stdbool.h>
 #include <stddef.h>
+
+extern "C" {
 
 // blankUI state
 static bool reduce_motion_enabled = false;
@@ -28,14 +29,7 @@ void blankUI_animate_slide_up(void* component) {
 
 // --- blankUI Component Library ---
 
-typedef struct {
-    int x, y, width, height;
-    uint32_t background_color;
-    uint32_t text_color;
-    char* text;
-} blankUI_Button;
-
-void blankUI_draw_button(blankUI_Button* btn) {
+void blankUI_draw_button(int x, int y, int width, int height, char* text) {
     // 1. Draw the button surface
     // 2. Add subtle drop shadow
     // 3. Render the text centered
@@ -64,11 +58,11 @@ void blankUI_draw_dropdown(int x, int y, char** items, int item_count) {
     // 2. Draw list items
 }
 
-void blankUI_draw_slider(int x, int y, int width, int value, int min, int max) {
+void blankUI_draw_slider(int x, int y, int width, float value, char* label) {
     // Render a horizontal track and a draggable thumb representing value
 }
 
-void blankUI_draw_toggle_switch(int x, int y, bool is_on) {
+void blankUI_draw_toggle_switch(int x, int y, bool is_on, char* label) {
     // Render a pill-shaped track and circular thumb
     // Animate the thumb sliding left/right on toggle
 }
@@ -119,3 +113,5 @@ void blankUI_draw_toast(char* title, char* message) {
     // 2. Render the title (bold) and message
     // 3. Ensure it has a high Z-index so it sits above application surfaces
 }
+
+} // extern "C"

@@ -1,6 +1,6 @@
 extern void blankUI_draw_topbar(char* app_title);
 
-void launch_blankpad(void) {
+extern "C" void launch_blankpad(void) {
     blankUI_draw_topbar("blankPad");
     
     // 1. Render a large multi-line text input component using blankUI

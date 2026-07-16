@@ -7,7 +7,7 @@ extern void blankUI_animate_slide_up(void* component);
 
 static int current_step = 0;
 
-void launch_introduction_walkthrough(void) {
+extern "C" void launch_introduction_walkthrough(void) {
     blankUI_animate_slide_up(NULL);
     
     switch(current_step) {

@@ -2,7 +2,7 @@
 
 extern void blankUI_draw_topbar(char* app_title);
 
-void launch_terminal(void) {
+extern "C" void launch_terminal(void) {
     // 1. Draw the terminal application surface
     blankUI_draw_topbar("Command Prompt");
     

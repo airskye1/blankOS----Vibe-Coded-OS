@@ -10,7 +10,7 @@ extern float get_master_volume(void);
 // BDRM stub for brightness (adjusts screen backlight via ACPI/GPU)
 extern void bdrm_set_brightness(float brightness);
 
-void launch_settings(void) {
+extern "C" void launch_settings(void) {
     blankUI_draw_topbar("Settings");
     
     char* tabs[] = {"Network & Bluetooth", "Sound & Display", "Appearance", "Accounts", "Notifications"};

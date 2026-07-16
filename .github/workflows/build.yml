@@ -61,8 +61,8 @@ jobs:
             ## Installation Instructions
             1. Download the `blankOS.iso` file attached below.
             2. Load the ISO into a virtual machine like VirtualBox, VMware, or QEMU.
-            3. **CRITICAL**: You MUST enable **EFI / UEFI** booting in your VM settings.
-            4. Boot up the machine. The BlankOS Setup Application will guide you!
+            3. *Optional*: Use the included `BlankOS.vbox` or `BlankOS.vmx` templates from the repo to auto-configure your VM.
+            4. Boot up the machine. The BlankOS Setup Application will guide you! (Supports both UEFI and Legacy BIOS)
             
             *Minimum Requirements: 2GB RAM, 20GB Storage, 64-bit CPU.*
           files: blankOS.iso
