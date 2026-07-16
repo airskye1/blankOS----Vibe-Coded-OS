@@ -3,7 +3,7 @@ CXX = g++
 LD = ld
 OBJCOPY = objcopy
 
-CFLAGS = -ffreestanding -fno-stack-protector -fpic -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -I /usr/include/efi -I /usr/include/efi/x86_64
+CFLAGS = -ffreestanding -fno-stack-protector -fpic -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -DGNU_EFI_USE_MS_ABI -I /usr/include/efi -I /usr/include/efi/x86_64
 CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti -fpermissive
 LDFLAGS = -nostdlib -znocombreloc -shared -Bsymbolic -L /usr/lib -T /usr/lib/elf_x86_64_efi.lds
 LIBS = -lefi -lgnuefi
