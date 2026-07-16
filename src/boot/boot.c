@@ -1,6 +1,7 @@
+#include <stdint.h>
+#include <stddef.h>
 #include <efi.h>
 #include <efilib.h>
-#include <efigop.h>
 
 /*
  * Framebuffer info struct passed from bootloader to kernel_main.
@@ -34,7 +35,7 @@ EFI_STATUS __attribute__((sysv_abi)) efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
     EFI_GUID gopGuid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
 
-    /* Immediate sign-of-life — if this prints, the ABI is correct */
+    /* Immediate sign-of-life â€” if this prints, the ABI is correct */
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"BlankOS UEFI Hybrid Boot Loader v1.2.6\r\n");
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"========================================\r\n");
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"  Welcome to BlankOS v1.2.6 Bootloader  \r\n");
@@ -60,7 +61,7 @@ EFI_STATUS __attribute__((sysv_abi)) efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM
     /* Call kernel_main with the SystemTable and our GOP Framebuffer details */
     kernel_main(SystemTable, &fb_info);
 
-    /* Fallback halt — should never reach here */
+    /* Fallback halt â€” should never reach here */
     while(1) { __asm__ volatile("hlt"); }
     return EFI_SUCCESS;
 }
