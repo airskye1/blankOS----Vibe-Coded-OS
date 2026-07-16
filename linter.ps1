@@ -4,7 +4,7 @@ param(
 )
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host " Running Advanced Vibe-Coded Auto-Linter v1.2.6" -ForegroundColor Cyan
+Write-Host " Running Advanced Vibe-Coded Auto-Linter v1.2.8" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 $errorFound = $false
 

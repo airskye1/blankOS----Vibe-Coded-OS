@@ -1,42 +1,45 @@
-#include <stdbool.h>
+#include <stdint.h>
+#include <efi.h>
+#include <efilib.h>
 
-extern void blankUI_draw_topbar(char* app_title);
-extern void blankUI_draw_button(int x, int y, int width, int height, char* text);
-extern void blankUI_draw_progress_bar(int x, int y, int width, float percentage);
-extern void os_send_notification(char* title, char* message);
-
-// Stub for networking HTTP GET
-extern char* http_get(char* url);
-
-static bool is_updating = false;
-static float update_progress = 0.0f;
-
-extern "C" void launch_updater(void) {
-    blankUI_draw_topbar("BlankOS Updater");
+extern "C" {
+    extern void swap_buffers();
+    extern void draw_macos_wallpaper();
+    extern void blankUI_draw_menubar();
+    extern void blankUI_draw_dock();
+    extern void blankUI_draw_window(int width, int height, char* title);
+    extern void blankUI_draw_text_color(int x, int y, char* text, uint32_t color);
+    extern void blankUI_draw_button(int x, int y, int width, int height, char* text);
+    extern void blankUI_draw_progress_bar(int x, int y, int width, float percentage);
     
-    // Read the update_url from version.json in a real system
-    char* update_url = "https://github.com/airskye1/blankOS----Vibe-Coded-OS";
-    
-    if (!is_updating) {
-        // Render a button to check for updates
-        // blankUI_draw_button(50, 100, 200, 40, "Check for Updates");
+    void launch_updater(EFI_SYSTEM_TABLE *SystemTable) {
+        int win_w = 480;
+        int win_h = 240;
+        int win_x = (1024 - win_w) / 2;
+        int win_y = (768 - win_h) / 2;
         
-        // If clicked, we would fetch the remote version.json
-        // char* remote_version = http_get(update_url);
-        
-        // If newer version found:
-        // is_updating = true;
-        // os_send_notification("Update Available", "Downloading new .bloe binaries...");
-    } else {
-        // Render progress bar
-        blankUI_draw_progress_bar(50, 100, 400, update_progress);
-        
-        // Update logic simulates downloading the binaries from the GitHub repo
-        update_progress += 0.01f;
-        
-        if (update_progress >= 1.0f) {
-            is_updating = false;
-            os_send_notification("Update Complete", "Please restart BlankOS to apply changes.");
+        for (int i = 0; i <= 100; i += 2) {
+            draw_macos_wallpaper();
+            blankUI_draw_menubar();
+            blankUI_draw_dock();
+            
+            blankUI_draw_window(win_w, win_h, (char*)"Software Update");
+            blankUI_draw_text_color(win_x + 40, win_y + 80, (char*)"Downloading macOS-Inspired Update...", 0x000000);
+            blankUI_draw_progress_bar(win_x + 40, win_y + 120, 400, (float)i / 100.0f);
+            
+            swap_buffers();
+            for (volatile int d = 0; d < 1000000; d++);
         }
+        
+        draw_macos_wallpaper();
+        blankUI_draw_menubar();
+        blankUI_draw_dock();
+        blankUI_draw_window(win_w, win_h, (char*)"Software Update");
+        blankUI_draw_text_color(win_x + 40, win_y + 80, (char*)"BlankOS is up to date.", 0x000000);
+        blankUI_draw_text_color(win_x + 40, win_y + 110, (char*)"Version 1.2.8 is installed.", 0x666666);
+        blankUI_draw_button(win_x + 190, win_y + 170, 100, 32, (char*)"Done");
+        swap_buffers();
+        
+        for (volatile int d = 0; d < 80000000; d++);
     }
 }

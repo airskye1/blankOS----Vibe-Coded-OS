@@ -4,7 +4,6 @@
 
 extern "C" {
 
-// Framebuffer details from compositor
 extern volatile uint32_t* framebuffer;
 extern int screen_width;
 extern int screen_height;
@@ -12,12 +11,13 @@ extern int pixels_per_scanline;
 
 extern void put_pixel_alpha(int x, int y, uint32_t color, uint8_t alpha);
 extern void draw_rect_filled(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
+extern void draw_rect_rounded(int x, int y, int w, int h, int r, uint32_t color, uint8_t alpha);
 extern void draw_circle_filled(int cx, int cy, int r, uint32_t color);
+extern void draw_frosted_glass_rounded(int x, int y, int w, int h, int r, uint32_t tint_color, uint8_t tint_alpha);
 
-// blankUI state
 static bool reduce_motion_enabled = false;
 
-// Basic 8x8 bitmap font (subset for GUI text, sequentially defined from ASCII 32 to 126)
+// Basic 8x8 bitmap font (subset for GUI text)
 static const uint8_t font8x8_basic[95][8] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, // ' ' (32)
     {0x18,0x18,0x18,0x18,0x18,0x00,0x18,0x00}, // '!' (33)
@@ -116,7 +116,6 @@ static const uint8_t font8x8_basic[95][8] = {
     {0x76,0xDC,0x00,0x00,0x00,0x00,0x00,0x00}  // '~' (126)
 };
 
-// Draw a single character using the 8x8 font
 void blankUI_draw_char(int x, int y, char c, uint32_t color) {
     if (c < 32 || c > 126) return;
     int idx = c - 32;
@@ -130,18 +129,16 @@ void blankUI_draw_char(int x, int y, char c, uint32_t color) {
     }
 }
 
-// Draw a string of text
 void blankUI_draw_text(int x, int y, char* text) {
     if (!text) return;
     int cur_x = x;
     while (*text) {
-        blankUI_draw_char(cur_x, y, *text, 0xFFFFFF); // Draw white text
+        blankUI_draw_char(cur_x, y, *text, 0x000000); // Default to black text for light theme
         cur_x += 8;
         text++;
     }
 }
 
-// Draw text with a custom color
 void blankUI_draw_text_color(int x, int y, char* text, uint32_t color) {
     if (!text) return;
     int cur_x = x;
@@ -152,191 +149,151 @@ void blankUI_draw_text_color(int x, int y, char* text, uint32_t color) {
     }
 }
 
-// Initialize the toolkit
 void init_blankUI_toolkit(void) {
-    // Load default font maps and UI tokens
     reduce_motion_enabled = false;
 }
 
-// Settings
 void blankUI_set_reduce_motion(bool enabled) {
     reduce_motion_enabled = enabled;
 }
 
-// Animation helpers
 void blankUI_animate_fade_in(void* component) {}
 void blankUI_animate_slide_up(void* component) {}
 
-// --- blankUI Component Library ---
-
 void blankUI_draw_button(int x, int y, int width, int height, char* text) {
-    // Draw button background with indigo base and rounded appearance
-    draw_rect_filled(x, y, width, height, 0x4f46e5, 255);
-    draw_rect_filled(x, y, width, 1, 0xffffff, 60); // top highlight
+    // Premium dark rounded button
+    draw_rect_rounded(x, y, width, height, 16, 0x18171c, 255);
+    draw_rect_rounded(x, y, width, 1, 16, 0xFFFFFF, 40); // Top highlight
     
-    // Draw text centered
     int text_len = 0;
     char* t = text;
     while (*t++) text_len++;
     int text_w = text_len * 8;
     int text_x = x + (width - text_w) / 2;
     int text_y = y + (height - 8) / 2;
-    blankUI_draw_text_color(text_x, text_y, text, 0xffffff);
+    blankUI_draw_text_color(text_x, text_y, text, 0xFFFFFF); // White text on dark button
 }
 
-void blankUI_draw_modal(int width, int height, char* title, char* content) {
-    // Draw semi-transparent dimming backdrop over the entire screen
-    draw_rect_filled(0, 0, screen_width, screen_height, 0x000000, 100);
-
-    // Draw modal window centered on screen
-    int x = (screen_width - width) / 2;
-    int y = (screen_height - height) / 2;
-
-    // Draw shadow
-    draw_rect_filled(x + 5, y + 5, width, height, 0x000000, 80);
-    // Draw glass modal surface
-    draw_rect_filled(x, y, width, height, 0x1e293b, 230);
-    // Draw subtle border
-    draw_rect_filled(x, y, width, 1, 0xffffff, 40);
-    draw_rect_filled(x, y, 1, height, 0xffffff, 40);
+void blankUI_draw_menubar() {
+    // Top bar, frosted glass look, light mode
+    draw_frosted_glass_rounded(0, 0, screen_width, 24, 0, 0xFFFFFF, 180);
+    draw_rect_filled(0, 24, screen_width, 1, 0x000000, 20); // subtle shadow line
     
-    // Title
-    blankUI_draw_text_color(x + 20, y + 20, title, 0x6366f1);
-    // Content
-    blankUI_draw_text(x + 20, y + 60, content);
+    // Left side items
+    blankUI_draw_text_color(16, 8, (char*)"*", 0x000000); // BlankOS logo icon
+    blankUI_draw_text_color(40, 8, (char*)"BlankOS", 0x000000);
+    blankUI_draw_text_color(120, 8, (char*)"File", 0x000000);
+    blankUI_draw_text_color(170, 8, (char*)"Edit", 0x000000);
+    blankUI_draw_text_color(220, 8, (char*)"View", 0x000000);
+    blankUI_draw_text_color(270, 8, (char*)"Window", 0x000000);
+    blankUI_draw_text_color(340, 8, (char*)"Help", 0x000000);
     
-    // Draw close button
-    blankUI_draw_button(x + width - 100, y + height - 50, 80, 30, (char*)"Close");
+    // Right side items
+    blankUI_draw_text_color(screen_width - 200, 8, (char*)"100%", 0x000000);
+    blankUI_draw_text_color(screen_width - 120, 8, (char*)"Thu 9:41 AM", 0x000000);
 }
 
-void blankUI_draw_topbar(char* app_title) {
-    // Draw topbar spanning the full width
-    draw_rect_filled(0, 0, screen_width, 24, 0x0f172a, 204); // 80% opacity dark slate
-    draw_rect_filled(0, 23, screen_width, 1, 0xffffff, 40);  // bottom divider
-
-    // App title
-    blankUI_draw_text_color(10, 8, app_title, 0x38bdf8); // Sky blue text
-
-    // System info (mock status bar on the right side)
-    char mock_status[64] = "12:00 PM | Wi-Fi [OK] | Battery 100%";
-    int text_len = 36;
-    int text_x = screen_width - (text_len * 8) - 10;
-    blankUI_draw_text_color(text_x, 8, mock_status, 0x94a3b8);
+void blankUI_draw_dock() {
+    int dock_w = 400;
+    int dock_h = 60;
+    int dock_x = (screen_width - dock_w) / 2;
+    int dock_y = screen_height - dock_h - 10;
+    
+    // Frosted glass dock
+    draw_frosted_glass_rounded(dock_x, dock_y, dock_w, dock_h, 20, 0xFFFFFF, 160);
+    draw_rect_rounded(dock_x, dock_y, dock_w, dock_h, 20, 0xFFFFFF, 80); // border
+    
+    int icon_size = 48;
+    int spacing = 12;
+    int start_x = dock_x + 16;
+    int start_y = dock_y + 6;
+    
+    // Icon 1: Finder (Blue)
+    draw_rect_rounded(start_x, start_y, icon_size, icon_size, 12, 0x007AFF, 255);
+    // Icon 2: Settings (Grey)
+    draw_rect_rounded(start_x + (icon_size+spacing)*1, start_y, icon_size, icon_size, 12, 0x8E8E93, 255);
+    // Icon 3: Browser (Light blue)
+    draw_rect_rounded(start_x + (icon_size+spacing)*2, start_y, icon_size, icon_size, 12, 0x5AC8FA, 255);
+    // Icon 4: App Store (Blue)
+    draw_rect_rounded(start_x + (icon_size+spacing)*3, start_y, icon_size, icon_size, 12, 0x007AFF, 255);
+    // Icon 5: Terminal (Black)
+    draw_rect_rounded(start_x + (icon_size+spacing)*4, start_y, icon_size, icon_size, 12, 0x1C1C1E, 255);
+    
+    // Divider
+    draw_rect_filled(start_x + (icon_size+spacing)*5, start_y + 8, 1, icon_size - 16, 0x000000, 40);
+    
+    // Icon 6: Trash (White/Grey)
+    draw_rect_rounded(start_x + (icon_size+spacing)*5 + 10, start_y, icon_size, icon_size, 12, 0xE5E5EA, 255);
 }
 
-void blankUI_draw_dropdown(int x, int y, char** items, int item_count) {
-    int w = 150;
-    int h = item_count * 20 + 10;
-    draw_rect_filled(x, y, w, h, 0x1e293b, 240);
-    for (int i = 0; i < item_count; i++) {
-        blankUI_draw_text(x + 10, y + 8 + (i * 20), items[i]);
+void blankUI_draw_cursor(int x, int y) {
+    // Draw classic pointer with black fill and white border
+    for (int i = 0; i < 15; i++) {
+        draw_rect_filled(x, y + i, i, 1, 0xFFFFFF, 255);
+    }
+    for (int i = 1; i < 14; i++) {
+        draw_rect_filled(x + 1, y + i, i - 1, 1, 0x000000, 255);
     }
 }
 
-void blankUI_draw_slider(int x, int y, int width, float value, char* label) {
-    blankUI_draw_text(x, y, label);
-    // Track
-    draw_rect_filled(x, y + 16, width, 6, 0x334155, 255);
-    // Fill
-    draw_rect_filled(x, y + 16, (int)(width * value), 6, 0x6366f1, 255);
-    // Handle
-    draw_circle_filled(x + (int)(width * value), y + 19, 6, 0xffffff);
-}
-
-void blankUI_draw_toggle_switch(int x, int y, bool is_on, char* label) {
-    blankUI_draw_text(x, y, label);
-    // Switch track
-    uint32_t track_color = is_on ? 0x22c55e : 0x475569;
-    draw_rect_filled(x + 120, y - 2, 40, 20, track_color, 255);
-    // Switch knob
-    int knob_x = is_on ? (x + 120 + 22) : (x + 120 + 2);
-    draw_circle_filled(knob_x + 8, y + 8, 8, 0xffffff);
-}
-
-void blankUI_draw_progress_bar(int x, int y, int width, float percentage) {
-    // Track
-    draw_rect_filled(x, y, width, 8, 0x1e293b, 255);
-    // Fill
-    draw_rect_filled(x, y, (int)(width * percentage), 8, 0x6366f1, 255);
-}
-
-void blankUI_draw_tabs(int x, int y, char** tab_names, int tab_count, int active_index) {
-    int cur_x = x;
-    for (int i = 0; i < tab_count; i++) {
-        uint32_t text_color = (i == active_index) ? 0x6366f1 : 0x94a3b8;
-        blankUI_draw_text_color(cur_x, y, tab_names[i], text_color);
-        
-        // Active indicator line
-        if (i == active_index) {
-            int len = 0;
-            char* t = tab_names[i];
-            while (*t++) len++;
-            draw_rect_filled(cur_x, y + 12, len * 8, 2, 0x6366f1, 255);
-        }
-        
-        int len = 0;
-        char* t = tab_names[i];
-        while (*t++) len++;
-        cur_x += (len * 8) + 20;
-    }
-}
-
-void blankUI_draw_search_bar(int x, int y, int width) {
-    // Search track
-    draw_rect_filled(x, y, width, 28, 0x1e293b, 200);
-    draw_rect_filled(x, y, width, 1, 0xffffff, 40);
-    blankUI_draw_text_color(x + 10, y + 10, (char*)"Search applications...", 0x64748b);
-}
-
-void blankUI_draw_window_controls(int window_x, int window_y, int window_width) {
-    // Red close circle
-    draw_circle_filled(window_x + 15, window_y + 15, 6, 0xef4444);
-    // Yellow minimize circle
-    draw_circle_filled(window_x + 35, window_y + 15, 6, 0xeab308);
-    // Green maximize circle
-    draw_circle_filled(window_x + 55, window_y + 15, 6, 0x22c55e);
+void blankUI_draw_window_controls(int window_x, int window_y) {
+    draw_circle_filled(window_x + 16, window_y + 16, 6, 0xFF5F56); // Red
+    draw_circle_filled(window_x + 36, window_y + 16, 6, 0xFFBD2E); // Yellow
+    draw_circle_filled(window_x + 56, window_y + 16, 6, 0x27C93F); // Green
 }
 
 void blankUI_draw_window(int width, int height, char* title) {
-    // Draw center window
     int x = (screen_width - width) / 2;
     int y = (screen_height - height) / 2;
 
-    // Drop shadow
-    draw_rect_filled(x + 10, y + 10, width, height, 0x000000, 60);
+    // Soft drop shadow
+    draw_rect_rounded(x + 10, y + 10, width, height, 12, 0x000000, 40);
 
-    // Window surface (frosted glass, semi-transparent white/gray)
-    draw_rect_filled(x, y, width, height, 0x1e293b, 204); // 80% opacity dark slate
+    // Light mode frosted window
+    draw_rect_rounded(x, y, width, height, 12, 0xFFFFFF, 240); 
+    draw_rect_rounded(x, y, width, height, 12, 0xFFFFFF, 100); // Inner border highlight
     
-    // Top header border/line
-    draw_rect_filled(x, y + 30, width, 1, 0xffffff, 40);
-    // Full border highlights
-    draw_rect_filled(x, y, width, 1, 0xffffff, 50);
-    draw_rect_filled(x, y, 1, height, 0xffffff, 50);
+    // Header divider
+    draw_rect_filled(x, y + 32, width, 1, 0x000000, 20);
 
-    // Traffic light window controls
-    blankUI_draw_window_controls(x, y, width);
+    blankUI_draw_window_controls(x, y);
 
-    // Title centered in titlebar
     int title_len = 0;
     char* t = title;
     while (*t++) title_len++;
     int title_w = title_len * 8;
     int title_x = x + (width - title_w) / 2;
-    blankUI_draw_text_color(title_x, y + 11, title, 0xe2e8f0);
+    blankUI_draw_text_color(title_x, y + 12, title, 0x333333);
 }
 
-void blankUI_draw_toast(char* title, char* message) {
-    int w = 280;
-    int h = 60;
-    int x = screen_width - w - 20;
-    int y = screen_height - h - 20;
-
-    draw_rect_filled(x, y, w, h, 0x0f172a, 240);
-    draw_rect_filled(x, y, w, 1, 0xffffff, 60);
+void blankUI_draw_modal(int width, int height, char* title, char* content) {
+    draw_rect_filled(0, 0, screen_width, screen_height, 0x000000, 80);
+    blankUI_draw_window(width, height, title);
     
-    blankUI_draw_text_color(x + 12, y + 10, title, 0x38bdf8);
-    blankUI_draw_text_color(x + 12, y + 28, message, 0xe2e8f0);
+    int x = (screen_width - width) / 2;
+    int y = (screen_height - height) / 2;
+    
+    blankUI_draw_text_color(x + 30, y + 60, content, 0x000000);
+    blankUI_draw_button(x + width - 120, y + height - 50, 100, 32, (char*)"OK");
 }
+
+void blankUI_draw_topbar(char* app_title) {
+    blankUI_draw_menubar();
+}
+
+void blankUI_draw_search_bar(int x, int y, int width) {
+    draw_rect_rounded(x, y, width, 28, 14, 0xFFFFFF, 180);
+    draw_rect_rounded(x, y, width, 28, 14, 0x000000, 40);
+    blankUI_draw_text_color(x + 10, y + 10, (char*)"Search...", 0x666666);
+}
+
+void blankUI_draw_dropdown(int x, int y, char** items, int item_count) {}
+void blankUI_draw_slider(int x, int y, int width, float value, char* label) {}
+void blankUI_draw_toggle_switch(int x, int y, bool is_on, char* label) {}
+void blankUI_draw_progress_bar(int x, int y, int width, float percentage) {
+    draw_rect_rounded(x, y, width, 8, 4, 0xDDDDDD, 255);
+    draw_rect_rounded(x, y, (int)(width * percentage), 8, 4, 0x007AFF, 255);
+}
+void blankUI_draw_tabs(int x, int y, char** tab_names, int tab_count, int active_index) {}
 
 } // extern "C"

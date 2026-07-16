@@ -16,9 +16,10 @@ extern "C" {
     extern int screen_height;
     extern int pixels_per_scanline;
     
-    extern void init_compositor(void);
+    extern void init_compositor(EFI_SYSTEM_TABLE *SystemTable);
     
     extern void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable);
+    extern void launch_updater(EFI_SYSTEM_TABLE *SystemTable);
     extern void launch_app_store(EFI_SYSTEM_TABLE *SystemTable);
     extern void launch_blankbrowser(EFI_SYSTEM_TABLE *SystemTable);
 }
@@ -42,15 +43,14 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
         pixels_per_scanline = fb_info->pixels_per_scanline;
         
         // Initialize compositor, clear screen, and load blankUI tokens
-        init_compositor();
+        init_compositor(SystemTable);
     }
     
     // Hand off to Setup Screen (OOBE)
     launch_setup_screen(SystemTable);
     
     // Launch C++ apps
-    launch_app_store(SystemTable);
-    launch_blankbrowser(SystemTable);
+    launch_updater(SystemTable);
     
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n[ SYSTEM ] System halted safely.\r\n");
     while(1) {

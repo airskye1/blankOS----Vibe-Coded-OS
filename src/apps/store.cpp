@@ -20,7 +20,7 @@ extern "C" {
 
         // Step 1: Render OOBE and background
         init_compositor();
-        blankUI_draw_topbar((char*)"BlankOS App Store v1.2.6");
+        blankUI_draw_topbar((char*)"BlankOS App Store v1.2.8");
         
         int win_w = 720;
         int win_h = 480;
@@ -50,7 +50,7 @@ extern "C" {
         
         // Re-render showing installation of discord
         init_compositor();
-        blankUI_draw_topbar((char*)"BlankOS App Store v1.2.6");
+        blankUI_draw_topbar((char*)"BlankOS App Store v1.2.8");
         blankUI_draw_window(win_w, win_h, (char*)"App Store - Zero-Key Auth Enabled");
         
         blankUI_draw_text(win_x + 40, win_y + 80, (char*)"Natively logged in as: admin");
@@ -69,7 +69,7 @@ extern "C" {
         
         // Finished installing
         init_compositor();
-        blankUI_draw_topbar((char*)"BlankOS App Store v1.2.6");
+        blankUI_draw_topbar((char*)"BlankOS App Store v1.2.8");
         blankUI_draw_window(win_w, win_h, (char*)"App Store - Zero-Key Auth Enabled");
         
         blankUI_draw_text(win_x + 40, win_y + 80, (char*)"Natively logged in as: admin");

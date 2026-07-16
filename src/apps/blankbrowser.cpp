@@ -21,7 +21,7 @@ extern "C" {
 
         // Render Browser with YouTube page simulation
         init_compositor();
-        blankUI_draw_topbar((char*)"blankBrowser v1.2.6");
+        blankUI_draw_topbar((char*)"blankBrowser v1.2.8");
         blankUI_draw_window(win_w, win_h, (char*)"blankBrowser - YouTube (Native, No API Key)");
         
         blankUI_draw_search_bar(win_x + 40, win_y + 60, 500);
@@ -67,7 +67,7 @@ extern "C" {
 
         for (int frame = 0; frame < 4; frame++) {
             init_compositor();
-            blankUI_draw_topbar((char*)"blankBrowser v1.2.6");
+            blankUI_draw_topbar((char*)"blankBrowser v1.2.8");
             blankUI_draw_window(win_w, win_h, (char*)"blankBrowser - Playing: 'How to build an OS in C++'");
             
             blankUI_draw_search_bar(win_x + 40, win_y + 60, 500);
