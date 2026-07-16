@@ -1,0 +1,29 @@
+name: Build BlankOS ISO
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: # Allows you to run this workflow manually from the Actions tab
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm gnu-efi mtools xorriso
+
+      - name: Compile OS and Generate ISO
+        run: |
+          make iso
+
+      - name: Upload ISO Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: blankOS-iso
+          path: blankOS.iso
