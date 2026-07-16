@@ -12,12 +12,19 @@ BlankOS is a modern, highly aesthetic, fully custom operating system built from 
 - **blankReg**: A hierarchical configuration database for managing system and user settings.
 - **Advanced Graphics**: BDRM architecture designed for high dynamic range and variable refresh rates.
 
-## Compilation
-This operating system uses ELF64 and EFI formats. To compile it easily without a local toolchain:
+## Downloading and Installation
+This operating system uses ELF64 and EFI formats. To get the OS running:
 
-1. Push this repository to GitHub.
-2. The included GitHub Actions workflow will automatically compile the OS.
-3. Download the `blankOS.iso` artifact from the Actions tab.
+1. Navigate to the **Releases** tab on the right side of this GitHub repository.
+2. Download the latest compiled `blankOS.iso` file attached to the release.
+3. Load the ISO into an emulator like QEMU or VirtualBox.
+4. **Crucial:** You must enable **EFI / UEFI** in your virtual machine settings for the bootloader to execute.
+
+## Compilation for Developers
+If you wish to compile the operating system yourself without a local toolchain:
+
+1. Push your code to the `main` branch.
+2. The included GitHub Actions workflow will automatically compile the OS, parse `version.json`, and publish a brand new GitHub Release for you!
 
 Alternatively, compile it in a Linux environment using:
 ```bash
