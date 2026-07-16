@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <stddef.h>
 
 extern void blankUI_draw_modal(int width, int height, char* title, char* content);
 extern void blankUI_draw_button(int x, int y, int width, int height, char* text);

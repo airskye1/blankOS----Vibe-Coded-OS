@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <stddef.h>
 
 extern void blankUI_draw_window(int width, int height, char* title);
 extern void blankUI_draw_text(int x, int y, char* text);
