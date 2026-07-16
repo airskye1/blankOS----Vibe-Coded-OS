@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 // blankUI state
 static bool reduce_motion_enabled = false;
