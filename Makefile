@@ -46,7 +46,12 @@ blankOS.iso: src/boot/BOOTX64.EFI
 	mkdir -p iso/EFI/BOOT
 	cp src/boot/BOOTX64.EFI iso/EFI/BOOT/BOOTX64.EFI
 	cp version.json iso/version.json
-	xorriso -as mkisofs -R -f -e EFI/BOOT/BOOTX64.EFI -no-emul-boot -o $@ iso
+	dd if=/dev/zero of=iso/efiboot.img bs=1K count=2880
+	mformat -i iso/efiboot.img -f 2880 ::
+	mmd -i iso/efiboot.img ::/EFI
+	mmd -i iso/efiboot.img ::/EFI/BOOT
+	mcopy -i iso/efiboot.img src/boot/BOOTX64.EFI ::/EFI/BOOT
+	xorriso -as mkisofs -R -f -e efiboot.img -no-emul-boot -isohybrid-gpt-basdat -o $@ iso
 
 run: blankOS.iso
 	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -cdrom blankOS.iso -m 2048
