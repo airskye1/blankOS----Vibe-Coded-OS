@@ -45,32 +45,24 @@ extern "C" {
         for (volatile int d = 0; d < 80000000; d++);
 
         // Simulate user clicking on video [1] - play animated ASCII art inside a viewport
-        const char* frames[][4] = {
-            {
-                "  +----------------------------+  ",
-                "  |   ( O S  L O A D I N G )   |  ",
-                "  |         [======>    ]      |  ",
-                "  +----------------------------+  "
-            },
-            {
-                "  +----------------------------+  ",
-                "  |   ( O S  L O A D I N G )   |  ",
-                "  |         [==========>]      |  ",
-                "  +----------------------------+  "
-            },
-            {
-                "  +----------------------------+  ",
-                "  |   ( O S  L O A D I N G )   |  ",
-                "  |         [SUCCESS!]         |  ",
-                "  +----------------------------+  "
-            },
-            {
-                "  +----------------------------+  ",
-                "  |   *   *   *   *   *   *    |  ",
-                "  |     G U I  A C T I V E     |  ",
-                "  |   *   *   *   *   *   *    |  ",
-                "  +----------------------------+  "
-            }
+        const char* frames[] = {
+            "  +----------------------------+  ",
+            "  |   ( O S  L O A D I N G )   |  ",
+            "  |         [======>    ]      |  ",
+            "  +----------------------------+  ",
+            "  +----------------------------+  ",
+            "  |   ( O S  L O A D I N G )   |  ",
+            "  |         [==========>]      |  ",
+            "  +----------------------------+  ",
+            "  +----------------------------+  ",
+            "  |   ( O S  L O A D I N G )   |  ",
+            "  |         [SUCCESS!]         |  ",
+            "  +----------------------------+  ",
+            "  +----------------------------+  ",
+            "  |   *   *   *   *   *   *    |  ",
+            "  |     G U I  A C T I V E     |  ",
+            "  |   *   *   *   *   *   *    |  ",
+            "  +----------------------------+  "
         };
 
         for (int frame = 0; frame < 4; frame++) {
@@ -88,7 +80,7 @@ extern "C" {
             // Render outline
             blankUI_draw_text(view_x, view_y, (char*)"[ VIDEO DECODER PLAYBACK ]");
             for (int line = 0; line < 4; line++) {
-                blankUI_draw_text(view_x, view_y + 30 + (line * 20), (char*)frames[frame][line]);
+                blankUI_draw_text(view_x, view_y + 30 + (line * 20), (char*)frames[frame * 4 + line]);
             }
             
             // Video progress
