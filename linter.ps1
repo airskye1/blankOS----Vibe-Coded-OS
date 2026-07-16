@@ -74,7 +74,12 @@ foreach ($file in $files) {
         Report-Warning "$relName has OutputString calls passing standard ASCII string literals. UEFI expects wide UTF-16 strings prefixed with L (e.g. L`\"Text`\")."
     }
 
-    # D. Check for missing carriage return in output logs
+    # D. Check for designated array initializers in C++ code (unimplemented in older G++ versions)
+    if ($relName -like "*.cpp" -and $content -match '(?<=^|[,{])\s*\[\s*[''\w\s"]+\s*\]\s*=') {
+        Report-Warning "$relName contains C99 designated array initializers (e.g., [index] = value). This is not standard-supported in C++ and will fail compiling under G++."
+    }
+
+    # E. Check for missing carriage return in output logs
     if ($content -match 'OutputString.*L".*[^\r]\\n"') {
         Report-Warning "$relName uses \n without \r in OutputString. UEFI text output requires \r\n for proper formatting." "YELLOW"
     }
