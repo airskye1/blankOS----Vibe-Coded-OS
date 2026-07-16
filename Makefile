@@ -26,13 +26,13 @@ src/kernel/kernel_entry.o: src/kernel/kernel_entry.asm
 	nasm -f elf64 $< -o $@
 
 src/kernel/%.o: src/kernel/%.c
-	$(CC) -ffreestanding -mno-red-zone -m64 -c $< -o $@
+	$(CC) $(CFLAGS) -m64 -c $< -o $@
 
 src/ui/%.o: src/ui/%.c
-	$(CC) -ffreestanding -mno-red-zone -m64 -c $< -o $@
+	$(CC) $(CFLAGS) -m64 -c $< -o $@
 
 src/apps/%.o: src/apps/%.c
-	$(CC) -ffreestanding -mno-red-zone -m64 -c $< -o $@
+	$(CC) $(CFLAGS) -m64 -c $< -o $@
 
 src/kernel/kernel.elf: $(KERNEL_OBJS)
 	$(LD) -nostdlib -Ttext 0x100000 $^ -o $@
