@@ -9,9 +9,8 @@ LIBS = -lefi -lgnuefi
 all: blankOS.iso
 
 # Bootloader
-src/boot/boot.so: src/boot/boot.c
-	$(CC) $(CFLAGS) -c $< -o src/boot/boot.o
-	$(LD) $(LDFLAGS) /usr/lib/crt0-efi-x86_64.o src/boot/boot.o -o $@ $(LIBS)
+src/boot/boot.so: src/boot/boot.o $(KERNEL_OBJS)
+	$(LD) $(LDFLAGS) /usr/lib/crt0-efi-x86_64.o src/boot/boot.o $(KERNEL_OBJS) -o $@ $(LIBS)
 
 src/boot/BOOTX64.EFI: src/boot/boot.so
 	$(OBJCOPY) -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rel -j .rela -j .rel.* -j .rela.* -j .reloc --target efi-app-x86_64 $< $@
@@ -39,10 +38,9 @@ src/kernel/kernel.elf: $(KERNEL_OBJS)
 
 iso: blankOS.iso
 
-blankOS.iso: src/boot/BOOTX64.EFI src/kernel/kernel.elf
+blankOS.iso: src/boot/BOOTX64.EFI
 	mkdir -p iso/EFI/BOOT
 	cp src/boot/BOOTX64.EFI iso/EFI/BOOT/BOOTX64.EFI
-	cp src/kernel/kernel.elf iso/kernel.elf
 	cp version.json iso/version.json
 	xorriso -as mkisofs -R -f -e EFI/BOOT/BOOTX64.EFI -no-emul-boot -o $@ iso
 
