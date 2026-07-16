@@ -6,18 +6,22 @@ CFLAGS = -ffreestanding -fno-stack-protector -fpic -fshort-wchar -mno-red-zone -
 LDFLAGS = -nostdlib -shared -Bsymbolic -L /usr/lib -T /usr/lib/elf_x86_64_efi.lds
 LIBS = -lefi -lgnuefi
 
+# Kernel Objects MUST be defined before they are used as dependencies!
+KERNEL_OBJS = src/kernel/kernel_entry.o src/kernel/kernel.o src/kernel/memory.o src/kernel/bdrm.o src/kernel/bloe_loader.o src/kernel/blank_reg.o src/kernel/crypto.o src/kernel/time.o src/kernel/notifications.o src/kernel/power.o src/kernel/battery.o src/kernel/cookies.o src/kernel/audio.o src/kernel/stubs.o src/ui/blankUI.o src/apps/setup.o src/apps/login.o src/apps/settings.o src/apps/blankreg_edit.o src/apps/blankpad.o src/apps/updater.o src/apps/blankbrowser.o src/apps/loading_screen.o src/apps/updating_screen.o src/apps/intro.o src/apps/sysinfo.o src/apps/store.o src/apps/blankdrop.o
+
 all: blankOS.iso
 
-# Bootloader
+# Bootloader Target
+src/boot/boot.o: src/boot/boot.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
 src/boot/boot.so: src/boot/boot.o $(KERNEL_OBJS)
 	$(LD) $(LDFLAGS) /usr/lib/crt0-efi-x86_64.o src/boot/boot.o $(KERNEL_OBJS) -o $@ $(LIBS)
 
 src/boot/BOOTX64.EFI: src/boot/boot.so
 	$(OBJCOPY) -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rel -j .rela -j .rel.* -j .rela.* -j .reloc --target efi-app-x86_64 $< $@
 
-# Kernel
-KERNEL_OBJS = src/kernel/kernel_entry.o src/kernel/kernel.o src/kernel/memory.o src/kernel/bdrm.o src/kernel/bloe_loader.o src/kernel/blank_reg.o src/kernel/crypto.o src/kernel/time.o src/kernel/notifications.o src/kernel/power.o src/kernel/battery.o src/kernel/cookies.o src/kernel/audio.o src/kernel/stubs.o src/ui/blankUI.o src/apps/setup.o src/apps/login.o src/apps/settings.o src/apps/blankreg_edit.o src/apps/blankpad.o src/apps/updater.o src/apps/blankbrowser.o src/apps/loading_screen.o src/apps/updating_screen.o src/apps/intro.o src/apps/sysinfo.o src/apps/store.o src/apps/blankdrop.o
-
+# Object Compilation Rules
 src/kernel/kernel_entry.o: src/kernel/kernel_entry.asm
 	nasm -f elf64 $< -o $@
 
