@@ -17,12 +17,15 @@ src/boot/BOOTX64.EFI: src/boot/boot.so
 	$(OBJCOPY) -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rel -j .rela -j .rel.* -j .rela.* -j .reloc --target efi-app-x86_64 $< $@
 
 # Kernel
-KERNEL_OBJS = src/kernel/kernel_entry.o src/kernel/kernel.o src/kernel/memory.o src/kernel/bdrm.o src/kernel/bloe_loader.o src/kernel/blank_reg.o src/kernel/crypto.o src/kernel/time.o src/kernel/notifications.o src/kernel/power.o src/kernel/battery.o src/kernel/cookies.o src/kernel/audio.o src/apps/updater.o src/apps/blankbrowser.o src/apps/loading_screen.o src/apps/updating_screen.o src/apps/intro.o src/apps/sysinfo.o src/apps/store.o src/apps/blankdrop.o
+KERNEL_OBJS = src/kernel/kernel_entry.o src/kernel/kernel.o src/kernel/memory.o src/kernel/bdrm.o src/kernel/bloe_loader.o src/kernel/blank_reg.o src/kernel/crypto.o src/kernel/time.o src/kernel/notifications.o src/kernel/power.o src/kernel/battery.o src/kernel/cookies.o src/kernel/audio.o src/kernel/stubs.o src/ui/blankUI.o src/apps/setup.o src/apps/login.o src/apps/settings.o src/apps/blankreg_edit.o src/apps/blankpad.o src/apps/updater.o src/apps/blankbrowser.o src/apps/loading_screen.o src/apps/updating_screen.o src/apps/intro.o src/apps/sysinfo.o src/apps/store.o src/apps/blankdrop.o
 
 src/kernel/kernel_entry.o: src/kernel/kernel_entry.asm
 	nasm -f elf64 $< -o $@
 
 src/kernel/%.o: src/kernel/%.c
+	$(CC) -ffreestanding -mno-red-zone -m64 -c $< -o $@
+
+src/ui/%.o: src/ui/%.c
 	$(CC) -ffreestanding -mno-red-zone -m64 -c $< -o $@
 
 src/apps/%.o: src/apps/%.c
