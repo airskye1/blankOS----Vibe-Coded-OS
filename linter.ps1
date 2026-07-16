@@ -24,7 +24,7 @@ if (Test-Path $Makefile) {
 }
 
 # 2. Source Code Checks
-$files = Get-ChildItem -Path $TargetDir -Recurse -Include *.c,*.h
+$files = Get-ChildItem -Path $TargetDir -Recurse -Include *.cpp,*.c,*.h
 foreach ($file in $files) {
     $content = Get-Content $file.FullName -Raw
     $changed = $false

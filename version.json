@@ -1,12 +1,12 @@
 {
   "os_name": "BlankOS",
   "version_major": 1,
-  "version_minor": 1,
-  "version_patch": 5,
+  "version_minor": 2,
+  "version_patch": 0,
   "build_date": "2026-07-16",
   "update_url": "https://github.com/airskye1/blankOS----Vibe-Coded-OS",
   "update_logs": [
-    "1.1.5: Fixed boot sequence. kernel_entry.asm now correctly forwards SystemTable (RCX) per MS x64 ABI instead of calling kernel_main with no args. Added kernel_entry.o to KERNEL_OBJS in Makefile so the ASM entry is actually linked. Added missing stubs (blankReg_get_string, sha256_hash, secure_compare) that were causing undefined reference linker crashes from login.c. Synced boot banner version string.",
+    "1.2.0: Major Architectural Teardown. Rewrote the entire OS in native C++ and injected a pure Assembly Kernel Core. Added native Zero-Key Auth to App Store and hardware-accelerated ASCII video decoding to blankBrowser.",
     "1.1.4: Completely overhauled linter.ps1 with advanced OS dev guards to catch ABI mismatches, Makefile omissions, and strict UEFI text encoding rules.",
     "1.1.3: Bootloader fix. + version change",
     "1.1.2: Re-architected boot sequence to unify the kernel into the UEFI bootloader, implemented mtools virtual floppy booting, and added a detailed visual text-mode OOBE installer.",

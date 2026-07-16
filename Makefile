@@ -1,19 +1,21 @@
 CC = gcc
+CXX = g++
 LD = ld
 OBJCOPY = objcopy
 
 CFLAGS = -ffreestanding -fno-stack-protector -fpic -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -I /usr/include/efi -I /usr/include/efi/x86_64
+CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti
 LDFLAGS = -nostdlib -znocombreloc -shared -Bsymbolic -L /usr/lib -T /usr/lib/elf_x86_64_efi.lds
 LIBS = -lefi -lgnuefi
 
 # Kernel Objects MUST be defined before they are used as dependencies!
-KERNEL_OBJS = src/kernel/kernel.o src/kernel/memory.o src/kernel/bdrm.o src/kernel/bloe_loader.o src/kernel/blank_reg.o src/kernel/crypto.o src/kernel/time.o src/kernel/notifications.o src/kernel/power.o src/kernel/battery.o src/kernel/cookies.o src/kernel/audio.o src/kernel/stubs.o src/ui/blankUI.o src/apps/setup.o src/apps/login.o src/apps/settings.o src/apps/blankreg_edit.o src/apps/blankpad.o src/apps/updater.o src/apps/blankbrowser.o src/apps/loading_screen.o src/apps/updating_screen.o src/apps/intro.o src/apps/sysinfo.o src/apps/store.o src/apps/blankdrop.o
+KERNEL_OBJS = src/kernel/kernel_core.o src/kernel/kernel.o src/kernel/memory.o src/kernel/bdrm.o src/kernel/bloe_loader.o src/kernel/blank_reg.o src/kernel/crypto.o src/kernel/time.o src/kernel/notifications.o src/kernel/power.o src/kernel/battery.o src/kernel/cookies.o src/kernel/audio.o src/kernel/stubs.o src/ui/blankUI.o src/apps/setup.o src/apps/login.o src/apps/settings.o src/apps/blankreg_edit.o src/apps/blankpad.o src/apps/updater.o src/apps/blankbrowser.o src/apps/loading_screen.o src/apps/updating_screen.o src/apps/intro.o src/apps/sysinfo.o src/apps/store.o src/apps/blankdrop.o
 
 all: blankOS.iso
 
-# Bootloader Target
+# Bootloader Target (Strictly C for GNU-EFI)
 src/boot/boot.o: src/boot/boot.c
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -m64 -c $< -o $@
 
 src/boot/boot.so: src/boot/boot.o $(KERNEL_OBJS)
 	$(LD) $(LDFLAGS) /usr/lib/crt0-efi-x86_64.o src/boot/boot.o $(KERNEL_OBJS) -o $@ $(LIBS)
@@ -22,18 +24,17 @@ src/boot/BOOTX64.EFI: src/boot/boot.so
 	$(OBJCOPY) -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rel -j .rela -j .rel.* -j .rela.* -j .reloc -j .rodata -j .bss --target efi-app-x86_64 $< $@
 
 # Object Compilation Rules
+src/kernel/kernel_core.o: src/kernel/kernel_core.asm
+	nasm -f elf64 $< -o $@
 
-src/kernel/%.o: src/kernel/%.c
-	$(CC) $(CFLAGS) -m64 -c $< -o $@
+src/kernel/%.o: src/kernel/%.cpp
+	$(CXX) $(CXXFLAGS) -m64 -c $< -o $@
 
-src/ui/%.o: src/ui/%.c
-	$(CC) $(CFLAGS) -m64 -c $< -o $@
+src/ui/%.o: src/ui/%.cpp
+	$(CXX) $(CXXFLAGS) -m64 -c $< -o $@
 
-src/apps/%.o: src/apps/%.c
-	$(CC) $(CFLAGS) -m64 -c $< -o $@
-
-src/kernel/kernel.elf: $(KERNEL_OBJS)
-	$(LD) -nostdlib -Ttext 0x100000 $^ -o $@
+src/apps/%.o: src/apps/%.cpp
+	$(CXX) $(CXXFLAGS) -m64 -c $< -o $@
 
 # ISO Generation
 .PHONY: all iso clean run
