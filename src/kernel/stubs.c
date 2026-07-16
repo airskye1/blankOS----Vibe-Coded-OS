@@ -38,13 +38,21 @@ void __attribute__((weak)) outb(uint16_t port, uint8_t val) {
     __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
 }
 
-char* __attribute__((weak)) read_file_from_disk(char* path) { return NULL; }
+void __attribute__((weak)) read_file_from_disk(char* path) {}
 
 int __attribute__((weak)) get_cpu_usage(void) { return 0; }
 int __attribute__((weak)) get_ram_usage(void) { return 0; }
-int __attribute__((weak)) get_total_ram(void) { return 2048; } // So setup check passes
+int __attribute__((weak)) get_total_ram(void) { return 2048; }
 char* __attribute__((weak)) get_cpu_model(void) { return NULL; }
 
+// blankReg API
 char* __attribute__((weak)) blankReg_read_string(char* key) { return NULL; }
 void __attribute__((weak)) blankReg_write_string(char* key, char* value) {}
+// blankReg_get_string stub: used by login.c - was missing, caused undefined reference linker crash
+void __attribute__((weak)) blankReg_get_string(char* key, char* default_val) {}
+
 void __attribute__((weak)) os_send_notification(char* title, char* message) {}
+
+// Crypto stubs: used by login.c - were missing, caused undefined reference linker crash
+void __attribute__((weak)) sha256_hash(char* input_string, uint8_t* output_hash) {}
+int __attribute__((weak)) secure_compare(uint8_t* hash1, uint8_t* hash2) { return 0; }

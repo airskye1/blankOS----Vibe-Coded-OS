@@ -16,7 +16,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     SystemTable->ConOut->Reset(SystemTable->ConOut, FALSE);
     
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"========================================\r\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"  Welcome to BlankOS v1.1.2 Bootloader  \r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"  Welcome to BlankOS v1.1.5 Bootloader  \r\n");
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"========================================\r\n\r\n");
     
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OK ] UEFI Firmware Detected.\r\n");
