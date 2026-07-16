@@ -1,10 +1,12 @@
 #include <efi.h>
 #include <efilib.h>
 
-extern void kernel_main(void);
+extern void kernel_main(EFI_SYSTEM_TABLE *SystemTable);
 
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     InitializeLib(ImageHandle, SystemTable);
+    
+    SystemTable->ConOut->ClearScreen(SystemTable->ConOut);
     
     Print(L"========================================\n");
     Print(L"  Welcome to BlankOS v1.1.1 Bootloader  \n");
@@ -14,8 +16,8 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"[ OK ] Initializing BDRM Graphics Compositor...\n");
     Print(L"[ OK ] Handing off control to monolithic kernel...\n\n");
     
-    // Directly call the kernel since it is now statically linked into the UEFI binary!
-    kernel_main();
+    // Pass the UEFI SystemTable so the kernel can print to the screen!
+    kernel_main(SystemTable);
     
     // Fallback halt
     while(1) {}
