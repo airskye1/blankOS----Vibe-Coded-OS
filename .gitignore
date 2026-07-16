@@ -1,0 +1,17 @@
+# Compiled Object files
+*.o
+*.so
+*.elf
+*.EFI
+
+# ISO generated files
+*.iso
+iso/
+
+# Applications downloaded from the Store
+# Ignore everything in 3rdparty_apps except the .gitkeep file
+src/3rdparty_apps/*
+!src/3rdparty_apps/.gitkeep
+
+# Ignore the Store Backend repository folder (user will push this separately)
+store_repo/

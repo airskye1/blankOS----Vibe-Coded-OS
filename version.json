@@ -1,8 +1,13 @@
 {
   "os_name": "BlankOS",
   "version_major": 1,
-  "version_minor": 0,
+  "version_minor": 1,
   "version_patch": 0,
   "build_date": "2026-07-16",
-  "update_url": "https://github.com/airskye1/blankOS----Vibe-Coded-OS"
+  "update_url": "https://github.com/airskye1/blankOS----Vibe-Coded-OS",
+  "update_logs": [
+    "1.1.0: Added Audio subsystem, Brightness controls, WiFi/BT toggles, blankDrop (AirDrop/QuickShare), and a Chrome-equivalent rendering engine in blankBrowser.",
+    "1.0.1: Added blankC dependencies, App Store, and System Info module.",
+    "1.0.0: Initial release featuring BDRM, blankUI, and .bloe support."
+  ]
 }

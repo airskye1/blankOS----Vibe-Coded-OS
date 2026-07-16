@@ -94,6 +94,24 @@ void blankUI_draw_search_bar(int x, int y, int width) {
     // 5. Render a dropdown sheet displaying real-time search results
 }
 
+void blankUI_draw_window_controls(int window_x, int window_y, int window_width) {
+    // Render modern traffic-light style window controls in the top left (macOS style)
+    // Red (Close), Yellow (Minimize), Green (Maximize)
+    // 1. Draw Red circle at (window_x + 15, window_y + 15)
+    // 2. Draw Yellow circle at (window_x + 35, window_y + 15)
+    // 3. Draw Green circle at (window_x + 55, window_y + 15)
+    // 4. Handle mouse click events to hide/destroy the window surface
+}
+
+void blankUI_draw_window(int width, int height, char* title) {
+    // 1. Draw frosted glass background layer
+    // 2. Draw drop shadow
+    // 3. Draw the Topbar area
+    // 4. Render Window Controls
+    blankUI_draw_window_controls(0, 0, width);
+    // 5. Render Title text in the center
+}
+
 void blankUI_draw_toast(char* title, char* message) {
     blankUI_animate_slide_up(NULL);
     // 1. Render a floating card at the top-right or bottom-right of the screen
