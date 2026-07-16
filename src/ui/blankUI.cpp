@@ -1,14 +1,160 @@
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 extern "C" {
+
+// Framebuffer details from compositor
+extern volatile uint32_t* framebuffer;
+extern int screen_width;
+extern int screen_height;
+extern int pixels_per_scanline;
+
+extern void put_pixel_alpha(int x, int y, uint32_t color, uint8_t alpha);
+extern void draw_rect_filled(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
+extern void draw_circle_filled(int cx, int cy, int r, uint32_t color);
 
 // blankUI state
 static bool reduce_motion_enabled = false;
 
+// Basic 8x8 bitmap font (subset for GUI text)
+static const uint8_t font8x8[128][8] = {
+    [' '] = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
+    ['!'] = {0x18,0x18,0x18,0x18,0x18,0x00,0x18,0x00},
+    ['"'] = {0x6C,0x6C,0x6C,0x00,0x00,0x00,0x00,0x00},
+    ['#'] = {0x6C,0x6C,0xFE,0x6C,0xFE,0x6C,0x6C,0x00},
+    ['$'] = {0x18,0x7C,0xC2,0x7C,0x06,0xFC,0x18,0x00},
+    ['%'] = {0x00,0xC6,0xCC,0x18,0x30,0x66,0xC6,0x00},
+    ['&'] = {0x38,0x6C,0x38,0x76,0xDC,0xCC,0x76,0x00},
+    ['\'']= {0x30,0x30,0x60,0x00,0x00,0x00,0x00,0x00},
+    ['('] = {0x0C,0x18,0x30,0x30,0x30,0x18,0x0C,0x00},
+    [')'] = {0x30,0x18,0x0C,0x0C,0x0C,0x18,0x30,0x00},
+    ['*'] = {0x00,0x66,0x3C,0xFF,0x3C,0x66,0x00,0x00},
+    ['+'] = {0x00,0x18,0x18,0x7E,0x18,0x18,0x00,0x00},
+    [','] = {0x00,0x00,0x00,0x00,0x18,0x18,0x30,0x00},
+    ['-'] = {0x00,0x00,0x00,0x7E,0x00,0x00,0x00,0x00},
+    ['.'] = {0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x00},
+    ['/'] = {0x06,0x0C,0x18,0x30,0x60,0xC0,0x80,0x00},
+    ['0'] = {0x3E,0x62,0x6A,0x72,0x7A,0x62,0x3E,0x00},
+    ['1'] = {0x18,0x38,0x18,0x18,0x18,0x18,0x7E,0x00},
+    ['2'] = {0x3E,0x62,0x04,0x18,0x20,0x40,0x7E,0x00},
+    ['3'] = {0x3E,0x62,0x02,0x1C,0x02,0x62,0x3E,0x00},
+    ['4'] = {0x08,0x18,0x28,0x48,0x7E,0x08,0x08,0x00},
+    ['5'] = {0x7E,0x40,0x7C,0x02,0x02,0x42,0x3E,0x00},
+    ['6'] = {0x3C,0x40,0x7C,0x42,0x42,0x42,0x3C,0x00},
+    ['7'] = {0x7E,0x02,0x04,0x08,0x10,0x20,0x20,0x00},
+    ['8'] = {0x3C,0x42,0x42,0x3C,0x42,0x42,0x3C,0x00},
+    ['9'] = {0x3C,0x42,0x42,0x3E,0x02,0x02,0x3C,0x00},
+    [':'] = {0x00,0x18,0x18,0x00,0x00,0x18,0x18,0x00},
+    [';'] = {0x00,0x18,0x18,0x00,0x00,0x18,0x18,0x30},
+    ['<'] = {0x0C,0x18,0x30,0x60,0x30,0x18,0x0C,0x00},
+    ['='] = {0x00,0x00,0x7E,0x00,0x7E,0x00,0x00,0x00},
+    ['>'] = {0x30,0x18,0x0C,0x06,0x0C,0x18,0x30,0x00},
+    ['?'] = {0x3E,0x62,0x02,0x0C,0x18,0x00,0x18,0x00},
+    ['@'] = {0x3E,0x42,0x9A,0xAA,0xAA,0x9E,0x02,0x3C},
+    ['A'] = {0x18,0x3C,0x66,0x66,0x7E,0x66,0x66,0x00},
+    ['B'] = {0xFC,0x66,0x66,0xFC,0x66,0x66,0xFC,0x00},
+    ['C'] = {0x3C,0x62,0x40,0x40,0x40,0x62,0x3C,0x00},
+    ['D'] = {0xF8,0x6C,0x66,0x66,0x66,0x6C,0xF8,0x00},
+    ['E'] = {0x7E,0x40,0x40,0x78,0x40,0x40,0x7E,0x00},
+    ['F'] = {0x7E,0x40,0x40,0x78,0x40,0x40,0x40,0x00},
+    ['G'] = {0x3C,0x62,0x40,0x4E,0x46,0x62,0x3C,0x00},
+    ['H'] = {0x66,0x66,0x66,0x7E,0x66,0x66,0x66,0x00},
+    ['I'] = {0x7E,0x18,0x18,0x18,0x18,0x18,0x7E,0x00},
+    ['J'] = {0x1E,0x06,0x06,0x06,0x06,0x66,0x3C,0x00},
+    ['K'] = {0x66,0x6C,0x78,0x70,0x78,0x6C,0x66,0x00},
+    ['L'] = {0x40,0x40,0x40,0x40,0x40,0x40,0x7E,0x00},
+    ['M'] = {0x63,0x77,0x7F,0x6B,0x63,0x63,0x63,0x00},
+    ['N'] = {0x63,0x73,0x7B,0x6F,0x67,0x63,0x63,0x00},
+    ['O'] = {0x3C,0x66,0x66,0x66,0x66,0x66,0x3C,0x00},
+    ['P'] = {0xFC,0x66,0x66,0xFC,0x40,0x40,0x40,0x00},
+    ['Q'] = {0x3C,0x66,0x66,0x66,0x6E,0x7C,0x0E,0x01},
+    ['R'] = {0xFC,0x66,0x66,0xFC,0x70,0x68,0x66,0x00},
+    ['S'] = {0x3C,0x62,0x30,0x18,0x0C,0x46,0x3C,0x00},
+    ['T'] = {0x7E,0x18,0x18,0x18,0x18,0x18,0x18,0x00},
+    ['U'] = {0x66,0x66,0x66,0x66,0x66,0x66,0x3C,0x00},
+    ['V'] = {0x66,0x66,0x66,0x66,0x3C,0x18,0x18,0x00},
+    ['W'] = {0x63,0x63,0x63,0x6B,0x7F,0x77,0x63,0x00},
+    ['X'] = {0x66,0x66,0x3C,0x18,0x3C,0x66,0x66,0x00},
+    ['Y'] = {0x66,0x66,0x3C,0x18,0x18,0x18,0x18,0x00},
+    ['Z'] = {0x7E,0x06,0x0C,0x18,0x30,0x60,0x7E,0x00},
+    ['['] = {0x1E,0x18,0x18,0x18,0x18,0x18,0x1E,0x00},
+    ['\\']= {0x80,0x40,0x20,0x10,0x08,0x04,0x02,0x00},
+    [']'] = {0x78,0x18,0x18,0x18,0x18,0x18,0x78,0x00},
+    ['^'] = {0x08,0x1C,0x36,0x63,0x00,0x00,0x00,0x00},
+    ['_'] = {0x00,0x00,0x00,0x00,0x00,0x00,0xFF,0x00},
+    ['`'] = {0x18,0x18,0x08,0x00,0x00,0x00,0x00,0x00},
+    ['a'] = {0x00,0x00,0x3C,0x02,0x3E,0x46,0x3E,0x00},
+    ['b'] = {0x40,0x40,0x7C,0x46,0x46,0x46,0x7C,0x00},
+    ['c'] = {0x00,0x00,0x3E,0x40,0x40,0x42,0x3C,0x00},
+    ['d'] = {0x02,0x02,0x3E,0x46,0x46,0x46,0x3E,0x00},
+    ['e'] = {0x00,0x00,0x3C,0x42,0x7E,0x40,0x3C,0x00},
+    ['f'] = {0x1C,0x22,0x20,0x78,0x20,0x20,0x20,0x00},
+    ['g'] = {0x00,0x00,0x3E,0x46,0x46,0x3E,0x02,0x3C},
+    ['h'] = {0x40,0x40,0x7C,0x46,0x46,0x46,0x46,0x00},
+    ['i'] = {0x18,0x00,0x38,0x18,0x18,0x18,0x7E,0x00},
+    ['j'] = {0x0C,0x00,0x1C,0x0C,0x0C,0x0C,0x4C,0x38},
+    ['k'] = {0x40,0x40,0x46,0x4C,0x78,0x4C,0x46,0x00},
+    ['l'] = {0x38,0x18,0x18,0x18,0x18,0x18,0x7E,0x00},
+    ['m'] = {0x00,0x00,0x6C,0x92,0x92,0x92,0x92,0x00},
+    ['n'] = {0x00,0x00,0x7C,0x46,0x46,0x46,0x46,0x00},
+    ['o'] = {0x00,0x00,0x3C,0x42,0x42,0x42,0x3C,0x00},
+    ['p'] = {0x00,0x00,0x7C,0x46,0x46,0x7C,0x40,0x40},
+    ['q'] = {0x00,0x00,0x3E,0x46,0x46,0x3E,0x02,0x02},
+    ['r'] = {0x00,0x00,0x5C,0x62,0x40,0x40,0x40,0x00},
+    ['s'] = {0x00,0x00,0x3E,0x40,0x3C,0x02,0x7C,0x00},
+    ['t'] = {0x20,0x20,0x70,0x20,0x20,0x22,0x1C,0x00},
+    ['u'] = {0x00,0x00,0x46,0x46,0x46,0x46,0x3A,0x00},
+    ['v'] = {0x00,0x00,0x46,0x46,0x46,0x2C,0x18,0x00},
+    ['w'] = {0x00,0x00,0x81,0x81,0x99,0x99,0x66,0x00},
+    ['x'] = {0x00,0x00,0x46,0x28,0x10,0x28,0x46,0x00},
+    ['y'] = {0x00,0x00,0x46,0x46,0x46,0x3E,0x02,0x3C},
+    ['z'] = {0x00,0x00,0x7E,0x0C,0x18,0x30,0x7E,0x00},
+    ['{'] = {0x0C,0x18,0x18,0x30,0x18,0x18,0x0C,0x00},
+    ['|'] = {0x18,0x18,0x18,0x00,0x18,0x18,0x18,0x00},
+    ['}'] = {0x30,0x18,0x18,0x0C,0x18,0x18,0x30,0x00},
+    ['~'] = {0x76,0xDC,0x00,0x00,0x00,0x00,0x00,0x00}
+};
+
+// Draw a single character using the 8x8 font
+void blankUI_draw_char(int x, int y, char c, uint32_t color) {
+    if ((uint8_t)c > 127) return;
+    for (int row = 0; row < 8; row++) {
+        uint8_t byte = font8x8[(uint8_t)c][row];
+        for (int col = 0; col < 8; col++) {
+            if (byte & (0x80 >> col)) {
+                put_pixel_alpha(x + col, y + row, color, 255);
+            }
+        }
+    }
+}
+
+// Draw a string of text
+void blankUI_draw_text(int x, int y, char* text) {
+    if (!text) return;
+    int cur_x = x;
+    while (*text) {
+        blankUI_draw_char(cur_x, y, *text, 0xFFFFFF); // Draw white text
+        cur_x += 8;
+        text++;
+    }
+}
+
+// Draw text with a custom color
+void blankUI_draw_text_color(int x, int y, char* text, uint32_t color) {
+    if (!text) return;
+    int cur_x = x;
+    while (*text) {
+        blankUI_draw_char(cur_x, y, *text, color);
+        cur_x += 8;
+        text++;
+    }
+}
+
 // Initialize the toolkit
 void init_blankUI_toolkit(void) {
     // Load default font maps and UI tokens
+    reduce_motion_enabled = false;
 }
 
 // Settings
@@ -17,101 +163,179 @@ void blankUI_set_reduce_motion(bool enabled) {
 }
 
 // Animation helpers
-void blankUI_animate_fade_in(void* component) {
-    if (reduce_motion_enabled) return; // Snap directly to visible state
-    // Interpolate alpha from 0 to 255 over 200ms via BDRM
-}
-
-void blankUI_animate_slide_up(void* component) {
-    if (reduce_motion_enabled) return;
-    // Animate Y position -16px to 0px via BDRM
-}
+void blankUI_animate_fade_in(void* component) {}
+void blankUI_animate_slide_up(void* component) {}
 
 // --- blankUI Component Library ---
 
 void blankUI_draw_button(int x, int y, int width, int height, char* text) {
-    // 1. Draw the button surface
-    // 2. Add subtle drop shadow
-    // 3. Render the text centered
-    // 4. Apply ripple animation on click
+    // Draw button background with indigo base and rounded appearance
+    draw_rect_filled(x, y, width, height, 0x4f46e5, 255);
+    draw_rect_filled(x, y, width, 1, 0xffffff, 60); // top highlight
+    
+    // Draw text centered
+    int text_len = 0;
+    char* t = text;
+    while (*t++) text_len++;
+    int text_w = text_len * 8;
+    int text_x = x + (width - text_w) / 2;
+    int text_y = y + (height - 8) / 2;
+    blankUI_draw_text_color(text_x, text_y, text, 0xffffff);
 }
 
 void blankUI_draw_modal(int width, int height, char* title, char* content) {
-    blankUI_animate_fade_in(NULL); // Dimming backdrop fade
-    blankUI_animate_slide_up(NULL); // Modal translation
+    // Draw semi-transparent dimming backdrop over the entire screen
+    draw_rect_filled(0, 0, screen_width, screen_height, 0x000000, 100);
+
+    // Draw modal window centered on screen
+    int x = (screen_width - width) / 2;
+    int y = (screen_height - height) / 2;
+
+    // Draw shadow
+    draw_rect_filled(x + 5, y + 5, width, height, 0x000000, 80);
+    // Draw glass modal surface
+    draw_rect_filled(x, y, width, height, 0x1e293b, 230);
+    // Draw subtle border
+    draw_rect_filled(x, y, width, 1, 0xffffff, 40);
+    draw_rect_filled(x, y, 1, height, 0xffffff, 40);
     
-    // 1. Draw the backdrop (if not reduce_motion, apply fade animation)
-    // 2. Draw the modal surface with frosted glass blur effect (using compositor)
-    // 3. Render title and content
-    // 4. Render primary and secondary action buttons using blankUI_draw_button
+    // Title
+    blankUI_draw_text_color(x + 20, y + 20, title, 0x6366f1);
+    // Content
+    blankUI_draw_text(x + 20, y + 60, content);
+    
+    // Draw close button
+    blankUI_draw_button(x + width - 100, y + height - 50, 80, 30, (char*)"Close");
 }
 
 void blankUI_draw_topbar(char* app_title) {
-    // 1. Draw topbar spanning the full width
-    // 2. Apply background solidification effect
-    // 3. Render app title
+    // Draw topbar spanning the full width
+    draw_rect_filled(0, 0, screen_width, 24, 0x0f172a, 204); // 80% opacity dark slate
+    draw_rect_filled(0, 23, screen_width, 1, 0xffffff, 40);  // bottom divider
+
+    // App title
+    blankUI_draw_text_color(10, 8, app_title, 0x38bdf8); // Sky blue text
+
+    // System info (mock status bar on the right side)
+    char mock_status[64] = "12:00 PM | Wi-Fi [OK] | Battery 100%";
+    int text_len = 36;
+    int text_x = screen_width - (text_len * 8) - 10;
+    blankUI_draw_text_color(text_x, 8, mock_status, 0x94a3b8);
 }
 
 void blankUI_draw_dropdown(int x, int y, char** items, int item_count) {
-    blankUI_animate_fade_in(NULL);
-    // 1. Ensure dropdown renders on top of the page surface but below modals
-    // 2. Draw list items
+    int w = 150;
+    int h = item_count * 20 + 10;
+    draw_rect_filled(x, y, w, h, 0x1e293b, 240);
+    for (int i = 0; i < item_count; i++) {
+        blankUI_draw_text(x + 10, y + 8 + (i * 20), items[i]);
+    }
 }
 
 void blankUI_draw_slider(int x, int y, int width, float value, char* label) {
-    // Render a horizontal track and a draggable thumb representing value
+    blankUI_draw_text(x, y, label);
+    // Track
+    draw_rect_filled(x, y + 16, width, 6, 0x334155, 255);
+    // Fill
+    draw_rect_filled(x, y + 16, (int)(width * value), 6, 0x6366f1, 255);
+    // Handle
+    draw_circle_filled(x + (int)(width * value), y + 19, 6, 0xffffff);
 }
 
 void blankUI_draw_toggle_switch(int x, int y, bool is_on, char* label) {
-    // Render a pill-shaped track and circular thumb
-    // Animate the thumb sliding left/right on toggle
-}
-
-void blankUI_draw_radio_button(int x, int y, bool is_selected) {
-    // Render a circular container with an inner filled circle if selected
+    blankUI_draw_text(x, y, label);
+    // Switch track
+    uint32_t track_color = is_on ? 0x22c55e : 0x475569;
+    draw_rect_filled(x + 120, y - 2, 40, 20, track_color, 255);
+    // Switch knob
+    int knob_x = is_on ? (x + 120 + 22) : (x + 120 + 2);
+    draw_circle_filled(knob_x + 8, y + 8, 8, 0xffffff);
 }
 
 void blankUI_draw_progress_bar(int x, int y, int width, float percentage) {
-    // Render an empty track and a filled track indicating percentage
-    // Animate the filled track smoothly when the percentage changes
+    // Track
+    draw_rect_filled(x, y, width, 8, 0x1e293b, 255);
+    // Fill
+    draw_rect_filled(x, y, (int)(width * percentage), 8, 0x6366f1, 255);
 }
 
 void blankUI_draw_tabs(int x, int y, char** tab_names, int tab_count, int active_index) {
-    // Render a row of tab items
-    // Animate a subtle active indicator sliding beneath the active tab
+    int cur_x = x;
+    for (int i = 0; i < tab_count; i++) {
+        uint32_t text_color = (i == active_index) ? 0x6366f1 : 0x94a3b8;
+        blankUI_draw_text_color(cur_x, y, tab_names[i], text_color);
+        
+        // Active indicator line
+        if (i == active_index) {
+            int len = 0;
+            char* t = tab_names[i];
+            while (*t++) len++;
+            draw_rect_filled(cur_x, y + 12, len * 8, 2, 0x6366f1, 255);
+        }
+        
+        int len = 0;
+        char* t = tab_names[i];
+        while (*t++) len++;
+        cur_x += (len * 8) + 20;
+    }
 }
 
 void blankUI_draw_search_bar(int x, int y, int width) {
-    // 1. Render a pill-shaped search input field
-    // 2. Render a magnifying glass icon on the left
-    // 3. Handle keyboard interrupts to capture search text
-    // 4. Query the VFS and list of installed .bloe apps for matches
-    // 5. Render a dropdown sheet displaying real-time search results
+    // Search track
+    draw_rect_filled(x, y, width, 28, 0x1e293b, 200);
+    draw_rect_filled(x, y, width, 1, 0xffffff, 40);
+    blankUI_draw_text_color(x + 10, y + 10, (char*)"Search applications...", 0x64748b);
 }
 
 void blankUI_draw_window_controls(int window_x, int window_y, int window_width) {
-    // Render modern traffic-light style window controls in the top left (macOS style)
-    // Red (Close), Yellow (Minimize), Green (Maximize)
-    // 1. Draw Red circle at (window_x + 15, window_y + 15)
-    // 2. Draw Yellow circle at (window_x + 35, window_y + 15)
-    // 3. Draw Green circle at (window_x + 55, window_y + 15)
-    // 4. Handle mouse click events to hide/destroy the window surface
+    // Red close circle
+    draw_circle_filled(window_x + 15, window_y + 15, 6, 0xef4444);
+    // Yellow minimize circle
+    draw_circle_filled(window_x + 35, window_y + 15, 6, 0xeab308);
+    // Green maximize circle
+    draw_circle_filled(window_x + 55, window_y + 15, 6, 0x22c55e);
 }
 
 void blankUI_draw_window(int width, int height, char* title) {
-    // 1. Draw frosted glass background layer
-    // 2. Draw drop shadow
-    // 3. Draw the Topbar area
-    // 4. Render Window Controls
-    blankUI_draw_window_controls(0, 0, width);
-    // 5. Render Title text in the center
+    // Draw center window
+    int x = (screen_width - width) / 2;
+    int y = (screen_height - height) / 2;
+
+    // Drop shadow
+    draw_rect_filled(x + 10, y + 10, width, height, 0x000000, 60);
+
+    // Window surface (frosted glass, semi-transparent white/gray)
+    draw_rect_filled(x, y, width, height, 0x1e293b, 204); // 80% opacity dark slate
+    
+    // Top header border/line
+    draw_rect_filled(x, y + 30, width, 1, 0xffffff, 40);
+    // Full border highlights
+    draw_rect_filled(x, y, width, 1, 0xffffff, 50);
+    draw_rect_filled(x, y, 1, height, 0xffffff, 50);
+
+    // Traffic light window controls
+    blankUI_draw_window_controls(x, y, width);
+
+    // Title centered in titlebar
+    int title_len = 0;
+    char* t = title;
+    while (*t++) title_len++;
+    int title_w = title_len * 8;
+    int title_x = x + (width - title_w) / 2;
+    blankUI_draw_text_color(title_x, y + 11, title, 0xe2e8f0);
 }
 
 void blankUI_draw_toast(char* title, char* message) {
-    blankUI_animate_slide_up(NULL);
-    // 1. Render a floating card at the top-right or bottom-right of the screen
-    // 2. Render the title (bold) and message
-    // 3. Ensure it has a high Z-index so it sits above application surfaces
+    int w = 280;
+    int h = 60;
+    int x = screen_width - w - 20;
+    int y = screen_height - h - 20;
+
+    draw_rect_filled(x, y, w, h, 0x0f172a, 240);
+    draw_rect_filled(x, y, w, 1, 0xffffff, 60);
+    
+    blankUI_draw_text_color(x + 12, y + 10, title, 0x38bdf8);
+    blankUI_draw_text_color(x + 12, y + 28, message, 0xe2e8f0);
 }
 
 } // extern "C"

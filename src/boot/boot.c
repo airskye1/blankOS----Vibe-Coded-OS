@@ -1,13 +1,24 @@
 #include <efi.h>
 #include <efilib.h>
+#include <efigop.h>
+
+/*
+ * Framebuffer info struct passed from bootloader to kernel_main.
+ */
+typedef struct {
+    uint32_t *framebuffer;
+    uint32_t width;
+    uint32_t height;
+    uint32_t pixels_per_scanline;
+} FramebufferInfo;
 
 /*
  * kernel_main is defined in kernel.cpp with extern "C", so the C linker
  * finds it by its unmangled name. Both boot.c and kernel.cpp are compiled
  * with GCC's default System V ABI, so the compiler automatically puts
- * SystemTable in the correct register (RDI).
+ * SystemTable in the correct register (RDI) and FramebufferInfo in (RSI).
  */
-extern void kernel_main(EFI_SYSTEM_TABLE *SystemTable);
+extern void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_info);
 
 /*
  * We explicitly declare efi_main with __attribute__((sysv_abi)) because
@@ -19,6 +30,10 @@ extern void kernel_main(EFI_SYSTEM_TABLE *SystemTable);
  * Microsoft x64 ms_abi calls, matching the UEFI firmware requirements.
  */
 EFI_STATUS __attribute__((sysv_abi)) efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    FramebufferInfo fb_info = {0};
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
+    EFI_GUID gopGuid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
+
     /* Immediate sign-of-life — if this prints, the ABI is correct */
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"BlankOS UEFI Hybrid Boot Loader v1.2.6\r\n");
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"========================================\r\n");
@@ -26,11 +41,24 @@ EFI_STATUS __attribute__((sysv_abi)) efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"========================================\r\n\r\n");
 
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OK ] UEFI Firmware Detected.\r\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OK ] Initializing BDRM Graphics Compositor...\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OK ] Locating Graphics Output Protocol (GOP)...\r\n");
+
+    /* Retrieve the Graphics Output Protocol (GOP) handle */
+    EFI_STATUS status = SystemTable->BootServices->LocateProtocol(&gopGuid, NULL, (VOID**)&gop);
+    if (status == EFI_SUCCESS && gop != NULL) {
+        fb_info.framebuffer = (uint32_t*)gop->Mode->FrameBufferBase;
+        fb_info.width = gop->Mode->Info->HorizontalResolution;
+        fb_info.height = gop->Mode->Info->VerticalResolution;
+        fb_info.pixels_per_scanline = gop->Mode->Info->PixelsPerScanLine;
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OK ] Graphics Mode Initialized successfully.\r\n");
+    } else {
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ WARN ] GOP not found! Defaulting to Text Mode.\r\n");
+    }
+
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OK ] Handing off to C++ kernel...\r\n\r\n");
 
-    /* Call kernel_main. Both are System V ABI, so it is a direct call. */
-    kernel_main(SystemTable);
+    /* Call kernel_main with the SystemTable and our GOP Framebuffer details */
+    kernel_main(SystemTable, &fb_info);
 
     /* Fallback halt — should never reach here */
     while(1) { __asm__ volatile("hlt"); }
