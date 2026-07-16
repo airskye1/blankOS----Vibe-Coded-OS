@@ -3,7 +3,7 @@
 
 extern void kernel_main(EFI_SYSTEM_TABLE *SystemTable);
 
-EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     // Reset the console to prevent weird VirtualBox artifacts
     SystemTable->ConOut->Reset(SystemTable->ConOut, FALSE);
     
