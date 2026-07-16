@@ -45,18 +45,19 @@ src/boot/mbr_stub.bin: src/boot/mbr_stub.asm
 	nasm -f bin $< -o $@
 
 blankOS.iso: src/boot/BOOTX64.EFI src/boot/mbr_stub.bin
+	rm -rf iso
 	mkdir -p iso/EFI/BOOT
 	cp src/boot/BOOTX64.EFI iso/EFI/BOOT/BOOTX64.EFI
 	cp src/boot/BOOTX64.EFI iso/EFI/BOOT/BOOTIA32.EFI
 	cp version.json iso/version.json
 	cp src/boot/mbr_stub.bin iso/mbr_stub.bin
-	dd if=/dev/zero of=iso/efiboot.img bs=1K count=2880
-	mformat -i iso/efiboot.img -f 2880 ::
+	dd if=/dev/zero of=iso/efiboot.img bs=1M count=64
+	mformat -i iso/efiboot.img ::
 	mmd -i iso/efiboot.img ::/EFI
 	mmd -i iso/efiboot.img ::/EFI/BOOT
-	mcopy -i iso/efiboot.img src/boot/BOOTX64.EFI ::/EFI/BOOT
-	mcopy -i iso/efiboot.img iso/EFI/BOOT/BOOTIA32.EFI ::/EFI/BOOT
-	xorriso -as mkisofs -R -f -b mbr_stub.bin -no-emul-boot -boot-load-size 4 -boot-info-table -eltorito-alt-boot -e efiboot.img -no-emul-boot -isohybrid-gpt-basdat -o $@ iso
+	mcopy -i iso/efiboot.img iso/EFI/BOOT/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
+	mcopy -i iso/efiboot.img iso/EFI/BOOT/BOOTIA32.EFI ::/EFI/BOOT/BOOTIA32.EFI
+	xorriso -as mkisofs -R -f -e efiboot.img -no-emul-boot -o $@ iso
 
 run: blankOS.iso
 	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -cdrom blankOS.iso -m 2048
