@@ -1,8 +1,12 @@
 #include <stdint.h>
 #include <stddef.h>
 
-// This file contains weak linkage stubs for all external functions to guarantee compilation
-// without undefined reference linker errors.
+// This file contains weak linkage stubs for all external functions to guarantee
+// compilation without undefined reference linker errors.
+// ALL stubs MUST be extern "C" to match the extern "C" definitions in
+// blankUI.cpp, kernel.cpp, and the app files.
+
+extern "C" {
 
 void __attribute__((weak)) init_compositor(void) {}
 void __attribute__((weak)) vm_allocate(void) {}
@@ -19,6 +23,7 @@ void __attribute__((weak)) blankUI_draw_button(int x, int y, int width, int heig
 void __attribute__((weak)) blankUI_draw_tabs(int x, int y, char** tab_names, int tab_count, int active_index) {}
 void __attribute__((weak)) blankUI_draw_toggle_switch(int x, int y, bool is_on, char* label) {}
 void __attribute__((weak)) blankUI_draw_slider(int x, int y, int width, float value, char* label) {}
+void __attribute__((weak)) blankUI_draw_search_bar(int x, int y, int width) {}
 
 char* __attribute__((weak)) http_get_with_cookies(char* url, char* cookies) { return NULL; }
 char* __attribute__((weak)) http_get(char* url) { return NULL; }
@@ -47,11 +52,12 @@ char* __attribute__((weak)) get_cpu_model(void) { return NULL; }
 // blankReg API
 char* __attribute__((weak)) blankReg_read_string(char* key) { return NULL; }
 void __attribute__((weak)) blankReg_write_string(char* key, char* value) {}
-// blankReg_get_string stub: used by login.c - was missing, caused undefined reference linker crash
 void __attribute__((weak)) blankReg_get_string(char* key, char* default_val) {}
 
 void __attribute__((weak)) os_send_notification(char* title, char* message) {}
 
-// Crypto stubs: used by login.c - were missing, caused undefined reference linker crash
+// Crypto stubs
 void __attribute__((weak)) sha256_hash(char* input_string, uint8_t* output_hash) {}
 int __attribute__((weak)) secure_compare(uint8_t* hash1, uint8_t* hash2) { return 0; }
+
+} // extern "C"

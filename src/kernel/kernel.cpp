@@ -2,7 +2,9 @@
 #include <efi.h>
 #include <efilib.h>
 
-extern void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable);
+extern "C" void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable);
+extern "C" void launch_app_store(EFI_SYSTEM_TABLE *SystemTable);
+extern "C" void launch_blankbrowser(EFI_SYSTEM_TABLE *SystemTable);
 
 extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable) {
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ KERNEL ] BlankOS Monolithic Architecture Loaded.\r\n");
@@ -19,10 +21,7 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable) {
     // Hand off to Setup Screen
     launch_setup_screen(SystemTable);
     
-    // Launch the requested C++ apps directly in the boot stream!
-    extern void launch_app_store(EFI_SYSTEM_TABLE *SystemTable);
-    extern void launch_blankbrowser(EFI_SYSTEM_TABLE *SystemTable);
-    
+    // Launch C++ apps
     launch_app_store(SystemTable);
     launch_blankbrowser(SystemTable);
     
