@@ -1,13 +1,15 @@
 #include <stdint.h>
 #include <stddef.h>
 
+extern "C" {
+
 // Globals exposed to the kernel and blankUI
 volatile uint32_t* framebuffer = NULL;
 int screen_width = 1024;
 int screen_height = 768;
 int pixels_per_scanline = 1024;
 
-extern "C" void init_blankUI_toolkit(void);
+extern void init_blankUI_toolkit(void);
 
 // Clear the screen to a specific color
 void clear_screen(uint32_t color) {
@@ -89,7 +91,7 @@ void draw_gradient_background(uint32_t top_color, uint32_t bottom_color) {
     }
 }
 
-extern "C" void init_compositor(void) {
+void init_compositor(void) {
     // Render a high-end, premium deep blue/violet gradient desktop background
     draw_gradient_background(0x0f172a, 0x1e1b4b);
     
@@ -97,11 +99,12 @@ extern "C" void init_compositor(void) {
     init_blankUI_toolkit();
 }
 
-// Weak reference stubs to allow boot.o linkage to succeed
-extern "C" void put_pixel(int x, int y, uint32_t color) {
+void put_pixel(int x, int y, uint32_t color) {
     put_pixel_alpha(x, y, color, 255);
 }
 
-extern "C" void composite_surface(int x, int y, int width, int height, uint32_t* buffer, int z_index, int has_blur) {
+void composite_surface(int x, int y, int width, int height, uint32_t* buffer, int z_index, int has_blur) {
     // Composite overlay logic (stubbed)
 }
+
+} // extern "C"
