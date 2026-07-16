@@ -2,10 +2,11 @@
   "os_name": "BlankOS",
   "version_major": 1,
   "version_minor": 1,
-  "version_patch": 2,
+  "version_patch": 3,
   "build_date": "2026-07-16",
   "update_url": "https://github.com/airskye1/blankOS----Vibe-Coded-OS",
   "update_logs": [
+    "1.1.3: Bootloader fix. + version change",
     "1.1.2: Re-architected boot sequence to unify the kernel into the UEFI bootloader, implemented mtools virtual floppy booting, and added a detailed visual text-mode OOBE installer.",
     "1.1.1: Implemented automated GitHub Release publishing and the custom vibe-coded linter (linter.ps1).",
     "1.1.0: Added Audio subsystem, Brightness controls, WiFi/BT toggles, blankDrop (AirDrop/QuickShare), and a Chrome-equivalent rendering engine in blankBrowser.",
