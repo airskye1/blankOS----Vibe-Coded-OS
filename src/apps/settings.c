@@ -1,3 +1,4 @@
+#include <stdbool.h>
 extern void blankUI_draw_topbar(char* app_title);
 extern void blankUI_draw_tabs(int x, int y, char** tab_names, int tab_count, int active_index);
 extern void blankUI_draw_toggle_switch(int x, int y, bool is_on, char* label);
