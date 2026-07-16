@@ -3,7 +3,13 @@
 
 extern void kernel_main(EFI_SYSTEM_TABLE *SystemTable);
 
-EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+/*
+ * UEFI firmware invokes an x86_64 application using the Microsoft x64 ABI.
+ * GNU-EFI's startup object forwards those registers directly to efi_main, so
+ * EFIAPI is required here.  Without it, GCC expects SystemTable in RSI
+ * instead of RDX and the first firmware call faults before anything prints.
+ */
+EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     InitializeLib(ImageHandle, SystemTable);
     
     // Reset the console to prevent weird VirtualBox artifacts
