@@ -4,26 +4,19 @@
 void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable) {
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\n--- BlankOS Out Of Box Experience (OOBE) ---\n\n");
     
-    for (volatile int i = 0; i < 50000000; i++) {}
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OOBE ] Probing System Hardware...\n");
-    
-    for (volatile int i = 0; i < 30000000; i++) {}
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OOBE ] Probing System Hardware (Universal Auto-Config)...\n");
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OOBE ] > RAM Check: 2048MB (Pass)\n");
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OOBE ] > Disk Check: 25GB NVMe (Pass)\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OOBE ] > CPU Check: 64-bit (Pass)\n\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OOBE ] > CPU Check: Universal 64-bit Platform (Pass)\n\n");
     
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ INSTALL ] Target Disk: /dev/nvme0n1 (25 GB)\n");
-    for (volatile int i = 0; i < 40000000; i++) {}
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ INSTALL ] Creating Partition Table (GPT)...\n");
-    for (volatile int i = 0; i < 40000000; i++) {}
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ INSTALL ] Formatting /dev/nvme0n1p1 as FAT32 (EFI System Partition)...\n");
-    for (volatile int i = 0; i < 40000000; i++) {}
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ INSTALL ] Formatting /dev/nvme0n1p2 as ext4 (Root OS Partition)...\n\n");
     
-    for (volatile int i = 0; i < 80000000; i++) {}
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ INSTALL ] Copying OS Core Files to Disk...\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ INSTALL ] Fast-Copying OS Core Files to Disk...\n");
     
-    // Simulate file extraction
+    // Simulate file extraction without delays
     const CHAR16* files[] = {
         L"  -> Copying src/kernel/kernel.elf...\n",
         L"  -> Copying src/boot/BOOTX64.EFI to /EFI/BOOT/...\n",
@@ -33,17 +26,14 @@ void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable) {
         L"  -> Installing App: store.bloe\n",
         L"  -> Installing App: blankDrop.bloe\n",
         L"  -> Installing App: sysinfo.bloe\n",
-        L"  -> Installing Drivers: BDRM Graphics, Audio, Network...\n"
+        L"  -> Installing Drivers: Auto-Configuring BDRM Graphics, Audio, Network for Universal Platform...\n"
     };
     
     for (int j = 0; j < 9; j++) {
-        for (volatile int i = 0; i < 30000000; i++) {}
         SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)files[j]);
     }
     
-    for (volatile int i = 0; i < 80000000; i++) {}
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\n[ INSTALL ] Syncing disk write cache...\n");
-    for (volatile int i = 0; i < 40000000; i++) {}
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ INSTALL ] Writing boot sector...\n\n");
     
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"========================================================\n");
