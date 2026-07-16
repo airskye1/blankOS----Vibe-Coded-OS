@@ -2,10 +2,11 @@
   "os_name": "BlankOS",
   "version_major": 1,
   "version_minor": 2,
-  "version_patch": 5,
+  "version_patch": 6,
   "build_date": "2026-07-16",
   "update_url": "https://github.com/airskye1/blankOS----Vibe-Coded-OS",
   "update_logs": [
+    "1.2.6: Final UEFI/crt0 hybrid ABI fix. Declared efi_main as sysv_abi to match the precompiled Ubuntu crt0.o wrapper, while retaining ms_abi for standard UEFI function pointers. Restored crt0.o linkage to ensure proper PE/COFF header generation.",
     "1.2.5: Bypassed standard gnu-efi crt0.o startup file entirely by defining a custom direct _start entry point with ms_abi. Added manual relocation with _relocate to fix the ABI mismatch and stack misalignment issues present on ubuntu-latest build environments.",
     "1.2.4: Resolved catastrophic boot loop and hang. Removed the InitializeLib() call which caused an immediate crash due to Microsoft/System V ABI mismatch. Deleted the entire assembly kernel shim layer and transitioned fully to direct C++ linkage to let the compiler safely handle ABI translations automatically. Fixed missing extern C declarations in kernel.cpp and stubs.cpp.",
     "1.2.3: Critical Architecture Overhaul. Fixed deep CPU ABI mismatch (RCX/RDI), C++ name mangling, and blankUI struct signature mismatches. Added Hybrid Dual-Boot (Legacy BIOS + UEFI) with custom MBR stub. Added VirtualBox and VMware auto-configuring templates.",
