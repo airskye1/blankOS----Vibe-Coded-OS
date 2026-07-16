@@ -18,7 +18,7 @@ src/boot/boot.o: src/boot/boot.c
 	$(CC) $(CFLAGS) -m64 -c $< -o $@
 
 src/boot/boot.so: src/boot/boot.o $(KERNEL_OBJS)
-	$(LD) $(LDFLAGS) /usr/lib/crt0-efi-x86_64.o src/boot/boot.o $(KERNEL_OBJS) -o $@ $(LIBS)
+	$(LD) $(LDFLAGS) src/boot/boot.o $(KERNEL_OBJS) -o $@ $(LIBS)
 
 src/boot/BOOTX64.EFI: src/boot/boot.so
 	$(OBJCOPY) -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rel -j .rela -j .rel.* -j .rela.* -j .reloc -j .rodata -j .bss --target efi-app-x86_64 $< $@
