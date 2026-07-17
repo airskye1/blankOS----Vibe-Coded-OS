@@ -46,6 +46,9 @@ extern "C" {
     uint16_t svga_value_port = 0;
     volatile uint32_t* svga_fifo = NULL;
     uint32_t* svga_fb = NULL;
+    
+    extern int screen_width;
+    extern int screen_height;
 
     static void svga_write_reg(uint32_t index, uint32_t value) {
         outl(svga_index_port, index);
@@ -108,6 +111,10 @@ extern "C" {
         svga_fifo[SVGA_FIFO_MAX] = svga_read_reg(17); // SVGA_REG_MEM_SIZE
         svga_fifo[SVGA_FIFO_NEXT_CMD] = svga_fifo[SVGA_FIFO_MIN];
         svga_fifo[SVGA_FIFO_STOP] = svga_fifo[SVGA_FIFO_MIN];
+        
+        svga_write_reg(SVGA_REG_WIDTH, screen_width);
+        svga_write_reg(SVGA_REG_HEIGHT, screen_height);
+        svga_write_reg(SVGA_REG_BITS_PER_PIXEL, 32);
         
         svga_write_reg(SVGA_REG_ENABLE, 1);
         svga_write_reg(SVGA_REG_CONFIG_DONE, 1);

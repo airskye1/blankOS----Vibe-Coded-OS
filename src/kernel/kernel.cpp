@@ -25,6 +25,7 @@ extern "C" {
     extern void init_compositor(EFI_SYSTEM_TABLE *SystemTable);
     extern void swap_buffers();
     extern void dui_draw_wallpaper();
+    extern void dui_rect(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
     extern void blankUI_draw_menubar();
     extern void blankUI_draw_dock();
     extern void blankUI_draw_cursor(int x, int y);
@@ -66,17 +67,29 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ KERNEL ] BlankOS Monolithic Architecture Loaded.\r\n");
     klog("[ KERNEL ] BlankOS Monolithic Architecture Loaded.");
     
+    // Initialize Framebuffer & Compositor FIRST so hardware drivers know the screen resolution
+    if (fb_info && fb_info->framebuffer) {
+        framebuffer = fb_info->framebuffer;
+        screen_width = fb_info->width;
+        screen_height = fb_info->height;
+        pixels_per_scanline = fb_info->pixels_per_scanline;
+        init_compositor(SystemTable);
+        extern void dui_init(EFI_SYSTEM_TABLE* st);
+        dui_init(SystemTable);
+        klog("[ GPU    ] Framebuffer Initialized.");
+    }
+    
     // Hardware Enumeration
     pci_enumerate(SystemTable);
     klog("[ KERNEL ] PCI Enumeration Complete.");
     
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] Searching for Ethernet Controller...\r\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] Ethernet Link UP - Gigabit Ethernet Detected.\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ SYSTEM ] Searching for Ethernet Controller...\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ SYSTEM ] Ethernet Link UP - Gigabit Ethernet Detected.\r\n");
     klog("[ NET    ] Ethernet Link UP - Gigabit Ethernet Detected.");
     SystemTable->BootServices->Stall(300000);
     
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] Requesting DHCP IPv4 Lease...\r\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] IPv4 Address: 192.168.1.42\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ SYSTEM ] Requesting DHCP IPv4 Lease...\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ SYSTEM ] IPv4 Address: 192.168.1.42\r\n");
     klog("[ NET    ] IPv4 Address: 192.168.1.42 (DHCP)");
     SystemTable->BootServices->Stall(300000);
     
@@ -85,22 +98,12 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
     
     SystemTable->ConOut->ClearScreen(SystemTable->ConOut);
     
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ KERNEL ] Initializing Physical Memory Manager...\r\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ KERNEL ] Initializing blankReg database...\r\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ KERNEL ] Initializing BDRM Graphics Pipeline...\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ KERNEL ] Initializing Physical Memory Manager...\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ KERNEL ] Initializing blankReg database...\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ KERNEL ] Initializing BDRM Graphics Pipeline...\r\n");
     klog("[ KERNEL ] Memory Manager Initialized.");
     klog("[ KERNEL ] blankReg Database Initialized.");
     klog("[ KERNEL ] BDRM Graphics Pipeline Active.");
-    
-    // Initialize Framebuffer & Compositor
-    if (fb_info && fb_info->framebuffer) {
-        framebuffer = fb_info->framebuffer;
-        screen_width = fb_info->width;
-        screen_height = fb_info->height;
-        pixels_per_scanline = fb_info->pixels_per_scanline;
-        init_compositor(SystemTable);
-        klog("[ GPU    ] Framebuffer Initialized.");
-    }
     
     // Boot Flow Layering
     launch_loading_screen(SystemTable); // Always show loading screen
@@ -113,11 +116,21 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
     }
     
     // Play startup sound
-    play_system_sound(0);
+    play_system_sound((char*)"startup");
     klog("[ AUDIO  ] Startup Sound Played.");
     
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n[ SYSTEM ] Entering Desktop Environment...\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"\r\n[ SYSTEM ] Entering Desktop Environment...\r\n");
     klog("[ SYSTEM ] Desktop Environment Active.");
+    
+    // Global Fade-in Animation
+    for (int alpha = 255; alpha >= 0; alpha -= 5) {
+        dui_draw_wallpaper();
+        blankUI_draw_menubar();
+        blankUI_draw_dock();
+        dui_rect(0, 0, screen_width, screen_height, 0x000000, alpha);
+        swap_buffers();
+        SystemTable->BootServices->Stall(16000);
+    }
     
     // Mouse setup
     EFI_GUID SimplePointerProtocolGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;

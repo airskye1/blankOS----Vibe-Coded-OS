@@ -2,6 +2,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <efi.h>
+#include <efiprot.h>
+#include "../stb_truetype.h"
 
 extern "C" {
     extern uint32_t* backbuffer;
@@ -9,6 +11,47 @@ extern "C" {
     extern int screen_height;
     extern void put_pixel_alpha(int x, int y, uint32_t color, uint8_t alpha);
     extern const uint8_t font8x8_basic[95][8];
+
+    static stbtt_fontinfo font_info;
+    static uint8_t* font_buffer = NULL;
+    static bool font_loaded = false;
+    static uint8_t char_bitmap_buf[16384];
+
+    void dui_init(EFI_SYSTEM_TABLE* SystemTable) {
+        EFI_GUID fsGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+        UINTN numHandles = 0;
+        EFI_HANDLE *handleBuffer = NULL;
+        SystemTable->BootServices->LocateHandleBuffer(ByProtocol, &fsGuid, NULL, &numHandles, &handleBuffer);
+        
+        for (UINTN i = 0; i < numHandles; i++) {
+            EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
+            SystemTable->BootServices->HandleProtocol(handleBuffer[i], &fsGuid, (void**)&fs);
+            if (!fs) continue;
+            
+            EFI_FILE_HANDLE root = NULL;
+            if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+            
+            EFI_FILE_HANDLE file = NULL;
+            EFI_STATUS Status = root->Open(root, &file, (CHAR16*)L"assets\\font.ttf", EFI_FILE_MODE_READ, 0);
+            if (!EFI_ERROR(Status) && file != NULL) {
+                UINTN buf_size = 1024 * 1024;
+                SystemTable->BootServices->AllocatePool(EfiLoaderData, buf_size, (void**)&font_buffer);
+                if (font_buffer) {
+                    Status = file->Read(file, &buf_size, font_buffer);
+                    if (!EFI_ERROR(Status)) {
+                        if (stbtt_InitFont(&font_info, font_buffer, stbtt_GetFontOffsetForIndex(font_buffer, 0))) {
+                            font_loaded = true;
+                        }
+                    }
+                }
+                file->Close(file);
+                root->Close(root);
+                break;
+            }
+            root->Close(root);
+        }
+        if (handleBuffer) SystemTable->BootServices->FreePool(handleBuffer);
+    }
 
     // --- Memory Utilities ---
     void dui_memset32(uint32_t* dst, uint32_t val, int count) {
@@ -201,40 +244,132 @@ extern "C" {
     // --- Text Rendering ---
     void dui_char(int x, int y, char c, uint32_t color, int scale) {
         if (c < 32 || c > 126) return;
-        int idx = c - 32;
-        for (int row = 0; row < 8; row++) {
-            uint8_t byte = font8x8_basic[idx][row];
-            for (int col = 0; col < 8; col++) {
-                if (byte & (0x80 >> col)) {
-                    for(int sy=0; sy<scale; sy++) {
-                        for(int sx=0; sx<scale; sx++) {
-                            plot(x + col * scale + sx, y + row * scale + sy, color, 255);
+        if (!font_loaded) {
+            int idx = c - 32;
+            for (int row = 0; row < 8; row++) {
+                uint8_t byte = font8x8_basic[idx][row];
+                for (int col = 0; col < 8; col++) {
+                    if (byte & (0x80 >> col)) {
+                        for(int sy=0; sy<scale; sy++) {
+                            for(int sx=0; sx<scale; sx++) {
+                                plot(x + col * scale + sx, y + row * scale + sy, color, 255);
+                            }
                         }
+                    }
+                }
+            }
+            return;
+        }
+        float px_size = (scale == 1) ? 16.0f : ((scale == 2) ? 24.0f : 32.0f);
+        float scale_factor = stbtt_ScaleForPixelHeight(&font_info, px_size);
+        
+        int ascent, descent, lineGap;
+        stbtt_GetFontVMetrics(&font_info, &ascent, &descent, &lineGap);
+        int baseline = (int)(ascent * scale_factor);
+        
+        int x0, y0, x1, y1;
+        stbtt_GetCodepointBitmapBox(&font_info, c, scale_factor, scale_factor, &x0, &y0, &x1, &y1);
+        
+        int w = x1 - x0;
+        int h = y1 - y0;
+        
+        if (w * h < 16384) {
+            stbtt_MakeCodepointBitmap(&font_info, char_bitmap_buf, w, h, w, scale_factor, scale_factor, c);
+            for (int row = 0; row < h; row++) {
+                for (int col = 0; col < w; col++) {
+                    uint8_t alpha = char_bitmap_buf[row * w + col];
+                    if (alpha > 0) {
+                        plot(x + x0 + col, y + baseline + y0 + row, color, alpha);
                     }
                 }
             }
         }
     }
+
     void dui_text(int x, int y, const char* text, uint32_t color, int scale) {
         if (!text) return;
+        if (!font_loaded) {
+            int cur_x = x;
+            while (*text) {
+                dui_char(cur_x, y, *text, color, scale);
+                cur_x += 8 * scale;
+                text++;
+            }
+            return;
+        }
+        
+        float px_size = (scale == 1) ? 16.0f : ((scale == 2) ? 24.0f : 32.0f);
+        float scale_factor = stbtt_ScaleForPixelHeight(&font_info, px_size);
+        
+        int ascent, descent, lineGap;
+        stbtt_GetFontVMetrics(&font_info, &ascent, &descent, &lineGap);
+        int baseline = (int)(ascent * scale_factor);
+        
         int cur_x = x;
+        int cur_y = y + baseline;
+        
         while (*text) {
-            dui_char(cur_x, y, *text, color, scale);
-            cur_x += 8 * scale;
-            text++;
+            char c = *text++;
+            if (c < 32 || c > 126) continue;
+            
+            int advanceWidth, leftSideBearing;
+            stbtt_GetCodepointHMetrics(&font_info, c, &advanceWidth, &leftSideBearing);
+            
+            int x0, y0, x1, y1;
+            stbtt_GetCodepointBitmapBox(&font_info, c, scale_factor, scale_factor, &x0, &y0, &x1, &y1);
+            
+            int w = x1 - x0;
+            int h = y1 - y0;
+            
+            if (w * h < 16384) {
+                stbtt_MakeCodepointBitmap(&font_info, char_bitmap_buf, w, h, w, scale_factor, scale_factor, c);
+                for (int row = 0; row < h; row++) {
+                    for (int col = 0; col < w; col++) {
+                        uint8_t alpha = char_bitmap_buf[row * w + col];
+                        if (alpha > 0) {
+                            plot(cur_x + x0 + col, cur_y + y0 + row, color, alpha);
+                        }
+                    }
+                }
+            }
+            
+            cur_x += (int)(advanceWidth * scale_factor);
+            if (*text) {
+                int kern = stbtt_GetCodepointKernAdvance(&font_info, c, *text);
+                cur_x += (int)(kern * scale_factor);
+            }
         }
     }
+
     void dui_text_bold(int x, int y, const char* text, uint32_t color, int scale) {
         dui_text(x, y, text, color, scale);
         dui_text(x + 1, y, text, color, scale);
     }
+
     int dui_text_width(const char* text, int scale) {
-        int len = 0;
-        while (text && *text++) len++;
-        return len * 8 * scale;
+        if (!font_loaded) {
+            int len = 0;
+            while (text && *text++) len++;
+            return len * 8 * scale;
+        }
+        float px_size = (scale == 1) ? 16.0f : ((scale == 2) ? 24.0f : 32.0f);
+        float scale_factor = stbtt_ScaleForPixelHeight(&font_info, px_size);
+        int w = 0;
+        while (text && *text) {
+            int advanceWidth, leftSideBearing;
+            stbtt_GetCodepointHMetrics(&font_info, *text, &advanceWidth, &leftSideBearing);
+            w += (int)(advanceWidth * scale_factor);
+            if (*(text+1)) {
+                w += (int)(stbtt_GetCodepointKernAdvance(&font_info, *text, *(text+1)) * scale_factor);
+            }
+            text++;
+        }
+        return w;
     }
+
     int dui_text_height(int scale) {
-        return 8 * scale;
+        if (!font_loaded) return 8 * scale;
+        return (scale == 1) ? 16 : ((scale == 2) ? 24 : 32);
     }
 
     // --- Programmatic Icons ---

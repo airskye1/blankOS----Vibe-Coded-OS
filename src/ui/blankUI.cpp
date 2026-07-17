@@ -15,6 +15,10 @@ extern void draw_rect_rounded(int x, int y, int w, int h, int r, uint32_t color,
 extern void draw_circle_filled(int cx, int cy, int r, uint32_t color);
 extern void draw_frosted_glass_rounded(int x, int y, int w, int h, int r, uint32_t tint_color, uint8_t tint_alpha);
 
+extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
+extern int dui_text_width(const char* text, int scale);
+extern int dui_text_height(int scale);
+
 static bool reduce_motion_enabled = false;
 static int last_mouse_x = 0;
 static int last_mouse_y = 0;
@@ -143,13 +147,7 @@ void blankUI_draw_text(int x, int y, char* text) {
 }
 
 void blankUI_draw_text_color(int x, int y, char* text, uint32_t color) {
-    if (!text) return;
-    int cur_x = x;
-    while (*text) {
-        blankUI_draw_char(cur_x, y, *text, color);
-        cur_x += 8;
-        text++;
-    }
+    dui_text(x, y, text, color, 1);
 }
 
 void init_blankUI_toolkit(void) {
@@ -168,12 +166,10 @@ void blankUI_draw_button(int x, int y, int width, int height, char* text) {
     draw_rect_rounded(x, y, width, height, 16, 0x18171c, 255);
     draw_rect_rounded(x, y, width, 1, 16, 0xFFFFFF, 40); // Top highlight
     
-    int text_len = 0;
-    char* t = text;
-    while (*t++) text_len++;
-    int text_w = text_len * 8;
+    int text_w = dui_text_width(text, 1);
+    int text_h = dui_text_height(1);
     int text_x = x + (width - text_w) / 2;
-    int text_y = y + (height - 8) / 2;
+    int text_y = y + (height - text_h) / 2;
     blankUI_draw_text_color(text_x, text_y, text, 0xFFFFFF); // White text on dark button
 }
 
@@ -360,10 +356,7 @@ void blankUI_draw_window(int width, int height, char* title) {
 
     blankUI_draw_window_controls(x, y);
 
-    int title_len = 0;
-    char* t = title;
-    while (*t++) title_len++;
-    int title_w = title_len * 8;
+    int title_w = dui_text_width(title, 1);
     int title_x = x + (width - title_w) / 2;
     blankUI_draw_text_color(title_x, y + 12, title, 0x333333);
 }
