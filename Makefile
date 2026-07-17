@@ -42,7 +42,7 @@ src/boot/mbr_stub.bin: src/boot/mbr_stub.asm
 	nasm -f bin $< -o $@
 
 blankOS.iso: src/boot/BOOTX64.EFI src/boot/mbr_stub.bin
-	make -C store_repo
+	cd store_repo && $(MAKE)
 	rm -rf iso
 	mkdir -p iso/EFI/BOOT
 	mkdir -p iso/EFI/APPS
