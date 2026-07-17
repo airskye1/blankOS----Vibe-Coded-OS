@@ -325,7 +325,7 @@ void blankUI_draw_menubar() {
 void blankUI_draw_dock() {
     int icon_size = 48;
     int spacing = 10;
-    int num_icons = 9; // Finder, Settings, Browser, Store, Terminal, Calculator, Weather, Doom, Trash
+    int num_icons = 8; // Finder, Settings, Browser, Store, Terminal, Calculator, Weather, Trash
     int dock_content_w = num_icons * icon_size + (num_icons - 1) * spacing + 32;
     int dock_w = dock_content_w;
     int dock_h = 64;
@@ -339,9 +339,9 @@ void blankUI_draw_dock() {
     int start_x = dock_x + 16;
     int start_y = dock_y + 4;
     
-    for (int i = 0; i < 9; i++) {
+    for (int i = 0; i < 8; i++) {
         int base_x = start_x + (icon_size + spacing) * i;
-        if (i == 8) base_x += 8; // Trash offset
+        if (i == 7) base_x += 8; // Trash offset
         
         float target = 1.0f;
         if (last_mouse_x >= base_x && last_mouse_x <= base_x + icon_size &&
@@ -376,16 +376,13 @@ void blankUI_draw_dock() {
             draw_rect_rounded(cx, cy, s, s, 12, 0x30B0C7, 255);
             blankUI_draw_text_color(base_x - 4, start_y + icon_size + 2, (char*)"Weather", 0x333333);
         } else if (i == 7) {
-            draw_rect_rounded(cx, cy, s, s, 12, 0xFF3B30, 255); // Red Doom app box
-            blankUI_draw_text_color(base_x + 8, start_y + icon_size + 2, (char*)"Doom", 0x333333);
-        } else if (i == 8) {
             draw_rect_rounded(cx, cy, s, s, 12, 0xE5E5EA, 255);
             blankUI_draw_text_color(base_x + 12, start_y + icon_size + 2, (char*)"Trash", 0x333333);
         }
     }
     
-    // Divider moved for 9 icons
-    draw_rect_filled(start_x + (icon_size+spacing)*8, start_y + 8, 1, icon_size - 16, 0x000000, 40);
+    // Divider moved for 8 icons
+    draw_rect_filled(start_x + (icon_size+spacing)*7, start_y + 8, 1, icon_size - 16, 0x000000, 40);
 }
 
 // Multi-cursor state & bitmaps (0=transparent, 1=black, 2=white)

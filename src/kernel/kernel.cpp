@@ -42,7 +42,6 @@ extern "C" {
     extern void launch_weather(EFI_SYSTEM_TABLE *SystemTable);
     extern void launch_browser(EFI_SYSTEM_TABLE *SystemTable);
     extern void launch_terminal(EFI_SYSTEM_TABLE *SystemTable);
-    extern void launch_doom(EFI_SYSTEM_TABLE *SystemTable);
     extern void blankOS_panic(const char* error_code, const char* details);
     
     extern bool wifi_menu_open;
@@ -295,8 +294,6 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
                                 launch_calculator(SystemTable);
                             } else if (clicked_app == 6) { // Weather
                                 launch_weather(SystemTable);
-                            } else if (clicked_app == 7) { // Doom
-                                launch_doom(SystemTable);
                             }
                         }
                     }

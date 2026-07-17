@@ -9,7 +9,7 @@ LDFLAGS = -nostdlib -znocombreloc -shared -Bsymbolic -L /usr/lib -T /usr/lib/elf
 LIBS = -lefi -lgnuefi
 
 # Kernel Objects MUST be defined before they are used as dependencies!
-KERNEL_OBJS = src/kernel/kernel.o src/kernel/stb_stdlib.o src/kernel/stb_wrapper.o src/kernel/memory.o src/kernel/panic.o src/kernel/wifi_bluetooth.o src/kernel/bdrm.o src/kernel/bloe_loader.o src/kernel/elf_loader.o src/kernel/pci.o src/kernel/blank_reg.o src/kernel/crypto.o src/kernel/time.o src/kernel/notifications.o src/kernel/power.o src/kernel/battery.o src/kernel/cookies.o src/kernel/audio.o src/kernel/disk_formatter.o src/kernel/svga.o src/kernel/stubs.o src/ui/compositor.o src/ui/blankDUI.o src/ui/blankUI.o src/libc_stubs/libc.o src/apps/setup.o src/apps/login.o src/apps/blankreg_edit.o src/apps/blankpad.o src/apps/updater.o src/apps/loading_screen.o src/apps/updating_screen.o src/apps/intro.o src/apps/sysinfo.o src/apps/store.o src/apps/task_manager.o src/apps/terminal.o src/apps/calculator.o src/apps/weather.o src/apps/browser.o src/apps/doom.o
+KERNEL_OBJS = src/kernel/kernel.o src/kernel/stb_stdlib.o src/kernel/stb_wrapper.o src/kernel/memory.o src/kernel/panic.o src/kernel/wifi_bluetooth.o src/kernel/bdrm.o src/kernel/bloe_loader.o src/kernel/elf_loader.o src/kernel/pci.o src/kernel/blank_reg.o src/kernel/crypto.o src/kernel/time.o src/kernel/notifications.o src/kernel/power.o src/kernel/battery.o src/kernel/cookies.o src/kernel/audio.o src/kernel/disk_formatter.o src/kernel/svga.o src/kernel/stubs.o src/ui/compositor.o src/ui/blankDUI.o src/ui/blankUI.o src/apps/setup.o src/apps/login.o src/apps/blankreg_edit.o src/apps/blankpad.o src/apps/updater.o src/apps/loading_screen.o src/apps/updating_screen.o src/apps/intro.o src/apps/sysinfo.o src/apps/store.o src/apps/task_manager.o src/apps/terminal.o src/apps/calculator.o src/apps/weather.o src/apps/browser.o
 
 all: blankOS.iso
 
@@ -30,11 +30,6 @@ src/kernel/%.o: src/kernel/%.cpp
 src/ui/%.o: src/ui/%.cpp
 	$(CXX) $(CXXFLAGS) -m64 -c $< -o $@
 
-src/libc_stubs/%.o: src/libc_stubs/%.cpp
-	$(CXX) $(CXXFLAGS) -I src/libc_stubs -m64 -c $< -o $@
-
-src/apps/doom.o: src/apps/doom.cpp
-	$(CXX) $(CXXFLAGS) -I src/libc_stubs -I src/apps/doom_src -m64 -c $< -o $@
 
 src/apps/%.o: src/apps/%.cpp
 	$(CXX) $(CXXFLAGS) -m64 -c $< -o $@
@@ -58,7 +53,6 @@ blankOS.iso: src/boot/BOOTX64.EFI src/boot/mbr_stub.bin
 	cp assets/* iso/assets/ 2>/dev/null || true
 	cp src/boot/BOOTX64.EFI iso/EFI/BOOT/BOOTX64.EFI
 	cp store_repo/apps/*.elf iso/EFI/APPS/ 2>/dev/null || true
-	cp assets/doom1.wad iso/EFI/APPS/doom1.wad 2>/dev/null || true
 	cp src/boot/BOOTX64.EFI iso/EFI/BOOT/BOOTIA32.EFI
 	cp version.json iso/version.json
 	cp src/boot/mbr_stub.bin iso/mbr_stub.bin
@@ -70,7 +64,6 @@ blankOS.iso: src/boot/BOOTX64.EFI src/boot/mbr_stub.bin
 	mcopy -i iso/efiboot.img iso/EFI/BOOT/BOOTIA32.EFI ::/EFI/BOOT/BOOTIA32.EFI
 	mmd -i iso/efiboot.img ::/EFI/APPS
 	mcopy -i iso/efiboot.img iso/EFI/APPS/*.elf ::/EFI/APPS/ 2>/dev/null || true
-	mcopy -i iso/efiboot.img iso/EFI/APPS/doom1.wad ::/EFI/APPS/doom1.wad 2>/dev/null || true
 	mcopy -i iso/efiboot.img store_repo/catalog.json ::/EFI/APPS/catalog.json 2>/dev/null || true
 	mmd -i iso/efiboot.img ::/assets
 	mcopy -i iso/efiboot.img iso/assets/* ::/assets/ 2>/dev/null || true
