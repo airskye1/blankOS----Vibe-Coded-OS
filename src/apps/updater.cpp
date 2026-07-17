@@ -91,7 +91,7 @@ extern "C" {
                 blankUI_draw_dock();
                 blankUI_draw_window(win_w, win_h, (char*)"Software Update");
                 blankUI_draw_text_color(win_x + 40, win_y + 80, (char*)"BlankOS is up to date.", 0x000000);
-                blankUI_draw_text_color(win_x + 40, win_y + 110, (char*)"Version 1.2.8 is installed.", 0x666666);
+                blankUI_draw_text_color(win_x + 40, win_y + 110, (char*)"Version 1.2.9 is installed.", 0x666666);
                 blankUI_draw_button(win_x + 190, win_y + 170, 100, 32, (char*)"Done (or Enter)");
                 blankUI_draw_cursor(cursor_x, cursor_y);
                 swap_buffers();

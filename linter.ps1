@@ -4,7 +4,7 @@ param(
 )
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host " Running Advanced Vibe-Coded Auto-Linter v1.2.8" -ForegroundColor Cyan
+Write-Host " Running Advanced Vibe-Coded Auto-Linter v1.2.9" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 $errorFound = $false
 
@@ -51,6 +51,10 @@ if (Test-Path $Makefile) {
 # 2. Source Code static analysis
 $files = Get-ChildItem -Path $TargetDir -Recurse -Include *.cpp,*.c,*.h
 foreach ($file in $files) {
+    if ($file -match "stb_") {
+        continue
+    }
+
     $content = Get-Content $file.FullName -Raw
     $changed = $false
     $relName = $file.FullName.Replace((Get-Item .).FullName + "\", "")

@@ -36,9 +36,9 @@ EFI_STATUS __attribute__((sysv_abi)) efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM
     EFI_GUID gopGuid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
 
     /* Immediate sign-of-life â€” if this prints, the ABI is correct */
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"BlankOS UEFI Hybrid Boot Loader v1.2.8\r\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"========================================\r\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"  Welcome to BlankOS v1.2.8 Bootloader  \r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"BlankOS UEFI Hybrid Boot Loader v1.2.9\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"--------------------------------------\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"  Welcome to BlankOS v1.2.9 Bootloader  \r\n");
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"========================================\r\n\r\n");
 
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OK ] UEFI Firmware Detected.\r\n");

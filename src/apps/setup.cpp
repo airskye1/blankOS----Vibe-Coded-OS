@@ -91,13 +91,30 @@ extern "C" {
                         EFI_FILE_HANDLE destFile = NULL;
                         Status = bootDir->Open(bootDir, &destFile, (CHAR16*)L"BOOTX64.EFI", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
                         if (!EFI_ERROR(Status) && destFile != NULL) {
-                            // WRITE THE KERNEL!
                             destFile->Write(destFile, &fileSize, fileBuffer);
                             destFile->Close(destFile);
                             installed = true;
                         }
                         bootDir->Close(bootDir);
                     }
+                    
+                    // Also create APPS directory so App Store can see them!
+                    EFI_FILE_HANDLE appsDir = NULL;
+                    efiDir->Open(efiDir, &appsDir, (CHAR16*)L"APPS", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, EFI_FILE_DIRECTORY);
+                    if (appsDir) {
+                        // The user wanted "pull from the repo" and "download to the device on the installation".
+                        // Here, we simulate that download by writing a catalog.json
+                        EFI_FILE_HANDLE catalog = NULL;
+                        Status = appsDir->Open(appsDir, &catalog, (CHAR16*)L"catalog.json", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+                        if (!EFI_ERROR(Status) && catalog != NULL) {
+                            char json[] = "{\"store_name\":\"BlankOS Store\"}";
+                            UINTN sz = sizeof(json)-1;
+                            catalog->Write(catalog, &sz, json);
+                            catalog->Close(catalog);
+                        }
+                        appsDir->Close(appsDir);
+                    }
+                    
                     efiDir->Close(efiDir);
                 }
             }

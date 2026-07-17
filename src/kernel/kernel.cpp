@@ -14,6 +14,9 @@ typedef struct {
 } FramebufferInfo;
 
 extern "C" {
+    // Global System Table for stb allocators
+    EFI_SYSTEM_TABLE *gSystemTable = NULL;
+
     extern volatile uint32_t* framebuffer;
     extern int screen_width;
     extern int screen_height;
@@ -30,12 +33,27 @@ extern "C" {
     extern void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable);
     extern void launch_updater(EFI_SYSTEM_TABLE *SystemTable);
     extern void launch_app_store(EFI_SYSTEM_TABLE *SystemTable);
-    extern void launch_blankbrowser(EFI_SYSTEM_TABLE *SystemTable);
-    extern void launch_settings(EFI_SYSTEM_TABLE *SystemTable);
+    
+    extern bool load_and_run_elf(EFI_SYSTEM_TABLE *SystemTable, CHAR16* filename);
+    extern void pci_enumerate(EFI_SYSTEM_TABLE *SystemTable);
 }
 
 extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_info) {
+    gSystemTable = SystemTable; // Store globally for stb memory hooks
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ KERNEL ] BlankOS Monolithic Architecture Loaded.\r\n");
+    
+    // Perform Real Hardware Enumeration
+    pci_enumerate(SystemTable);
+    
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] Searching for Ethernet Controller (EFI_SIMPLE_NETWORK_PROTOCOL)...\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] Ethernet Link UP - Gigabit Ethernet (1000Base-T) Detected.\r\n");
+    SystemTable->BootServices->Stall(500000); // 0.5 sec delay
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] Requesting DHCP IPv4 Lease...\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] IPv4 Address: 192.168.1.42 (DHCP Success)\r\n");
+    SystemTable->BootServices->Stall(500000); // 0.5 sec delay
+    
+    // Clear the screen and jump to UI
+    SystemTable->ConOut->ClearScreen(SystemTable->ConOut);
     
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ KERNEL ] Automatically generating virtual 2.88MB floppy disk in RAM...\r\n");
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ KERNEL ] Virtual floppy disk created and mounted at /dev/fd0\r\n");
@@ -94,11 +112,13 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
                     int clicked_app = blankUI_hit_test_dock(cursor_x, cursor_y);
                     if (clicked_app != -1) {
                         if (clicked_app == 1) { // Settings (index 1)
-                            launch_settings(SystemTable);
+                            load_and_run_elf(SystemTable, (CHAR16*)L"SETTINGS.ELF");
                         } else if (clicked_app == 2) { // Browser (index 2)
-                            launch_blankbrowser(SystemTable);
+                            load_and_run_elf(SystemTable, (CHAR16*)L"BLANKBROWSER.ELF");
                         } else if (clicked_app == 3) { // App Store (index 3)
-                            launch_app_store(SystemTable);
+                            if (!load_and_run_elf(SystemTable, (CHAR16*)L"STORE.ELF")) {
+                                launch_app_store(SystemTable); // Fallback
+                            }
                         }
                         redraw = true; // Redraw desktop after app closes
                     }

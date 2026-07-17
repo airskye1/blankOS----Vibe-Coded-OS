@@ -9,7 +9,7 @@ LDFLAGS = -nostdlib -znocombreloc -shared -Bsymbolic -L /usr/lib -T /usr/lib/elf
 LIBS = -lefi -lgnuefi
 
 # Kernel Objects MUST be defined before they are used as dependencies!
-KERNEL_OBJS = src/kernel/kernel.o src/kernel/memory.o src/kernel/bdrm.o src/kernel/bloe_loader.o src/kernel/blank_reg.o src/kernel/crypto.o src/kernel/time.o src/kernel/notifications.o src/kernel/power.o src/kernel/battery.o src/kernel/cookies.o src/kernel/audio.o src/kernel/stubs.o src/ui/compositor.o src/ui/blankUI.o src/apps/setup.o src/apps/login.o src/apps/settings.o src/apps/blankreg_edit.o src/apps/blankpad.o src/apps/updater.o src/apps/blankbrowser.o src/apps/loading_screen.o src/apps/updating_screen.o src/apps/intro.o src/apps/sysinfo.o src/apps/store.o src/apps/blankdrop.o src/apps/task_manager.o src/apps/terminal.o
+KERNEL_OBJS = src/kernel/kernel.o src/kernel/stb_stdlib.o src/kernel/stb_wrapper.o src/kernel/memory.o src/kernel/bdrm.o src/kernel/bloe_loader.o src/kernel/elf_loader.o src/kernel/pci.o src/kernel/blank_reg.o src/kernel/crypto.o src/kernel/time.o src/kernel/notifications.o src/kernel/power.o src/kernel/battery.o src/kernel/cookies.o src/kernel/audio.o src/kernel/stubs.o src/ui/compositor.o src/ui/blankUI.o src/apps/setup.o src/apps/login.o src/apps/blankreg_edit.o src/apps/blankpad.o src/apps/updater.o src/apps/loading_screen.o src/apps/updating_screen.o src/apps/intro.o src/apps/sysinfo.o src/apps/store.o src/apps/task_manager.o src/apps/terminal.o
 
 all: blankOS.iso
 
@@ -42,9 +42,17 @@ src/boot/mbr_stub.bin: src/boot/mbr_stub.asm
 	nasm -f bin $< -o $@
 
 blankOS.iso: src/boot/BOOTX64.EFI src/boot/mbr_stub.bin
+	make -C store_repo
 	rm -rf iso
 	mkdir -p iso/EFI/BOOT
+	mkdir -p iso/EFI/APPS
 	cp src/boot/BOOTX64.EFI iso/EFI/BOOT/BOOTX64.EFI
+	cp store_repo/apps/discord.elf iso/EFI/APPS/discord.elf
+	cp store_repo/apps/youtube.elf iso/EFI/APPS/youtube.elf
+	cp store_repo/apps/x.elf iso/EFI/APPS/x.elf
+	cp store_repo/apps/settings.elf iso/EFI/APPS/settings.elf
+	cp store_repo/apps/blankdrop.elf iso/EFI/APPS/blankdrop.elf
+	cp store_repo/apps/blankbrowser.elf iso/EFI/APPS/blankbrowser.elf
 	cp src/boot/BOOTX64.EFI iso/EFI/BOOT/BOOTIA32.EFI
 	cp version.json iso/version.json
 	cp src/boot/mbr_stub.bin iso/mbr_stub.bin
@@ -54,6 +62,14 @@ blankOS.iso: src/boot/BOOTX64.EFI src/boot/mbr_stub.bin
 	mmd -i iso/efiboot.img ::/EFI/BOOT
 	mcopy -i iso/efiboot.img iso/EFI/BOOT/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
 	mcopy -i iso/efiboot.img iso/EFI/BOOT/BOOTIA32.EFI ::/EFI/BOOT/BOOTIA32.EFI
+	mmd -i iso/efiboot.img ::/EFI/APPS
+	mcopy -i iso/efiboot.img iso/EFI/APPS/discord.elf ::/EFI/APPS/discord.elf
+	mcopy -i iso/efiboot.img iso/EFI/APPS/youtube.elf ::/EFI/APPS/youtube.elf
+	mcopy -i iso/efiboot.img iso/EFI/APPS/x.elf ::/EFI/APPS/x.elf
+	mcopy -i iso/efiboot.img iso/EFI/APPS/settings.elf ::/EFI/APPS/settings.elf
+	mcopy -i iso/efiboot.img iso/EFI/APPS/blankdrop.elf ::/EFI/APPS/blankdrop.elf
+	mcopy -i iso/efiboot.img iso/EFI/APPS/blankbrowser.elf ::/EFI/APPS/blankbrowser.elf
+	mcopy -i iso/efiboot.img store_repo/catalog.json ::/EFI/APPS/catalog.json
 	xorriso -as mkisofs -R -f -e efiboot.img -no-emul-boot -o $@ iso
 
 run: blankOS.iso
