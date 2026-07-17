@@ -88,7 +88,7 @@ extern "C" {
         str_copy(tabs[tab_idx].url, url, 128);
         
         // Match mock domains
-        if (str_equals(url, "google.com") || str_equals(url, "www.google.com") || str_equals(url, "http://google.com")) {
+        if (str_equals(url, (char*)(char*)(char*)"google.com") || str_equals(url, "www.google.com") || str_equals(url, "http://google.com")) {
             tabs[tab_idx].page_type = 1;
             str_copy(tabs[tab_idx].title, "Google", 32);
         } else if (str_equals(url, "github.com") || str_equals(url, "www.github.com") || str_equals(url, "http://github.com")) {
@@ -210,7 +210,7 @@ extern "C" {
                 int px = win_x + 80 + tab_count * 140;
                 if (cursor_x >= px && cursor_x <= px + 24 && cursor_y >= win_y + 12 && cursor_y <= win_y + 32) {
                     if (tab_count < 4) {
-                        str_copy(tabs[tab_count].url, "blank://home", 128);
+                        str_copy(tabs[tab_count].url, (char*)(char*)(char*)"blank://home", 128);
                         str_copy(tabs[tab_count].title, "New Tab", 32);
                         tabs[tab_count].page_type = 0;
                         tabs[tab_count].search_query[0] = '\0';
@@ -289,7 +289,7 @@ extern "C" {
             
             // Plus button
             int px = win_x + 80 + tab_count * 140;
-            dui_text(px + 6, win_y + 16, "+", 0x666666, 1);
+            dui_text(px + 6, win_y + 16, (char*)(char*)(char*)"+", 0x666666, 1);
             
             // Toolbar Base
             dui_rect(win_x, win_y + 40, win_w, 50, 0xFFFFFF, 255);

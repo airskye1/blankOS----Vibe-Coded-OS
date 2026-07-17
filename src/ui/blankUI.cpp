@@ -175,7 +175,7 @@ void blankUI_draw_button(int x, int y, int width, int height, char* text) {
     blankUI_draw_text_color(text_x, text_y, text, 0xFFFFFF); // White text on dark button
 }
 
-extern "C" {
+extern (char*)(char*)(char*)"C" {
     extern bool wifi_connected;
     extern char connected_ssid[32];
     extern int wifi_signal_strength;
@@ -220,13 +220,13 @@ void blankUI_draw_menubar() {
     draw_rect_filled(0, 24, screen_width, 1, 0x000000, 20); // subtle shadow line
     
     // Left side items
-    blankUI_draw_text_color(16, 8, (char*)"*", 0x000000); // BlankOS logo icon
-    blankUI_draw_text_color(40, 8, (char*)"BlankOS", 0x000000);
-    blankUI_draw_text_color(120, 8, (char*)"File", 0x000000);
-    blankUI_draw_text_color(170, 8, (char*)"Edit", 0x000000);
-    blankUI_draw_text_color(220, 8, (char*)"View", 0x000000);
-    blankUI_draw_text_color(270, 8, (char*)"Window", 0x000000);
-    blankUI_draw_text_color(340, 8, (char*)"Help", 0x000000);
+    blankUI_draw_text_color(16, 8, (char*)(char*)(char*)(char*)"*", 0x000000); // BlankOS logo icon
+    blankUI_draw_text_color(40, 8, (char*)(char*)(char*)(char*)"BlankOS", 0x000000);
+    blankUI_draw_text_color(120, 8, (char*)(char*)(char*)(char*)"File", 0x000000);
+    blankUI_draw_text_color(170, 8, (char*)(char*)(char*)(char*)"Edit", 0x000000);
+    blankUI_draw_text_color(220, 8, (char*)(char*)(char*)(char*)"View", 0x000000);
+    blankUI_draw_text_color(270, 8, (char*)(char*)(char*)(char*)"Window", 0x000000);
+    blankUI_draw_text_color(340, 8, (char*)(char*)(char*)(char*)"Help", 0x000000);
     
     // Right side items - Clock (Dynamic!)
     char time_str[8];
@@ -265,18 +265,18 @@ void blankUI_draw_menubar() {
         draw_rect_rounded(mx, 28, 220, 160, 12, 0xFFFFFF, 240);
         draw_rect_rounded(mx, 28, 220, 160, 12, 0xFFFFFF, 80);
         
-        blankUI_draw_text_color(mx + 16, 40, (char*)"Wi-Fi Networks", 0x333333);
+        blankUI_draw_text_color(mx + 16, 40, (char*)(char*)(char*)(char*)"Wi-Fi Networks", 0x333333);
         draw_rect_filled(mx + 16, 56, 188, 1, 0x000000, 20); // Divider
         
         if (wifi_connected) {
-            blankUI_draw_text_color(mx + 16, 68, (char*)"Connected to:", 0x8E8E93);
+            blankUI_draw_text_color(mx + 16, 68, (char*)(char*)(char*)(char*)"Connected to:", 0x8E8E93);
             blankUI_draw_text_color(mx + 16, 88, connected_ssid, 0x007AFF);
         } else {
-            blankUI_draw_text_color(mx + 16, 78, (char*)"Select a network...", 0x8E8E93);
+            blankUI_draw_text_color(mx + 16, 78, (char*)(char*)(char*)(char*)"Select a network...", 0x8E8E93);
         }
         
-        blankUI_draw_text_color(mx + 16, 114, (char*)"1. BlankOS_Secure", 0x333333);
-        blankUI_draw_text_color(mx + 16, 134, (char*)"2. Ethan_WiFi_5G", 0x333333);
+        blankUI_draw_text_color(mx + 16, 114, (char*)(char*)(char*)(char*)"1. BlankOS_Secure", 0x333333);
+        blankUI_draw_text_color(mx + 16, 134, (char*)(char*)(char*)(char*)"2. Ethan_WiFi_5G", 0x333333);
     }
     
     if (bt_menu_open) {
@@ -285,15 +285,15 @@ void blankUI_draw_menubar() {
         draw_rect_rounded(mx, 28, 220, 140, 12, 0xFFFFFF, 240);
         draw_rect_rounded(mx, 28, 220, 140, 12, 0xFFFFFF, 80);
         
-        blankUI_draw_text_color(mx + 16, 40, (char*)"Bluetooth Devices", 0x333333);
+        blankUI_draw_text_color(mx + 16, 40, (char*)(char*)(char*)(char*)"Bluetooth Devices", 0x333333);
         draw_rect_filled(mx + 16, 56, 188, 1, 0x000000, 20);
         
         if (bluetooth_connected) {
-            blankUI_draw_text_color(mx + 16, 68, (char*)"Paired device:", 0x8E8E93);
+            blankUI_draw_text_color(mx + 16, 68, (char*)(char*)(char*)(char*)"Paired device:", 0x8E8E93);
             blankUI_draw_text_color(mx + 16, 88, paired_device_name, 0x007AFF);
         } else {
-            blankUI_draw_text_color(mx + 16, 78, (char*)"1. AirPods Max", 0x333333);
-            blankUI_draw_text_color(mx + 16, 98, (char*)"2. Magic Keyboard", 0x333333);
+            blankUI_draw_text_color(mx + 16, 78, (char*)(char*)(char*)(char*)"1. AirPods Max", 0x333333);
+            blankUI_draw_text_color(mx + 16, 98, (char*)(char*)(char*)(char*)"2. Magic Keyboard", 0x333333);
         }
     }
     
@@ -303,8 +303,8 @@ void blankUI_draw_menubar() {
         draw_rect_rounded(mx, 28, 160, 90, 12, 0xFFFFFF, 240);
         draw_rect_rounded(mx, 28, 160, 90, 12, 0xFFFFFF, 80);
         
-        blankUI_draw_text_color(mx + 16, 40, (char*)"Battery Level: 80%", 0x333333);
-        blankUI_draw_text_color(mx + 16, 60, (char*)"Power Source: DC", 0x8E8E93);
+        blankUI_draw_text_color(mx + 16, 40, (char*)(char*)(char*)(char*)"Battery Level: 80%", 0x333333);
+        blankUI_draw_text_color(mx + 16, 60, (char*)(char*)(char*)(char*)"Power Source: DC", 0x8E8E93);
     }
     
     // Context Menu Draw
@@ -315,10 +315,10 @@ void blankUI_draw_menubar() {
         draw_rect_rounded(mx, my, 160, 110, 8, 0xFFFFFF, 240);
         draw_rect_rounded(mx, my, 160, 110, 8, 0xFFFFFF, 80);
         
-        blankUI_draw_text_color(mx + 12, my + 10, (char*)"System Info", 0x333333);
-        blankUI_draw_text_color(mx + 12, my + 36, (char*)"Terminal", 0x333333);
-        blankUI_draw_text_color(mx + 12, my + 62, (char*)"Trigger Panic", 0xFF3B30); // Red panic trigger
-        blankUI_draw_text_color(mx + 12, my + 88, (char*)"Cancel Menu", 0x8E8E93);
+        blankUI_draw_text_color(mx + 12, my + 10, (char*)(char*)(char*)(char*)"System Info", 0x333333);
+        blankUI_draw_text_color(mx + 12, my + 36, (char*)(char*)(char*)(char*)"Terminal", 0x333333);
+        blankUI_draw_text_color(mx + 12, my + 62, (char*)(char*)(char*)(char*)"Trigger Panic", 0xFF3B30); // Red panic trigger
+        blankUI_draw_text_color(mx + 12, my + 88, (char*)(char*)(char*)(char*)"Cancel Menu", 0x8E8E93);
     }
 }
 
@@ -356,31 +356,31 @@ void blankUI_draw_dock() {
         
         if (i == 0) {
             draw_rect_rounded(cx, cy, s, s, 12, 0x007AFF, 255);
-            blankUI_draw_text_color(base_x + 4, start_y + icon_size + 2, (char*)"Finder", 0x333333);
+            blankUI_draw_text_color(base_x + 4, start_y + icon_size + 2, (char*)(char*)(char*)(char*)"Finder", 0x333333);
         } else if (i == 1) {
             draw_rect_rounded(cx, cy, s, s, 12, 0x8E8E93, 255);
-            blankUI_draw_text_color(base_x - 8, start_y + icon_size + 2, (char*)"Settings", 0x333333);
+            blankUI_draw_text_color(base_x - 8, start_y + icon_size + 2, (char*)(char*)(char*)(char*)"Settings", 0x333333);
         } else if (i == 2) {
             draw_rect_rounded(cx, cy, s, s, 12, 0x5AC8FA, 255);
-            blankUI_draw_text_color(base_x - 4, start_y + icon_size + 2, (char*)"Browser", 0x333333);
+            blankUI_draw_text_color(base_x - 4, start_y + icon_size + 2, (char*)(char*)(char*)(char*)"Browser", 0x333333);
         } else if (i == 3) {
             draw_rect_rounded(cx, cy, s, s, 12, 0x007AFF, 255);
-            blankUI_draw_text_color(base_x + 8, start_y + icon_size + 2, (char*)"Store", 0x333333);
+            blankUI_draw_text_color(base_x + 8, start_y + icon_size + 2, (char*)(char*)(char*)(char*)"Store", 0x333333);
         } else if (i == 4) {
             draw_rect_rounded(cx, cy, s, s, 12, 0x1C1C1E, 255);
-            blankUI_draw_text_color(base_x - 8, start_y + icon_size + 2, (char*)"Terminal", 0x333333);
+            blankUI_draw_text_color(base_x - 8, start_y + icon_size + 2, (char*)(char*)(char*)(char*)"Terminal", 0x333333);
         } else if (i == 5) {
             draw_rect_rounded(cx, cy, s, s, 12, 0xFF9500, 255);
-            blankUI_draw_text_color(base_x - 4, start_y + icon_size + 2, (char*)"Calc", 0x333333);
+            blankUI_draw_text_color(base_x - 4, start_y + icon_size + 2, (char*)(char*)(char*)(char*)"Calc", 0x333333);
         } else if (i == 6) {
             draw_rect_rounded(cx, cy, s, s, 12, 0x30B0C7, 255);
-            blankUI_draw_text_color(base_x - 4, start_y + icon_size + 2, (char*)"Weather", 0x333333);
+            blankUI_draw_text_color(base_x - 4, start_y + icon_size + 2, (char*)(char*)(char*)(char*)"Weather", 0x333333);
         } else if (i == 7) {
             draw_rect_rounded(cx, cy, s, s, 12, 0xFF3B30, 255); // Red Doom app box
-            blankUI_draw_text_color(base_x + 8, start_y + icon_size + 2, (char*)"Doom", 0x333333);
+            blankUI_draw_text_color(base_x + 8, start_y + icon_size + 2, (char*)(char*)(char*)(char*)"Doom", 0x333333);
         } else if (i == 8) {
             draw_rect_rounded(cx, cy, s, s, 12, 0xE5E5EA, 255);
-            blankUI_draw_text_color(base_x + 12, start_y + icon_size + 2, (char*)"Trash", 0x333333);
+            blankUI_draw_text_color(base_x + 12, start_y + icon_size + 2, (char*)(char*)(char*)(char*)"Trash", 0x333333);
         }
     }
     
@@ -642,7 +642,7 @@ void blankUI_draw_modal(int width, int height, char* title, char* content) {
     int y = (screen_height - height) / 2;
     
     blankUI_draw_text_color(x + 30, y + 60, content, 0x000000);
-    blankUI_draw_button(x + width - 120, y + height - 50, 100, 32, (char*)"OK");
+    blankUI_draw_button(x + width - 120, y + height - 50, 100, 32, (char*)(char*)(char*)(char*)"OK");
 }
 
 void blankUI_draw_topbar(char* app_title) {
@@ -652,7 +652,7 @@ void blankUI_draw_topbar(char* app_title) {
 void blankUI_draw_search_bar(int x, int y, int width) {
     draw_rect_rounded(x, y, width, 28, 14, 0xFFFFFF, 180);
     draw_rect_rounded(x, y, width, 28, 14, 0x000000, 40);
-    blankUI_draw_text_color(x + 10, y + 10, (char*)"Search...", 0x666666);
+    blankUI_draw_text_color(x + 10, y + 10, (char*)(char*)(char*)(char*)"Search...", 0x666666);
 }
 
 void blankUI_draw_dropdown(int x, int y, char** items, int item_count) {}
@@ -664,4 +664,4 @@ void blankUI_draw_progress_bar(int x, int y, int width, float percentage) {
 }
 void blankUI_draw_tabs(int x, int y, char** tab_names, int tab_count, int active_index) {}
 
-} // extern "C"
+} // extern (char*)(char*)(char*)"C"

@@ -156,4 +156,4 @@ void draw_circle_filled(int cx, int cy, int r, uint32_t color) {
     }
 }
 
-} // extern "C"
+} // extern (char*)(char*)(char*)"C"

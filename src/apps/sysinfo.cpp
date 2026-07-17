@@ -93,7 +93,7 @@ extern "C" {
             dui_circle(win_x + 16, win_y + 18, 6, 0xFF5F56, 255);
             dui_circle(win_x + 36, win_y + 18, 6, 0xFFBD2E, 255);
             dui_circle(win_x + 56, win_y + 18, 6, 0x27C93F, 255);
-            dui_text(win_x + win_w / 2 - dui_text_width("System Settings", 1) / 2, win_y + 12, "System Settings", 0x333333, 1);
+            dui_text(win_x + win_w / 2 - dui_text_width((char*)(char*)(char*)"System Settings", 1) / 2, win_y + 12, "System Settings", 0x333333, 1);
 
             // Sidebar
             dui_rect(win_x, win_y + 36, sidebar_w, win_h - 36, 0xE8E8ED, 240);
