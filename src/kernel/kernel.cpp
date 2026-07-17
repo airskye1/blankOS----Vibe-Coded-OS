@@ -81,8 +81,9 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
     global_ST = SystemTable;
     
     // Set up Interrupt Descriptor Table (IDT) for hardware panic catching
-    extern void init_idt();
-    init_idt();
+    // Disabled in UEFI app mode to keep firmware interrupts working safely
+    // extern void init_idt();
+    // init_idt();
     
     SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ KERNEL ] BlankOS Monolithic Architecture Loaded.\r\n");
     klog("[ KERNEL ] BlankOS Monolithic Architecture Loaded.");
