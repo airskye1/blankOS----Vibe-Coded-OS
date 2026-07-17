@@ -45,6 +45,7 @@ src/boot/mbr_stub.bin: src/boot/mbr_stub.asm
 blankOS.iso: src/boot/BOOTX64.EFI src/boot/mbr_stub.bin
 	rm -rf store_repo
 	git clone https://github.com/airskye1/blankOS-App-Store store_repo
+	cp -f src/store_apps/* store_repo/apps/ 2>/dev/null || true
 	cd store_repo && $(MAKE) CXXFLAGS="-ffreestanding -fno-stack-protector -fpic -fpie -mno-red-zone -m64 -c -fno-exceptions -fno-rtti -I /usr/include/efi -I /usr/include/efi/x86_64"
 	rm -rf iso
 	mkdir -p iso/EFI/BOOT

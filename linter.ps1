@@ -36,7 +36,7 @@ if (Test-Path $Makefile) {
     }
 
     # Verify that all source files are compiled and linked (prevent orphan files like compositor.cpp)
-    $srcFiles = Get-ChildItem -Path $TargetDir -Recurse -Include *.cpp, *.c | Where-Object { $_.FullName -notmatch "boot.c" -and $_.FullName -notmatch "doom_src" }
+    $srcFiles = Get-ChildItem -Path $TargetDir -Recurse -Include *.cpp, *.c | Where-Object { $_.FullName -notmatch "boot.c" -and $_.FullName -notmatch "doom_src" -and $_.FullName -notmatch "store_apps" }
     foreach ($src in $srcFiles) {
         # Get relative path with forward slashes (e.g. src/ui/compositor.o)
         $relPath = $src.FullName.Replace((Get-Item .).FullName + "\", "").Replace("\", "/")
@@ -52,7 +52,7 @@ if (Test-Path $Makefile) {
 $files = Get-ChildItem -Path $TargetDir -Recurse -Include *.cpp,*.c,*.h
 foreach ($file in $files) {
     # Skip library / third-party files
-    if ($file.FullName -match "stb_" -or $file.FullName -match "doom_src" -or $file.FullName -match "libc_stubs") {
+    if ($file.FullName -match "stb_" -or $file.FullName -match "doom_src" -or $file.FullName -match "libc_stubs" -or $file.FullName -match "store_apps") {
         continue
     }
 
