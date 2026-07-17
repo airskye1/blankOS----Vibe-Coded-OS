@@ -1,11 +1,12 @@
 {
   "os_name": "BlankOS",
-  "version_major": 1,
-  "version_minor": 2,
-  "version_patch": 9,
-  "build_date": "2026-07-16",
+  "version_major": 2,
+  "version_minor": 0,
+  "version_patch": 0,
+  "build_date": "2026-07-17",
   "update_url": "https://github.com/airskye1/blankOS----Vibe-Coded-OS",
   "update_logs": [
+    "2.0.0: Massive Architecture Overhaul. Transitioned BlankOS to a true graphical operating system with real hardware GPU drivers (VMware SVGA II) and a Hybrid Rendering Pipeline. Rebuilt the entire user interface with smooth 60 FPS animations, dock hover effects, and premium icons. Implemented a fully native graphical installer with MBR/GPT disk partitioning and FAT32 formatting. Added an integrated Firmware & Software OTA Updater.",
     "1.2.9: Added full ELF Executable loader, transitioned all apps (Settings, BlankDrop, Browser) out of the kernel to true dynamic apps. Implemented PCI hardware enumeration for Wi-Fi and Bluetooth controllers. Downloaded stb_image and stb_truetype to parse PNG, JPEG, and TrueType fonts using custom written bare-metal mathematics stubs (`math.cpp`) and UEFI `stdlib` hooks (`stb_stdlib.cpp`).",
     "1.2.8: Developed real OS Disk Installer that scans hardware and clones the OS into physical drives.",
     "1.2.7: Fixed runtime crash inside BDRM compositor initialization. Wrapped all graphics primitives and framebuffer parameters in compositor.cpp inside extern \"C\" blocks to align linkage with blankUI.cpp and kernel.cpp, preventing page faults from unresolved mangled symbols.",

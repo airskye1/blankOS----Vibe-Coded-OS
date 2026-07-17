@@ -13,12 +13,26 @@ int screen_width = 1024;
 int screen_height = 768;
 int pixels_per_scanline = 1024;
 
+extern bool svga_enabled;
+extern void svga_update(int x, int y, int w, int h);
+extern void svga_fill_rect(int x, int y, int w, int h, uint32_t color);
+
 extern void init_blankUI_toolkit(void);
 
 void swap_buffers() {
     if (!framebuffer || !backbuffer) return;
-    for (int i = 0; i < screen_width * screen_height; i++) {
-        framebuffer[i] = backbuffer[i];
+    
+    // Fast 64-bit aligned CPU copy (optimized software fallback)
+    uint64_t* dst = (uint64_t*)framebuffer;
+    uint64_t* src = (uint64_t*)backbuffer;
+    int count = (screen_width * screen_height * 4) / 8;
+    for (int i = 0; i < count; i++) {
+        dst[i] = src[i];
+    }
+    
+    // Hardware accelerated presentation
+    if (svga_enabled) {
+        svga_update(0, 0, screen_width, screen_height);
     }
 }
 

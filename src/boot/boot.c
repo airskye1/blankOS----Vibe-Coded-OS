@@ -47,11 +47,29 @@ EFI_STATUS __attribute__((sysv_abi)) efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM
     /* Retrieve the Graphics Output Protocol (GOP) handle */
     EFI_STATUS status = SystemTable->BootServices->LocateProtocol(&gopGuid, NULL, (VOID**)&gop);
     if (status == EFI_SUCCESS && gop != NULL) {
+        UINT32 max_res = 0;
+        UINT32 best_mode = gop->Mode->Mode;
+        
+        for (UINT32 i = 0; i < gop->Mode->MaxMode; i++) {
+            EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+            UINTN sizeOfInfo;
+            if (gop->QueryMode(gop, i, &sizeOfInfo, &info) == EFI_SUCCESS) {
+                UINT32 res = info->HorizontalResolution * info->VerticalResolution;
+                if (res > max_res) {
+                    // Prefer 1920x1080 if available, otherwise just highest
+                    max_res = res;
+                    best_mode = i;
+                }
+            }
+        }
+        
+        gop->SetMode(gop, best_mode);
+        
         fb_info.framebuffer = (uint32_t*)gop->Mode->FrameBufferBase;
         fb_info.width = gop->Mode->Info->HorizontalResolution;
         fb_info.height = gop->Mode->Info->VerticalResolution;
         fb_info.pixels_per_scanline = gop->Mode->Info->PixelsPerScanLine;
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OK ] Graphics Mode Initialized successfully.\r\n");
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OK ] Graphics Mode Initialized successfully (Highest Resolution).\r\n");
     } else {
         SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ WARN ] GOP not found! Defaulting to Text Mode.\r\n");
     }

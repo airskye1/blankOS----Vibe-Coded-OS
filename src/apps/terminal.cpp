@@ -1,22 +1,440 @@
-// Terminal emulator implementation
+// BlankOS Terminal Emulator — Catppuccin Mocha themed graphical terminal
+// Freestanding C++ for UEFI. No stdlib. No libc.
 
-extern void blankUI_draw_topbar(char* app_title);
+#include <efi.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
 
-extern "C" void launch_terminal(void) {
-    // 1. Draw the terminal application surface
-    blankUI_draw_topbar("Command Prompt");
-    
-    // 2. Render the command prompt text area
-    // 3. Setup input buffer for keyboard interrupts
-    
-    /* 
-    Main loop parsing commands:
-    if (strcmp(input, "ls") == 0) {
-        // Query VFS for directory contents
-    } else if (strcmp(input, "sudo") == 0) {
-        // Request elevated privileges from the kernel
-    } else if (strcmp(input, "mkdir") == 0) {
-        // Create directory in VFS
-    }
-    */
+extern "C" {
+
+// ── External drawing primitives ────────────────────────────────────────
+extern void swap_buffers();
+extern void dui_draw_wallpaper();
+extern void dui_rect(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
+extern void dui_rect_rounded(int x, int y, int w, int h, int radius, uint32_t color, uint8_t alpha);
+extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
+extern int  dui_text_width(const char* text, int scale);
+extern void dui_shadow(int x, int y, int w, int h, int radius, int blur_radius, uint32_t color, uint8_t alpha);
+extern void dui_circle(int cx, int cy, int r, uint32_t color, uint8_t alpha);
+extern void blankUI_draw_menubar();
+extern void blankUI_draw_dock();
+extern void blankUI_draw_cursor(int x, int y);
+extern int  screen_width;
+extern int  screen_height;
+
+// ── Catppuccin Mocha palette ───────────────────────────────────────────
+static const uint32_t COL_BASE      = 0x1E1E2E;  // Background
+static const uint32_t COL_MANTLE    = 0x181825;  // Deeper background
+static const uint32_t COL_SURFACE0  = 0x313244;  // Title bar / borders
+static const uint32_t COL_SURFACE1  = 0x45475A;  // Subtle highlights
+static const uint32_t COL_TEXT      = 0xCDD6F4;  // Primary text
+static const uint32_t COL_SUBTEXT   = 0xA6ADC8;  // Dimmer text
+static const uint32_t COL_GREEN     = 0xA6E3A1;  // Success / prompt $
+static const uint32_t COL_RED       = 0xF38BA8;  // Error messages
+static const uint32_t COL_YELLOW    = 0xF9E2AF;  // Warnings / prompt user
+static const uint32_t COL_BLUE      = 0x89B4FA;  // Commands / directories
+static const uint32_t COL_LAVENDER  = 0xB4BEFE;  // Accent
+static const uint32_t COL_MAUVE     = 0xCBA6F7;  // Prompt prefix
+
+// Traffic light button colors
+static const uint32_t COL_TL_CLOSE    = 0xFF5F57;
+static const uint32_t COL_TL_MINIMIZE = 0xFEBC2E;
+static const uint32_t COL_TL_MAXIMIZE = 0x28C840;
+
+// ── String helpers (no libc) ───────────────────────────────────────────
+
+static int str_len(const char* s) {
+    int n = 0;
+    while (s[n]) n++;
+    return n;
 }
+
+static int str_eq(const char* a, const char* b) {
+    while (*a && *b) {
+        if (*a != *b) return 0;
+        a++; b++;
+    }
+    return (*a == *b);
+}
+
+static int str_starts_with(const char* str, const char* prefix) {
+    while (*prefix) {
+        if (*str != *prefix) return 0;
+        str++; prefix++;
+    }
+    return 1;
+}
+
+static void str_copy(char* dst, const char* src) {
+    while (*src) {
+        *dst++ = *src++;
+    }
+    *dst = '\0';
+}
+
+static void str_cat(char* dst, const char* src) {
+    while (*dst) dst++;
+    while (*src) *dst++ = *src++;
+    *dst = '\0';
+}
+
+// Integer to decimal string
+static void int_to_str(int val, char* buf) {
+    if (val == 0) {
+        buf[0] = '0'; buf[1] = '\0'; return;
+    }
+    int neg = 0;
+    if (val < 0) { neg = 1; val = -val; }
+    char tmp[16];
+    int i = 0;
+    while (val > 0) {
+        tmp[i++] = '0' + (val % 10);
+        val /= 10;
+    }
+    int j = 0;
+    if (neg) buf[j++] = '-';
+    for (int k = i - 1; k >= 0; k--) buf[j++] = tmp[k];
+    buf[j] = '\0';
+}
+
+// ── Terminal constants ─────────────────────────────────────────────────
+#define TERM_MAX_LINES     40
+#define TERM_LINE_LEN      120
+#define TERM_INPUT_LEN     120
+#define TERM_TEXT_SCALE     1
+#define TERM_CHAR_H        16   // approx height per char at scale 1
+#define TERM_TITLE_BAR_H   32
+#define TERM_PADDING        12
+#define TERM_LINE_SPACING    2
+
+// ── Line buffer ────────────────────────────────────────────────────────
+// Each line stores text and a color for rendering
+struct TermLine {
+    char text[TERM_LINE_LEN];
+    uint32_t color;
+};
+
+static TermLine line_buffer[TERM_MAX_LINES];
+static int line_count = 0;
+
+static void term_clear() {
+    line_count = 0;
+    for (int i = 0; i < TERM_MAX_LINES; i++) {
+        line_buffer[i].text[0] = '\0';
+        line_buffer[i].color = COL_TEXT;
+    }
+}
+
+static void term_push_line(const char* text, uint32_t color) {
+    if (line_count >= TERM_MAX_LINES) {
+        // Scroll: drop the oldest line
+        for (int i = 0; i < TERM_MAX_LINES - 1; i++) {
+            str_copy(line_buffer[i].text, line_buffer[i + 1].text);
+            line_buffer[i].color = line_buffer[i + 1].color;
+        }
+        line_count = TERM_MAX_LINES - 1;
+    }
+    str_copy(line_buffer[line_count].text, text);
+    line_buffer[line_count].color = color;
+    line_count++;
+}
+
+// ── Command processing ─────────────────────────────────────────────────
+
+static void process_command(const char* input) {
+    // Echo the prompt + command into the buffer
+    char prompt_line[TERM_LINE_LEN];
+    str_copy(prompt_line, "blankOS $ ");
+    str_cat(prompt_line, input);
+    term_push_line(prompt_line, COL_TEXT);
+
+    // Empty command
+    if (input[0] == '\0') {
+        return;
+    }
+
+    // ── help ───────────────────────────────────────────────────────
+    if (str_eq(input, "help")) {
+        term_push_line("Available commands:", COL_LAVENDER);
+        term_push_line("  help       Show this help message", COL_TEXT);
+        term_push_line("  clear      Clear the terminal", COL_TEXT);
+        term_push_line("  echo       Print text to the terminal", COL_TEXT);
+        term_push_line("  sysinfo    Display system information", COL_TEXT);
+        term_push_line("  ls         List directory contents", COL_TEXT);
+        term_push_line("  whoami     Print current user", COL_TEXT);
+        term_push_line("  uname      Print OS information", COL_TEXT);
+        term_push_line("  date       Print current date", COL_TEXT);
+        return;
+    }
+
+    // ── clear ──────────────────────────────────────────────────────
+    if (str_eq(input, "clear")) {
+        term_clear();
+        return;
+    }
+
+    // ── echo ───────────────────────────────────────────────────────
+    if (str_starts_with(input, "echo ")) {
+        const char* msg = input + 5;
+        term_push_line(msg, COL_TEXT);
+        return;
+    }
+    if (str_eq(input, "echo")) {
+        term_push_line("", COL_TEXT);
+        return;
+    }
+
+    // ── sysinfo ────────────────────────────────────────────────────
+    if (str_eq(input, "sysinfo")) {
+        term_push_line("BlankOS 1.2.9 (UEFI x86_64)", COL_LAVENDER);
+        char res[64];
+        str_copy(res, "Resolution: ");
+        char num[16];
+        int_to_str(screen_width, num);
+        str_cat(res, num);
+        str_cat(res, "x");
+        int_to_str(screen_height, num);
+        str_cat(res, num);
+        term_push_line(res, COL_TEXT);
+        term_push_line("Kernel:  UEFI freestanding", COL_TEXT);
+        term_push_line("Shell:   blanksh 1.0", COL_TEXT);
+        return;
+    }
+
+    // ── ls ─────────────────────────────────────────────────────────
+    if (str_eq(input, "ls")) {
+        term_push_line("bin/   etc/   home/   usr/   var/", COL_BLUE);
+        return;
+    }
+
+    // ── whoami ─────────────────────────────────────────────────────
+    if (str_eq(input, "whoami")) {
+        term_push_line("root", COL_TEXT);
+        return;
+    }
+
+    // ── uname ──────────────────────────────────────────────────────
+    if (str_eq(input, "uname")) {
+        term_push_line("BlankOS 1.2.9 x86_64", COL_TEXT);
+        return;
+    }
+
+    // ── date ───────────────────────────────────────────────────────
+    if (str_eq(input, "date")) {
+        term_push_line("Thu Jul 17 2026", COL_TEXT);
+        return;
+    }
+
+    // ── unknown command ────────────────────────────────────────────
+    char err[TERM_LINE_LEN];
+    str_copy(err, "command not found: ");
+    str_cat(err, input);
+    term_push_line(err, COL_RED);
+}
+
+// ── Draw helpers ───────────────────────────────────────────────────────
+
+static void draw_title_bar(int wx, int wy, int ww) {
+    // Title bar background
+    dui_rect_rounded(wx, wy, ww, TERM_TITLE_BAR_H, 10, COL_SURFACE0, 255);
+    // Flatten bottom corners by overdrawing a rect
+    dui_rect(wx, wy + 10, ww, TERM_TITLE_BAR_H - 10, COL_SURFACE0, 255);
+
+    // Traffic light buttons
+    int btn_y = wy + TERM_TITLE_BAR_H / 2;
+    int btn_x = wx + 16;
+    dui_circle(btn_x,      btn_y, 6, COL_TL_CLOSE,    255);
+    dui_circle(btn_x + 20, btn_y, 6, COL_TL_MINIMIZE,  255);
+    dui_circle(btn_x + 40, btn_y, 6, COL_TL_MAXIMIZE,  255);
+
+    // Title text (centered)
+    const char* title = "Terminal";
+    int tw = dui_text_width(title, TERM_TEXT_SCALE);
+    int tx = wx + (ww - tw) / 2;
+    int ty = wy + (TERM_TITLE_BAR_H - TERM_CHAR_H) / 2;
+    dui_text(tx, ty, title, COL_SUBTEXT, TERM_TEXT_SCALE);
+}
+
+static void draw_terminal(int wx, int wy, int ww, int wh,
+                           const char* input_buf, int cursor_blink) {
+    // Window shadow
+    dui_shadow(wx - 4, wy - 4, ww + 8, wh + 8, 12, 20, 0x000000, 100);
+
+    // Title bar
+    draw_title_bar(wx, wy, ww);
+
+    // Terminal body
+    int body_y = wy + TERM_TITLE_BAR_H;
+    int body_h = wh - TERM_TITLE_BAR_H;
+    dui_rect(wx, body_y, ww, body_h, COL_BASE, 245);
+
+    // Bottom rounded corners
+    dui_rect_rounded(wx, wy + wh - 12, ww, 12, 10, COL_BASE, 245);
+    dui_rect(wx, wy + wh - 12, ww, 2, COL_BASE, 245);
+
+    // ── Render output lines ────────────────────────────────────────
+    int text_x = wx + TERM_PADDING;
+    int text_y = body_y + TERM_PADDING;
+    int line_h = TERM_CHAR_H + TERM_LINE_SPACING;
+    int max_visible = (body_h - TERM_PADDING * 2 - line_h) / line_h;  // Reserve 1 line for input
+
+    int start = 0;
+    int visible = line_count;
+    if (visible > max_visible) {
+        start = visible - max_visible;
+        visible = max_visible;
+    }
+
+    for (int i = 0; i < visible; i++) {
+        int idx = start + i;
+        dui_text(text_x, text_y + i * line_h,
+                 line_buffer[idx].text, line_buffer[idx].color, TERM_TEXT_SCALE);
+    }
+
+    // ── Render input line (prompt + current input + cursor) ────────
+    int input_y = text_y + visible * line_h;
+
+    // Draw prompt prefix "blankOS $ " with colored segments
+    const char* prompt_prefix = "blankOS";
+    const char* prompt_sep    = " $ ";
+    dui_text(text_x, input_y, prompt_prefix, COL_MAUVE, TERM_TEXT_SCALE);
+    int px = text_x + dui_text_width(prompt_prefix, TERM_TEXT_SCALE);
+    dui_text(px, input_y, prompt_sep, COL_GREEN, TERM_TEXT_SCALE);
+    px += dui_text_width(prompt_sep, TERM_TEXT_SCALE);
+
+    // User input text
+    if (input_buf[0] != '\0') {
+        dui_text(px, input_y, input_buf, COL_TEXT, TERM_TEXT_SCALE);
+        px += dui_text_width(input_buf, TERM_TEXT_SCALE);
+    }
+
+    // Blinking block cursor
+    if (cursor_blink) {
+        dui_rect(px, input_y, 8, TERM_CHAR_H, COL_TEXT, 200);
+    }
+}
+
+// ── Entry point ────────────────────────────────────────────────────────
+
+void launch_terminal(EFI_SYSTEM_TABLE* SystemTable) {
+    // Initialize mouse
+    EFI_GUID SimplePointerProtocolGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
+    EFI_SIMPLE_POINTER_PROTOCOL* Mouse = NULL;
+    SystemTable->BootServices->LocateProtocol(&SimplePointerProtocolGuid, NULL, (void**)&Mouse);
+    if (Mouse) Mouse->Reset(Mouse, TRUE);
+
+    // Terminal window geometry
+    int ww = 720;
+    int wh = 480;
+    int wx = (screen_width  - ww) / 2;
+    int wy = (screen_height - wh) / 2;
+
+    // Input state
+    char input_buf[TERM_INPUT_LEN];
+    input_buf[0] = '\0';
+    int input_len = 0;
+
+    // Cursor / mouse state
+    int cursor_x = screen_width  / 2;
+    int cursor_y = screen_height / 2;
+
+    // Blink counter
+    int blink_counter = 0;
+    int cursor_visible = 1;
+
+    // Clear line buffer and print welcome banner
+    term_clear();
+    term_push_line("BlankOS Terminal v1.2.9", COL_LAVENDER);
+    term_push_line("Type 'help' for a list of commands.", COL_SUBTEXT);
+    term_push_line("", COL_TEXT);
+
+    bool running = true;
+
+    while (running) {
+        // ── Poll keyboard ──────────────────────────────────────────
+        EFI_INPUT_KEY Key;
+        if (SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &Key) == EFI_SUCCESS) {
+
+            // Escape → close terminal
+            if (Key.ScanCode == 0x0017) {
+                running = false;
+                break;
+            }
+
+            // Backspace (UnicodeChar 0x0008 or ScanCode 0x0008)
+            if (Key.UnicodeChar == 0x0008 || Key.ScanCode == 0x0008) {
+                if (input_len > 0) {
+                    input_len--;
+                    input_buf[input_len] = '\0';
+                }
+            }
+            // Enter
+            else if (Key.UnicodeChar == '\r' || Key.UnicodeChar == '\n') {
+                process_command(input_buf);
+                input_buf[0] = '\0';
+                input_len = 0;
+            }
+            // Printable character
+            else if (Key.UnicodeChar >= 0x0020 && Key.UnicodeChar <= 0x007E) {
+                if (input_len < TERM_INPUT_LEN - 1) {
+                    input_buf[input_len] = (char)Key.UnicodeChar;
+                    input_len++;
+                    input_buf[input_len] = '\0';
+                }
+            }
+
+            // Reset blink on any keypress
+            blink_counter = 0;
+            cursor_visible = 1;
+        }
+
+        // ── Poll mouse ─────────────────────────────────────────────
+        if (Mouse) {
+            EFI_SIMPLE_POINTER_STATE State;
+            if (Mouse->GetState(Mouse, &State) == EFI_SUCCESS) {
+                int dx = State.RelativeMovementX / 1000;
+                int dy = State.RelativeMovementY / 1000;
+                if (dx != 0 || dy != 0) {
+                    cursor_x += dx;
+                    cursor_y += dy;
+                    if (cursor_x < 0) cursor_x = 0;
+                    if (cursor_x > screen_width  - 1) cursor_x = screen_width  - 1;
+                    if (cursor_y < 0) cursor_y = 0;
+                    if (cursor_y > screen_height - 1) cursor_y = screen_height - 1;
+                }
+
+                // Check click on close button (traffic light)
+                if (State.LeftButton) {
+                    int btn_cx = wx + 16;
+                    int btn_cy = wy + TERM_TITLE_BAR_H / 2;
+                    int dx2 = cursor_x - btn_cx;
+                    int dy2 = cursor_y - btn_cy;
+                    if (dx2 * dx2 + dy2 * dy2 <= 8 * 8) {
+                        running = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // ── Cursor blink logic ─────────────────────────────────────
+        blink_counter++;
+        if (blink_counter >= 30000) {
+            cursor_visible = !cursor_visible;
+            blink_counter = 0;
+        }
+
+        // ── Render frame ───────────────────────────────────────────
+        dui_draw_wallpaper();
+        blankUI_draw_menubar();
+        blankUI_draw_dock();
+
+        draw_terminal(wx, wy, ww, wh, input_buf, cursor_visible);
+
+        blankUI_draw_cursor(cursor_x, cursor_y);
+        swap_buffers();
+    }
+}
+
+} // extern "C"

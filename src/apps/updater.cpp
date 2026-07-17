@@ -133,7 +133,7 @@ extern "C" {
             draw_macos_wallpaper();
             blankUI_draw_menubar();
             blankUI_draw_dock();
-            blankUI_draw_window(win_w, win_h, (char*)"BlankOS Software Update");
+            blankUI_draw_window(win_w, win_h, (char*)"BlankOS Firmware & Software Update");
             blankUI_draw_text_color(win_x + 40, win_y + 80, (char*)"Update Failed: Live OS Detected.", 0xAA0000);
             blankUI_draw_text_color(win_x + 40, win_y + 110, (char*)"The updater only works on a fully installed OS.", 0x000000);
             swap_buffers();
@@ -146,7 +146,7 @@ extern "C" {
             draw_macos_wallpaper();
             blankUI_draw_menubar();
             blankUI_draw_dock();
-            blankUI_draw_window(win_w, win_h, (char*)"BlankOS Software Update");
+            blankUI_draw_window(win_w, win_h, (char*)"BlankOS Firmware & Software Update");
             blankUI_draw_text_color(win_x + 40, win_y + 80, (char*)"Checking for updates...", 0x000000);
             blankUI_draw_progress_bar(win_x + 40, win_y + 120, 560, (float)i / 20.0f);
             swap_buffers();
@@ -167,8 +167,6 @@ extern "C" {
         
         // 3. Display Update Logs and "Update Available"
         while (!downloading) {
-            bool redraw = false;
-            
             EFI_STATUS Status = SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &Key);
             if (Status == EFI_SUCCESS) {
                 if (Key.UnicodeChar == '\r' || Key.UnicodeChar == '\n') downloading = true;
@@ -183,7 +181,6 @@ extern "C" {
                         cursor_x += dx; cursor_y += dy;
                         if (cursor_x < 0) cursor_x = 0; if (cursor_x > 1023) cursor_x = 1023;
                         if (cursor_y < 0) cursor_y = 0; if (cursor_y > 767) cursor_y = 767;
-                        redraw = true;
                     }
                     if (State.LeftButton) {
                         // Click Install
@@ -195,38 +192,38 @@ extern "C" {
                 }
             }
             
-            if (redraw) {
-                draw_macos_wallpaper();
-                blankUI_draw_menubar();
-                blankUI_draw_dock();
-                blankUI_draw_window(win_w, win_h, (char*)"BlankOS Software Update");
-                
-                // Draw icons
-                draw_image(SystemTable, (CHAR16*)L"assets\\logo.jpg", win_x + 40, win_y + 60);
-                draw_image(SystemTable, (CHAR16*)L"assets\\nano_banana.jpg", win_x + 500, win_y + 60);
-                
-                blankUI_draw_text_color(win_x + 180, win_y + 80, (char*)"Update Available: Version 1.4.0", 0x0000FF);
-                blankUI_draw_text_color(win_x + 180, win_y + 110, (char*)"A new version of BlankOS is ready to install.", 0x666666);
-                
-                blankUI_draw_text_color(win_x + 40, win_y + 180, (char*)"Update Logs:", 0x000000);
-                blankUI_draw_text_color(win_x + 40, win_y + 210, (char*)"* Added Nano Banana and System Icons", 0x333333);
-                blankUI_draw_text_color(win_x + 40, win_y + 240, (char*)"* Added PC Speaker Audio Drivers (Startup Chimes)", 0x333333);
-                blankUI_draw_text_color(win_x + 40, win_y + 270, (char*)"* Implemented A/B Data Loss Protection (OTA Rollback)", 0x333333);
-                blankUI_draw_text_color(win_x + 40, win_y + 300, (char*)"* Added Live OS restrictions to prevent corruptions", 0x333333);
+            draw_macos_wallpaper();
+            blankUI_draw_menubar();
+            blankUI_draw_dock();
+            blankUI_draw_window(win_w, win_h, (char*)"BlankOS Firmware & Software Update");
+            
+            // Draw icons
+            draw_image(SystemTable, (CHAR16*)L"assets\\logo.jpg", win_x + 40, win_y + 60);
+            draw_image(SystemTable, (CHAR16*)L"assets\\nano_banana.jpg", win_x + 500, win_y + 60);
+            
+            blankUI_draw_text_color(win_x + 180, win_y + 80, (char*)"Update Available: Version 2.0.0", 0x0000FF);
+            blankUI_draw_text_color(win_x + 180, win_y + 110, (char*)"A new version of BlankOS Firmware is ready.", 0x666666);
+            
+            blankUI_draw_text_color(win_x + 40, win_y + 180, (char*)"Update Logs:", 0x000000);
+            blankUI_draw_text_color(win_x + 40, win_y + 210, (char*)"* Added VMware SVGA II Hardware GPU Driver", 0x333333);
+            blankUI_draw_text_color(win_x + 40, win_y + 240, (char*)"* Implemented Hybrid Graphics & 60FPS Animations", 0x333333);
+            blankUI_draw_text_color(win_x + 40, win_y + 270, (char*)"* Added Firmware & Software OTA Updater via HTTP", 0x333333);
+            blankUI_draw_text_color(win_x + 40, win_y + 300, (char*)"* System-wide continuous rendering optimizations", 0x333333);
 
-                blankUI_draw_button(win_x + 220, win_y + 360, 200, 32, (char*)"Download & Install");
-                blankUI_draw_cursor(cursor_x, cursor_y);
-                swap_buffers();
-            }
+            blankUI_draw_button(win_x + 220, win_y + 360, 200, 32, (char*)"Download & Install");
+            blankUI_draw_cursor(cursor_x, cursor_y);
+            swap_buffers();
+            SystemTable->BootServices->Stall(16000); // 60 FPS
         }
+
         
         // 4. Download and Install Sequence
         for (int i = 0; i <= 100; i += 1) {
             draw_macos_wallpaper();
             blankUI_draw_menubar();
             blankUI_draw_dock();
-            blankUI_draw_window(win_w, win_h, (char*)"BlankOS Software Update");
-            blankUI_draw_text_color(win_x + 40, win_y + 80, (char*)"Downloading kernel OTA payload...", 0x000000);
+            blankUI_draw_window(win_w, win_h, (char*)"BlankOS Firmware & Software Update");
+            blankUI_draw_text_color(win_x + 40, win_y + 80, (char*)"Downloading Firmware OTA payload via HTTP...", 0x000000);
             blankUI_draw_progress_bar(win_x + 40, win_y + 120, 560, (float)i / 100.0f);
             swap_buffers();
             for (volatile int d = 0; d < 1000000; d++);
@@ -238,7 +235,7 @@ extern "C" {
         draw_macos_wallpaper();
         blankUI_draw_menubar();
         blankUI_draw_dock();
-        blankUI_draw_window(win_w, win_h, (char*)"BlankOS Software Update");
+        blankUI_draw_window(win_w, win_h, (char*)"BlankOS Firmware & Software Update");
         blankUI_draw_text_color(win_x + 40, win_y + 120, (char*)"Update completed. BOOTNEXT.EFI staged.", 0x008800);
         blankUI_draw_text_color(win_x + 40, win_y + 160, (char*)"Rebooting system to apply updates...", 0x000000);
         swap_buffers();

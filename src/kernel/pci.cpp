@@ -34,6 +34,8 @@ extern "C" {
         return (uint16_t)((pci_read_dword(bus, device, function, 0) >> 16) & 0xFFFF);
     }
     
+    extern bool svga_init(uint8_t bus, uint8_t device, uint8_t function);
+
     void pci_enumerate(EFI_SYSTEM_TABLE *SystemTable) {
         SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] Enumerating PCI Bus for Hardware...\r\n");
         for(uint16_t bus = 0; bus < 256; bus++) {
@@ -47,6 +49,12 @@ extern "C" {
                     }
                     if (vendor == 0x14E4) { // Broadcom
                         SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ HARDWARE ] Found Broadcom Wi-Fi/Bluetooth Controller!\r\n");
+                    }
+                    if (vendor == 0x15AD && device == 0x0405) {
+                        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ HARDWARE ] Found VMware SVGA II GPU!\r\n");
+                        if (svga_init((uint8_t)bus, dev, 0)) {
+                            SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ GPU      ] Hardware acceleration driver loaded.\r\n");
+                        }
                     }
                 }
             }

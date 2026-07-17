@@ -16,7 +16,9 @@ extern "C" {
     extern void blankUI_draw_button(int x, int y, int width, int height, char* text);
     extern void blankUI_draw_toast(char* title, char* message);
     extern void blankUI_draw_cursor(int x, int y);
-    
+    extern int screen_width;
+    extern int screen_height;
+    extern bool format_disk_gpt_fat32(EFI_SYSTEM_TABLE *SystemTable, EFI_BLOCK_IO_PROTOCOL* BlockIo);
     bool perform_real_installation(EFI_SYSTEM_TABLE *SystemTable) {
         EFI_GUID fsGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
         UINTN numHandles = 0;
@@ -141,61 +143,55 @@ extern "C" {
     void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable) {
         SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OOBE ] Starting Setup...\r\n");
         
-        // Blank blue background for installer
-        int bg_w = 1024, bg_h = 768; // Or use screen_width/height but we don't have it imported easily here, assuming 1024x768
-        for (int y = 0; y < bg_h; y++) {
-            for (int x = 0; x < bg_w; x++) {
-                // Actually, let's just clear screen via EFI, but we are in graphics mode, we need a clear function.
-                // We'll just leave it or draw a large rect. setup.cpp doesn't have draw_rect_filled imported.
-                // Wait, it does not. I will just rely on the window drawing, or I can import draw_rect_filled.
-            }
-        }
-        // Simplified setup screen, no desktop background
-
-        
         int win_w = 640;
         int win_h = 400;
-        blankUI_draw_window(win_w, win_h, (char*)"BlankOS Installer");
-        int win_x = (1024 - win_w) / 2;
-        int win_y = (768 - win_h) / 2;
-        
-        blankUI_draw_text_color(win_x + 60, win_y + 80, (char*)"Welcome to BlankOS.", 0x000000);
-        blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Would you like to install BlankOS to your hard drive,", 0x000000);
-        blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"or try the Live Environment without modifying your computer?", 0x000000);
-        
-        // Draw buttons
-        blankUI_draw_button(win_x + 60, win_y + 220, 160, 40, (char*)"Install (Enter)");
-        blankUI_draw_button(win_x + 240, win_y + 220, 160, 40, (char*)"Format & Install");
-        blankUI_draw_button(win_x + 420, win_y + 220, 160, 40, (char*)"Live CD (Space)");
-        
-        blankUI_draw_cursor(512, 384);
-        swap_buffers();
+        int win_x = (screen_width - win_w) / 2;
+        int win_y = (screen_height - win_h) / 2;
         
         EFI_GUID SimplePointerProtocolGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
         EFI_SIMPLE_POINTER_PROTOCOL *Mouse = NULL;
         SystemTable->BootServices->LocateProtocol(&SimplePointerProtocolGuid, NULL, (void**)&Mouse);
-        if (Mouse) {
-            Mouse->Reset(Mouse, TRUE);
+        if (Mouse) Mouse->Reset(Mouse, TRUE);
+        
+        EFI_GUID blockIoGuid = EFI_BLOCK_IO_PROTOCOL_GUID;
+        UINTN numBlockIo = 0;
+        EFI_HANDLE *blockIoHandles = NULL;
+        SystemTable->BootServices->LocateHandleBuffer(ByProtocol, &blockIoGuid, NULL, &numBlockIo, &blockIoHandles);
+        
+        // Find valid physical disks (not partitions, not read-only)
+        EFI_BLOCK_IO_PROTOCOL* available_disks[10];
+        int num_available_disks = 0;
+        for (UINTN i = 0; i < numBlockIo && num_available_disks < 10; i++) {
+            EFI_BLOCK_IO_PROTOCOL *blk = NULL;
+            SystemTable->BootServices->HandleProtocol(blockIoHandles[i], &blockIoGuid, (void**)&blk);
+            if (blk && blk->Media && !blk->Media->LogicalPartition && !blk->Media->ReadOnly) {
+                available_disks[num_available_disks++] = blk;
+            }
         }
         
         EFI_INPUT_KEY Key;
         bool installing = false;
         bool format_disk = false;
-        int cursor_x = 512;
-        int cursor_y = 384;
+        EFI_BLOCK_IO_PROTOCOL* selected_disk = NULL;
+        int cursor_x = screen_width / 2;
+        int cursor_y = screen_height / 2;
+        
+        int state = 0; // 0 = welcome, 1 = disk select
         
         while (1) {
-            bool redraw = false;
+            bool redraw = true; // Simplified render loop for UEFI installer
             
             // Check Keyboard
             EFI_STATUS Status = SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &Key);
             if (Status == EFI_SUCCESS) {
-                if (Key.UnicodeChar == '\r' || Key.UnicodeChar == '\n') {
-                    installing = true;
-                    break;
-                } else if (Key.UnicodeChar == ' ') {
-                    installing = false;
-                    break;
+                if (state == 0) {
+                    if (Key.UnicodeChar == '\r' || Key.UnicodeChar == '\n') {
+                        installing = true;
+                        break;
+                    } else if (Key.UnicodeChar == ' ') {
+                        installing = false;
+                        break;
+                    }
                 }
             }
             
@@ -204,53 +200,92 @@ extern "C" {
                 EFI_SIMPLE_POINTER_STATE State;
                 Status = Mouse->GetState(Mouse, &State);
                 if (Status == EFI_SUCCESS) {
-                    // Typical relative movement scaling (can vary by VM, 1000 is a safe guess)
                     int dx = State.RelativeMovementX / 1000;
                     int dy = State.RelativeMovementY / 1000;
-                    
                     if (dx != 0 || dy != 0) {
-                        cursor_x += dx;
-                        cursor_y += dy;
+                        cursor_x += dx; cursor_y += dy;
                         if (cursor_x < 0) cursor_x = 0;
-                        if (cursor_x > 1023) cursor_x = 1023;
+                        if (cursor_x > screen_width - 1) cursor_x = screen_width - 1;
                         if (cursor_y < 0) cursor_y = 0;
-                        if (cursor_y > 767) cursor_y = 767;
-                        redraw = true;
+                        if (cursor_y > screen_height - 1) cursor_y = screen_height - 1;
                     }
                     
                     if (State.LeftButton) {
-                        // Click on "Install"
-                        if (cursor_x >= win_x + 60 && cursor_x <= win_x + 220 &&
-                            cursor_y >= win_y + 220 && cursor_y <= win_y + 260) {
-                            installing = true;
-                            break;
-                        }
-                        // Click on "Format & Install"
-                        if (cursor_x >= win_x + 240 && cursor_x <= win_x + 400 &&
-                            cursor_y >= win_y + 220 && cursor_y <= win_y + 260) {
-                            installing = true;
-                            format_disk = true;
-                            break;
-                        }
-                        // Click on "Live CD"
-                        if (cursor_x >= win_x + 420 && cursor_x <= win_x + 580 &&
-                            cursor_y >= win_y + 220 && cursor_y <= win_y + 260) {
-                            installing = false;
-                            break;
+                        if (state == 0) {
+                            if (cursor_x >= win_x + 60 && cursor_x <= win_x + 220 && cursor_y >= win_y + 220 && cursor_y <= win_y + 260) {
+                                installing = true; break; // Install (No format)
+                            }
+                            if (cursor_x >= win_x + 240 && cursor_x <= win_x + 400 && cursor_y >= win_y + 220 && cursor_y <= win_y + 260) {
+                                state = 1; // Go to disk select
+                            }
+                            if (cursor_x >= win_x + 420 && cursor_x <= win_x + 580 && cursor_y >= win_y + 220 && cursor_y <= win_y + 260) {
+                                installing = false; break; // Live CD
+                            }
+                        } else if (state == 1) {
+                            for (int i = 0; i < num_available_disks; i++) {
+                                int dy_btn = win_y + 160 + (i * 50);
+                                if (cursor_x >= win_x + 60 && cursor_x <= win_x + 580 && cursor_y >= dy_btn && cursor_y <= dy_btn + 40) {
+                                    selected_disk = available_disks[i];
+                                    installing = true;
+                                    format_disk = true;
+                                    break;
+                                }
+                            }
+                            if (format_disk) break;
+                            
+                            // Back button
+                            if (cursor_x >= win_x + 60 && cursor_x <= win_x + 160 && cursor_y >= win_y + win_h - 60 && cursor_y <= win_y + win_h - 20) {
+                                state = 0;
+                            }
                         }
                     }
                 }
             }
             
             if (redraw) {
-                // Not drawing desktop stuff
                 blankUI_draw_window(win_w, win_h, (char*)"BlankOS Installer");
-                blankUI_draw_text_color(win_x + 60, win_y + 80, (char*)"Welcome to BlankOS.", 0x000000);
-                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Would you like to install BlankOS to your hard drive,", 0x000000);
-                blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"or try the Live Environment without modifying your computer?", 0x000000);
-                blankUI_draw_button(win_x + 60, win_y + 220, 160, 40, (char*)"Install (Enter)");
-                blankUI_draw_button(win_x + 240, win_y + 220, 160, 40, (char*)"Format & Install");
-                blankUI_draw_button(win_x + 420, win_y + 220, 160, 40, (char*)"Live CD (Space)");
+                
+                if (state == 0) {
+                    blankUI_draw_text_color(win_x + 60, win_y + 80, (char*)"Welcome to BlankOS.", 0x000000);
+                    blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Would you like to install BlankOS to your hard drive,", 0x000000);
+                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"or try the Live Environment without modifying your computer?", 0x000000);
+                    blankUI_draw_button(win_x + 60, win_y + 220, 160, 40, (char*)"Install (Enter)");
+                    blankUI_draw_button(win_x + 240, win_y + 220, 160, 40, (char*)"Format & Install");
+                    blankUI_draw_button(win_x + 420, win_y + 220, 160, 40, (char*)"Live CD (Space)");
+                } else if (state == 1) {
+                    blankUI_draw_text_color(win_x + 60, win_y + 80, (char*)"Select a disk to Format & Install BlankOS:", 0x000000);
+                    blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"WARNING: All data on the selected disk will be erased!", 0xAA0000);
+                    
+                    if (num_available_disks == 0) {
+                        blankUI_draw_text_color(win_x + 60, win_y + 180, (char*)"No physical disks found.", 0x000000);
+                    }
+                    
+                    for (int i = 0; i < num_available_disks; i++) {
+                        char label[64];
+                        uint64_t size_mb = (available_disks[i]->Media->LastBlock * available_disks[i]->Media->BlockSize) / (1024 * 1024);
+                        // Very crude int-to-str for size
+                        char num_str[32];
+                        uint64_t tmp = size_mb;
+                        int n = 0;
+                        if (tmp == 0) { num_str[n++] = '0'; }
+                        else {
+                            char rev[32]; int r = 0;
+                            while(tmp > 0) { rev[r++] = '0' + (tmp % 10); tmp /= 10; }
+                            while(r > 0) { num_str[n++] = rev[--r]; }
+                        }
+                        num_str[n] = '\0';
+                        
+                        char* dest = label;
+                        const char* pre = "Disk "; *dest++ = 'D'; *dest++ = 'i'; *dest++ = 's'; *dest++ = 'k'; *dest++ = ' ';
+                        *dest++ = '0' + i; *dest++ = ' '; *dest++ = '(';
+                        for(int j=0; num_str[j]; j++) *dest++ = num_str[j];
+                        *dest++ = ' '; *dest++ = 'M'; *dest++ = 'B'; *dest++ = ')'; *dest = '\0';
+                        
+                        blankUI_draw_button(win_x + 60, win_y + 160 + (i * 50), 520, 40, label);
+                    }
+                    blankUI_draw_button(win_x + 60, win_y + win_h - 60, 100, 40, (char*)"Back");
+                }
+                
                 blankUI_draw_cursor(cursor_x, cursor_y);
                 swap_buffers();
             }
@@ -259,16 +294,30 @@ extern "C" {
         if (installing) {
             blankUI_draw_window(win_w, win_h, (char*)"Installing BlankOS");
             
-            if (format_disk) {
-                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Formatting disk with GPT and FAT32...", 0x000000);
+            if (format_disk && selected_disk != NULL) {
+                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Formatting disk with GPT and FAT32 natively...", 0x000000);
                 swap_buffers();
-                for (volatile int d = 0; d < 80000000; d++); // Simulate partition process via Block I/O Mock
+                
+                bool formatted = format_disk_gpt_fat32(SystemTable, selected_disk);
+                
+                if (formatted) {
+                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"Disk successfully formatted!", 0x008800);
+                    // Attempt to reconnect controller so FAT32 driver binds to new partition
+                    // We pass NULL for DriverImageHandle and DevicePath to ConnectController
+                    // We will just do a blind ConnectController
+                    SystemTable->BootServices->ConnectController(blockIoHandles[0], NULL, NULL, TRUE);
+                    // (This might require a reboot to see the disk if the firmware doesn't rescan, 
+                    // but we will proceed with the simulated copy which searches for writable disks).
+                } else {
+                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"Format failed!", 0xAA0000);
+                }
+                swap_buffers();
+                for (volatile int d = 0; d < 80000000; d++); 
             }
             
-            blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"Searching for writable FAT32 disks...", 0x000000);
+            blankUI_draw_text_color(win_x + 60, win_y + 160, (char*)"Searching for writable FAT32 disks...", 0x000000);
             swap_buffers();
             
-            // Give the user a moment to read the UI
             for (volatile int d = 0; d < 40000000; d++);
             
             bool success = perform_real_installation(SystemTable);
@@ -278,12 +327,15 @@ extern "C" {
             if (success) {
                 blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Success! BlankOS wrote to the disk natively.", 0x008800);
             } else {
-                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Error: No writable FAT32 disk found.", 0xAA0000);
+                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Error: No writable FAT32 disk found or copy failed.", 0xAA0000);
+                blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"(A reboot may be required before the UEFI firmware recognizes the new partition)", 0x555555);
             }
             swap_buffers();
             
             for (volatile int d = 0; d < 80000000; d++);
         }
+        
+        if (blockIoHandles) SystemTable->BootServices->FreePool(blockIoHandles);
         
         // Clear screen and redraw empty desktop
         blankUI_draw_toast((char*)"Ready", (char*)"BlankOS is ready to use. Please restart the system.");

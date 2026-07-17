@@ -9,7 +9,7 @@ LDFLAGS = -nostdlib -znocombreloc -shared -Bsymbolic -L /usr/lib -T /usr/lib/elf
 LIBS = -lefi -lgnuefi
 
 # Kernel Objects MUST be defined before they are used as dependencies!
-KERNEL_OBJS = src/kernel/kernel.o src/kernel/stb_stdlib.o src/kernel/stb_wrapper.o src/kernel/memory.o src/kernel/bdrm.o src/kernel/bloe_loader.o src/kernel/elf_loader.o src/kernel/pci.o src/kernel/blank_reg.o src/kernel/crypto.o src/kernel/time.o src/kernel/notifications.o src/kernel/power.o src/kernel/battery.o src/kernel/cookies.o src/kernel/audio.o src/kernel/stubs.o src/ui/compositor.o src/ui/blankUI.o src/apps/setup.o src/apps/login.o src/apps/blankreg_edit.o src/apps/blankpad.o src/apps/updater.o src/apps/loading_screen.o src/apps/updating_screen.o src/apps/intro.o src/apps/sysinfo.o src/apps/store.o src/apps/task_manager.o src/apps/terminal.o
+KERNEL_OBJS = src/kernel/kernel.o src/kernel/stb_stdlib.o src/kernel/stb_wrapper.o src/kernel/memory.o src/kernel/bdrm.o src/kernel/bloe_loader.o src/kernel/elf_loader.o src/kernel/pci.o src/kernel/blank_reg.o src/kernel/crypto.o src/kernel/time.o src/kernel/notifications.o src/kernel/power.o src/kernel/battery.o src/kernel/cookies.o src/kernel/audio.o src/kernel/disk_formatter.o src/kernel/svga.o src/kernel/stubs.o src/ui/compositor.o src/ui/blankDUI.o src/ui/blankUI.o src/apps/setup.o src/apps/login.o src/apps/blankreg_edit.o src/apps/blankpad.o src/apps/updater.o src/apps/loading_screen.o src/apps/updating_screen.o src/apps/intro.o src/apps/sysinfo.o src/apps/store.o src/apps/task_manager.o src/apps/terminal.o src/apps/calculator.o src/apps/weather.o src/apps/browser.o
 
 all: blankOS.iso
 

@@ -16,9 +16,12 @@ extern void draw_circle_filled(int cx, int cy, int r, uint32_t color);
 extern void draw_frosted_glass_rounded(int x, int y, int w, int h, int r, uint32_t tint_color, uint8_t tint_alpha);
 
 static bool reduce_motion_enabled = false;
+static int last_mouse_x = 0;
+static int last_mouse_y = 0;
+static float dock_icon_scales[8] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
 
 // Basic 8x8 bitmap font (subset for GUI text)
-static const uint8_t font8x8_basic[95][8] = {
+const uint8_t font8x8_basic[95][8] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, // ' ' (32)
     {0x18,0x18,0x18,0x18,0x18,0x00,0x18,0x00}, // '!' (33)
     {0x6C,0x6C,0x6C,0x00,0x00,0x00,0x00,0x00}, // '"' (34)
@@ -194,46 +197,66 @@ void blankUI_draw_menubar() {
 }
 
 void blankUI_draw_dock() {
-    int dock_w = 400;
-    int dock_h = 60;
+    int icon_size = 48;
+    int spacing = 10;
+    int num_icons = 8; // Finder, Settings, Browser, Store, Terminal, Calculator, Weather, Trash
+    int dock_content_w = num_icons * icon_size + (num_icons - 1) * spacing + 32;
+    int dock_w = dock_content_w;
+    int dock_h = 64;
     int dock_x = (screen_width - dock_w) / 2;
-    int dock_y = screen_height - dock_h - 10;
+    int dock_y = screen_height - dock_h - 8;
     
     // Frosted glass dock
     draw_frosted_glass_rounded(dock_x, dock_y, dock_w, dock_h, 20, 0xFFFFFF, 160);
-    draw_rect_rounded(dock_x, dock_y, dock_w, dock_h, 20, 0xFFFFFF, 80); // border
+    draw_rect_rounded(dock_x, dock_y, dock_w, dock_h, 20, 0xFFFFFF, 80);
     
-    int icon_size = 48;
-    int spacing = 12;
     int start_x = dock_x + 16;
-    int start_y = dock_y + 6;
+    int start_y = dock_y + 4;
     
-    // Icon 1: Finder
-    draw_rect_rounded(start_x, start_y, icon_size, icon_size, 12, 0x007AFF, 255);
-    blankUI_draw_text_color(start_x, start_y + icon_size + 2, (char*)"Finder", 0x333333);
-    
-    // Icon 2: Settings
-    draw_rect_rounded(start_x + (icon_size+spacing)*1, start_y, icon_size, icon_size, 12, 0x8E8E93, 255);
-    blankUI_draw_text_color(start_x + (icon_size+spacing)*1 - 8, start_y + icon_size + 2, (char*)"Settings", 0x333333);
-    
-    // Icon 3: Browser
-    draw_rect_rounded(start_x + (icon_size+spacing)*2, start_y, icon_size, icon_size, 12, 0x5AC8FA, 255);
-    blankUI_draw_text_color(start_x + (icon_size+spacing)*2 - 4, start_y + icon_size + 2, (char*)"Browser", 0x333333);
-    
-    // Icon 4: App Store
-    draw_rect_rounded(start_x + (icon_size+spacing)*3, start_y, icon_size, icon_size, 12, 0x007AFF, 255);
-    blankUI_draw_text_color(start_x + (icon_size+spacing)*3 + 4, start_y + icon_size + 2, (char*)"Store", 0x333333);
-    
-    // Icon 5: Terminal
-    draw_rect_rounded(start_x + (icon_size+spacing)*4, start_y, icon_size, icon_size, 12, 0x1C1C1E, 255);
-    blankUI_draw_text_color(start_x + (icon_size+spacing)*4 - 8, start_y + icon_size + 2, (char*)"Terminal", 0x333333);
+    for (int i = 0; i < 8; i++) {
+        int base_x = start_x + (icon_size + spacing) * i;
+        if (i == 7) base_x += 8; // Trash offset
+        
+        float target = 1.0f;
+        if (last_mouse_x >= base_x && last_mouse_x <= base_x + icon_size &&
+            last_mouse_y >= start_y && last_mouse_y <= start_y + icon_size) {
+            target = 1.3f;
+        }
+        dock_icon_scales[i] += (target - dock_icon_scales[i]) * 0.2f;
+        
+        int s = (int)(icon_size * dock_icon_scales[i]);
+        int cx = base_x - (s - icon_size) / 2;
+        int cy = start_y - (s - icon_size); // Pop upwards
+        
+        if (i == 0) {
+            draw_rect_rounded(cx, cy, s, s, 12, 0x007AFF, 255);
+            blankUI_draw_text_color(base_x + 4, start_y + icon_size + 2, (char*)"Finder", 0x333333);
+        } else if (i == 1) {
+            draw_rect_rounded(cx, cy, s, s, 12, 0x8E8E93, 255);
+            blankUI_draw_text_color(base_x - 8, start_y + icon_size + 2, (char*)"Settings", 0x333333);
+        } else if (i == 2) {
+            draw_rect_rounded(cx, cy, s, s, 12, 0x5AC8FA, 255);
+            blankUI_draw_text_color(base_x - 4, start_y + icon_size + 2, (char*)"Browser", 0x333333);
+        } else if (i == 3) {
+            draw_rect_rounded(cx, cy, s, s, 12, 0x007AFF, 255);
+            blankUI_draw_text_color(base_x + 8, start_y + icon_size + 2, (char*)"Store", 0x333333);
+        } else if (i == 4) {
+            draw_rect_rounded(cx, cy, s, s, 12, 0x1C1C1E, 255);
+            blankUI_draw_text_color(base_x - 8, start_y + icon_size + 2, (char*)"Terminal", 0x333333);
+        } else if (i == 5) {
+            draw_rect_rounded(cx, cy, s, s, 12, 0xFF9500, 255);
+            blankUI_draw_text_color(base_x - 4, start_y + icon_size + 2, (char*)"Calc", 0x333333);
+        } else if (i == 6) {
+            draw_rect_rounded(cx, cy, s, s, 12, 0x30B0C7, 255);
+            blankUI_draw_text_color(base_x - 4, start_y + icon_size + 2, (char*)"Weather", 0x333333);
+        } else if (i == 7) {
+            draw_rect_rounded(cx, cy, s, s, 12, 0xE5E5EA, 255);
+            blankUI_draw_text_color(base_x + 12, start_y + icon_size + 2, (char*)"Trash", 0x333333);
+        }
+    }
     
     // Divider
-    draw_rect_filled(start_x + (icon_size+spacing)*5, start_y + 8, 1, icon_size - 16, 0x000000, 40);
-    
-    // Icon 6: Trash
-    draw_rect_rounded(start_x + (icon_size+spacing)*5 + 10, start_y, icon_size, icon_size, 12, 0xE5E5EA, 255);
-    blankUI_draw_text_color(start_x + (icon_size+spacing)*5 + 14, start_y + icon_size + 2, (char*)"Trash", 0x333333);
+    draw_rect_filled(start_x + (icon_size+spacing)*7, start_y + 8, 1, icon_size - 16, 0x000000, 40);
 }
 
 // 12x19 macOS style cursor bitmap (0=transparent, 1=black border, 2=white fill)
@@ -260,6 +283,8 @@ static const uint8_t cursor_bitmap[19][12] = {
 };
 
 void blankUI_draw_cursor(int x, int y) {
+    last_mouse_x = x;
+    last_mouse_y = y;
     for (int row = 0; row < 19; row++) {
         for (int col = 0; col < 12; col++) {
             uint8_t pixel = cursor_bitmap[row][col];
@@ -273,23 +298,24 @@ void blankUI_draw_cursor(int x, int y) {
 }
 
 int blankUI_hit_test_dock(int cursor_x, int cursor_y) {
-    int dock_w = 400;
-    int dock_h = 60;
+    int icon_size = 48;
+    int spacing = 10;
+    int num_icons = 8;
+    int dock_content_w = num_icons * icon_size + (num_icons - 1) * spacing + 32;
+    int dock_w = dock_content_w;
+    int dock_h = 64;
     int dock_x = (screen_width - dock_w) / 2;
-    int dock_y = screen_height - dock_h - 10;
+    int dock_y = screen_height - dock_h - 8;
     
     if (cursor_x >= dock_x && cursor_x <= dock_x + dock_w &&
         cursor_y >= dock_y && cursor_y <= dock_y + dock_h) {
         
-        int icon_size = 48;
-        int spacing = 12;
         int start_x = dock_x + 16;
-        int start_y = dock_y + 6;
+        int start_y = dock_y + 4;
         
-        for (int i = 0; i < 6; i++) {
-            // Trash is separated by a divider
+        for (int i = 0; i < num_icons; i++) {
             int icon_x = start_x + (icon_size + spacing) * i;
-            if (i == 5) icon_x += 10; 
+            if (i == 7) icon_x += 8; // Trash has extra offset after divider
             
             if (cursor_x >= icon_x && cursor_x <= icon_x + icon_size &&
                 cursor_y >= start_y && cursor_y <= start_y + icon_size) {

@@ -1,0 +1,265 @@
+#include <stddef.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <efi.h>
+
+extern "C" {
+    extern void swap_buffers();
+    extern void dui_draw_wallpaper();
+    extern void dui_rect(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
+    extern void dui_rect_rounded(int x, int y, int w, int h, int radius, uint32_t color, uint8_t alpha);
+    extern void dui_circle(int cx, int cy, int r, uint32_t color, uint8_t alpha);
+    extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
+    extern int dui_text_width(const char* text, int scale);
+    extern void dui_gradient_rounded(int x, int y, int w, int h, int radius, uint32_t top_color, uint32_t bottom_color);
+    extern void dui_shadow(int x, int y, int w, int h, int radius, int blur_radius, uint32_t color, uint8_t alpha);
+    extern void dui_line(int x0, int y0, int x1, int y1, uint32_t color, int thickness);
+    extern void blankUI_draw_menubar();
+    extern void blankUI_draw_dock();
+    extern void blankUI_draw_cursor(int x, int y);
+    extern int screen_width;
+    extern int screen_height;
+
+    // ── Tiny math helpers (no stdlib) ────────────────────────────────
+    static int w_abs(int v) { return v < 0 ? -v : v; }
+    static int w_min(int a, int b) { return a < b ? a : b; }
+    static int w_max(int a, int b) { return a > b ? a : b; }
+
+    // Integer-only sine approximation (returns value in -1000..1000)
+    // angle is in degrees 0..359
+    static int w_sin1000(int deg) {
+        deg = deg % 360;
+        if (deg < 0) deg += 360;
+        // Quadrant reduction
+        int sign = 1;
+        if (deg >= 180) { deg -= 180; sign = -1; }
+        if (deg > 90)  deg = 180 - deg;
+        // Bhaskara I approximation: sin(x) ≈ 4x(180-x) / (40500 - x(180-x))
+        int num = 4 * deg * (180 - deg);
+        int den = 40500 - deg * (180 - deg);
+        if (den == 0) den = 1;
+        return sign * (num * 1000 / den);
+    }
+    static int w_cos1000(int deg) { return w_sin1000(deg + 90); }
+
+    // ── Custom strlen ────────────────────────────────────────────────
+    static int w_strlen(const char* s) {
+        int n = 0;
+        while (s[n]) n++;
+        return n;
+    }
+
+    // ── Draw sun icon (filled circle + 8 radiating lines) ───────────
+    static void draw_sun_icon(int cx, int cy, int body_r, int ray_len, uint32_t color) {
+        // Filled sun body
+        dui_circle(cx, cy, body_r, color, 255);
+
+        // Lighter halo
+        dui_circle(cx, cy, body_r + 3, 0xFDE68A, 80);
+
+        // 8 rays at 0°, 45°, 90°, ... 315°
+        for (int i = 0; i < 8; i++) {
+            int angle = i * 45;
+            int inner_r = body_r + 4;
+            int outer_r = body_r + ray_len;
+            int x0 = cx + (w_cos1000(angle) * inner_r) / 1000;
+            int y0 = cy - (w_sin1000(angle) * inner_r) / 1000;
+            int x1 = cx + (w_cos1000(angle) * outer_r) / 1000;
+            int y1 = cy - (w_sin1000(angle) * outer_r) / 1000;
+            dui_line(x0, y0, x1, y1, color, 2);
+        }
+    }
+
+    // ── Draw small sun (for forecast) ───────────────────────────────
+    static void draw_small_sun(int cx, int cy) {
+        dui_circle(cx, cy, 6, 0xFBBF24, 255);
+        for (int i = 0; i < 8; i++) {
+            int angle = i * 45;
+            int x0 = cx + (w_cos1000(angle) * 9) / 1000;
+            int y0 = cy - (w_sin1000(angle) * 9) / 1000;
+            int x1 = cx + (w_cos1000(angle) * 14) / 1000;
+            int y1 = cy - (w_sin1000(angle) * 14) / 1000;
+            dui_line(x0, y0, x1, y1, 0xFBBF24, 1);
+        }
+    }
+
+    // ── Draw small cloud (for forecast) ─────────────────────────────
+    static void draw_small_cloud(int cx, int cy) {
+        // Three overlapping circles to form a cloud shape
+        dui_circle(cx - 5, cy + 2, 6, 0xD1D5DB, 220);
+        dui_circle(cx + 5, cy + 2, 6, 0xD1D5DB, 220);
+        dui_circle(cx, cy - 2, 7, 0xE5E7EB, 240);
+    }
+
+    // ── Draw partial cloud + sun (for "Partly Cloudy" main icon) ────
+    static void draw_partly_cloudy_icon(int cx, int cy) {
+        // Sun behind clouds — draw sun first, then cloud in front
+        draw_sun_icon(cx + 10, cy - 12, 16, 12, 0xFBBF24);
+
+        // Cloud body (overlapping rounded shapes)
+        dui_circle(cx - 14, cy + 10, 14, 0xE5E7EB, 210);
+        dui_circle(cx + 10, cy + 10, 14, 0xE5E7EB, 210);
+        dui_circle(cx - 2, cy + 2, 16, 0xF3F4F6, 230);
+        // Cloud base
+        dui_rect_rounded(cx - 28, cy + 6, 56, 18, 6, 0xE5E7EB, 220);
+    }
+
+    // ── Center-aligned text helper ──────────────────────────────────
+    static void draw_text_centered(int cx, int y, const char* text, uint32_t color, int scale) {
+        int tw = dui_text_width(text, scale);
+        dui_text(cx - tw / 2, y, text, color, scale);
+    }
+
+    // ── Separator line ──────────────────────────────────────────────
+    static void draw_separator(int x, int y, int w, uint32_t color) {
+        dui_rect(x, y, w, 1, color, 60);
+    }
+
+    // ── Main entry point ────────────────────────────────────────────
+    void launch_weather(EFI_SYSTEM_TABLE* SystemTable) {
+        // Locate mouse protocol
+        EFI_GUID SimplePointerProtocolGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
+        EFI_SIMPLE_POINTER_PROTOCOL* Mouse = NULL;
+        SystemTable->BootServices->LocateProtocol(&SimplePointerProtocolGuid, NULL, (void**)&Mouse);
+        if (Mouse) Mouse->Reset(Mouse, TRUE);
+
+        int cursor_x = screen_width / 2;
+        int cursor_y = screen_height / 2;
+        bool done = false;
+
+        // ── Card dimensions ─────────────────────────────────────────
+        int card_w = 520;
+        int card_h = 480;
+
+        // ── Forecast data ───────────────────────────────────────────
+        const char* day_names[5]  = { "Mon", "Tue", "Wed", "Thu", "Fri" };
+        const char* day_temps[5]  = { "75F", "68F", "72F", "80F", "71F" };
+        // 0 = sun, 1 = cloud
+        int day_icons[5] = { 0, 1, 0, 0, 1 };
+
+        // ── Event loop ──────────────────────────────────────────────
+        while (!done) {
+            // ── Input: keyboard ─────────────────────────────────────
+            EFI_INPUT_KEY Key;
+            EFI_STATUS Status = SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &Key);
+            if (Status == EFI_SUCCESS) {
+                if (Key.ScanCode == 0x17) {  // ESC scan code
+                    done = true;
+                    continue;
+                }
+            }
+
+            // ── Input: mouse ────────────────────────────────────────
+            if (Mouse) {
+                EFI_SIMPLE_POINTER_STATE State;
+                if (Mouse->GetState(Mouse, &State) == EFI_SUCCESS) {
+                    int dx = State.RelativeMovementX / 1000;
+                    int dy = State.RelativeMovementY / 1000;
+                    cursor_x += dx;
+                    cursor_y += dy;
+                    if (cursor_x < 0) cursor_x = 0;
+                    if (cursor_x >= screen_width)  cursor_x = screen_width - 1;
+                    if (cursor_y < 0) cursor_y = 0;
+                    if (cursor_y >= screen_height) cursor_y = screen_height - 1;
+                }
+            }
+
+            // ── Render ──────────────────────────────────────────────
+
+            // 1. Desktop chrome
+            dui_draw_wallpaper();
+            blankUI_draw_menubar();
+
+            // 2. Full-screen blue gradient backdrop for the weather app
+            dui_gradient_rounded(0, 24, screen_width, screen_height - 24, 0,
+                                 0x1E3A8A, 0x3B82F6);
+
+            // 3. Centered weather card
+            int card_x = (screen_width - card_w) / 2;
+            int card_y = (screen_height - card_h) / 2 - 10;
+
+            // Card shadow
+            dui_shadow(card_x, card_y, card_w, card_h, 20, 24, 0x000000, 60);
+
+            // Card body — semi-transparent white with rounded corners
+            dui_rect_rounded(card_x, card_y, card_w, card_h, 20, 0xFFFFFF, 220);
+
+            // ── Header: Location & Date ─────────────────────────────
+            int cx = card_x + card_w / 2;  // horizontal center of card
+            draw_text_centered(cx, card_y + 24, "Weather", 0x1E3A8A, 3);
+            draw_text_centered(cx, card_y + 56, "San Francisco, CA", 0x6B7280, 1);
+
+            // ── Main weather icon (partly cloudy sun) ───────────────
+            draw_partly_cloudy_icon(cx, card_y + 118);
+
+            // ── Temperature ─────────────────────────────────────────
+            draw_text_centered(cx, card_y + 160, "72 F", 0x111827, 5);
+
+            // ── Condition ───────────────────────────────────────────
+            draw_text_centered(cx, card_y + 210, "Partly Cloudy", 0x4B5563, 2);
+
+            // ── Detail chips (humidity & wind) ──────────────────────
+            int chip_y = card_y + 250;
+            int chip_h = 36;
+            int chip_w = 180;
+            int chip_gap = 20;
+            int chips_total = chip_w * 2 + chip_gap;
+            int chip_x0 = cx - chips_total / 2;
+
+            // Humidity chip
+            dui_rect_rounded(chip_x0, chip_y, chip_w, chip_h, 12, 0xEFF6FF, 200);
+            draw_text_centered(chip_x0 + chip_w / 2, chip_y + 6, "Humidity", 0x6B7280, 1);
+            draw_text_centered(chip_x0 + chip_w / 2, chip_y + 19, "45%", 0x1E40AF, 1);
+
+            // Wind chip
+            int chip_x1 = chip_x0 + chip_w + chip_gap;
+            dui_rect_rounded(chip_x1, chip_y, chip_w, chip_h, 12, 0xEFF6FF, 200);
+            draw_text_centered(chip_x1 + chip_w / 2, chip_y + 6, "Wind", 0x6B7280, 1);
+            draw_text_centered(chip_x1 + chip_w / 2, chip_y + 19, "8 mph NW", 0x1E40AF, 1);
+
+            // ── Separator ───────────────────────────────────────────
+            int sep_y = card_y + 305;
+            draw_separator(card_x + 30, sep_y, card_w - 60, 0x9CA3AF);
+
+            // ── 5-Day Forecast label ────────────────────────────────
+            draw_text_centered(cx, sep_y + 12, "5-Day Forecast", 0x374151, 2);
+
+            // ── Forecast strip ──────────────────────────────────────
+            int fc_y = sep_y + 44;
+            int fc_item_w = 80;
+            int fc_total_w = fc_item_w * 5;
+            int fc_x0 = cx - fc_total_w / 2;
+
+            for (int i = 0; i < 5; i++) {
+                int ix = fc_x0 + i * fc_item_w;
+                int item_cx = ix + fc_item_w / 2;
+
+                // Subtle background per item
+                dui_rect_rounded(ix + 4, fc_y, fc_item_w - 8, 100, 12, 0xF0F9FF, 160);
+
+                // Day name
+                draw_text_centered(item_cx, fc_y + 8, day_names[i], 0x6B7280, 1);
+
+                // Icon
+                if (day_icons[i] == 0) {
+                    draw_small_sun(item_cx, fc_y + 42);
+                } else {
+                    draw_small_cloud(item_cx, fc_y + 42);
+                }
+
+                // Temperature
+                draw_text_centered(item_cx, fc_y + 68, day_temps[i], 0x1F2937, 2);
+            }
+
+            // ── Footer hint ─────────────────────────────────────────
+            draw_text_centered(cx, card_y + card_h - 18, "Press ESC to close", 0x9CA3AF, 1);
+
+            // 4. Dock & cursor on top
+            blankUI_draw_dock();
+            blankUI_draw_cursor(cursor_x, cursor_y);
+
+            // 5. Flip
+            swap_buffers();
+        }
+    }
+}
