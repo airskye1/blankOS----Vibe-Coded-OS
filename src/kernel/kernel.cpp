@@ -137,7 +137,7 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
     }
     
     // Play startup sound
-    play_system_sound((char*)"startup");
+    play_system_sound("startup");
     klog("[ AUDIO  ] Startup Sound Played.");
     
     SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"\r\n[ SYSTEM ] Entering Desktop Environment...\r\n");
@@ -221,7 +221,7 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
                                 volatile int zero = 0;
                                 volatile int val = 1 / zero;
                                 (void)val;
-                                blankOS_panic((char*)(char*)(char*)"DIV_BY_ZERO", "Division by zero triggered dynamically.");
+                                blankOS_panic("DIV_BY_ZERO", "Division by zero triggered dynamically.");
                             }
                         }
                         rclick_menu_open = false;

@@ -42,7 +42,7 @@ extern "C" {
             if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
             
             EFI_FILE_HANDLE sourceFile = NULL;
-            Status = root->Open(root, &sourceFile, (CHAR16*)L(char*)(char*)(char*)"EFI\\BOOT\\BOOTX64.EFI", EFI_FILE_MODE_READ, 0);
+            Status = root->Open(root, &sourceFile, (CHAR16*)L"EFI\\BOOT\\BOOTX64.EFI", EFI_FILE_MODE_READ, 0);
             
             if (!EFI_ERROR(Status) && sourceFile != NULL) {
                 fileSize = 2 * 1024 * 1024; // Max 2MB buffer for the OS binary
@@ -243,21 +243,21 @@ extern "C" {
             }
             
             if (redraw) {
-                blankUI_draw_window(win_w, win_h, (char*)(char*)(char*)(char*)"BlankOS Installer");
+                blankUI_draw_window(win_w, win_h, (char*)"BlankOS Installer");
                 
                 if (state == 0) {
-                    blankUI_draw_text_color(win_x + 60, win_y + 80, (char*)(char*)(char*)(char*)"Welcome to BlankOS.", 0x000000);
-                    blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)(char*)(char*)(char*)"Would you like to install BlankOS to your hard drive,", 0x000000);
-                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)(char*)(char*)(char*)"or try the Live Environment without modifying your computer?", 0x000000);
-                    blankUI_draw_button(win_x + 60, win_y + 220, 160, 40, (char*)(char*)(char*)(char*)"Install (Enter)");
-                    blankUI_draw_button(win_x + 240, win_y + 220, 160, 40, (char*)(char*)(char*)(char*)"Format & Install");
-                    blankUI_draw_button(win_x + 420, win_y + 220, 160, 40, (char*)(char*)(char*)(char*)"Live CD (Space)");
+                    blankUI_draw_text_color(win_x + 60, win_y + 80, (char*)"Welcome to BlankOS.", 0x000000);
+                    blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Would you like to install BlankOS to your hard drive,", 0x000000);
+                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"or try the Live Environment without modifying your computer?", 0x000000);
+                    blankUI_draw_button(win_x + 60, win_y + 220, 160, 40, (char*)"Install (Enter)");
+                    blankUI_draw_button(win_x + 240, win_y + 220, 160, 40, (char*)"Format & Install");
+                    blankUI_draw_button(win_x + 420, win_y + 220, 160, 40, (char*)"Live CD (Space)");
                 } else if (state == 1) {
-                    blankUI_draw_text_color(win_x + 60, win_y + 80, (char*)(char*)(char*)(char*)"Select a disk to Format & Install BlankOS:", 0x000000);
-                    blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)(char*)(char*)(char*)"WARNING: All data on the selected disk will be erased!", 0xAA0000);
+                    blankUI_draw_text_color(win_x + 60, win_y + 80, (char*)"Select a disk to Format & Install BlankOS:", 0x000000);
+                    blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"WARNING: All data on the selected disk will be erased!", 0xAA0000);
                     
                     if (num_available_disks == 0) {
-                        blankUI_draw_text_color(win_x + 60, win_y + 180, (char*)(char*)(char*)(char*)"No physical disks found.", 0x000000);
+                        blankUI_draw_text_color(win_x + 60, win_y + 180, (char*)"No physical disks found.", 0x000000);
                     }
                     
                     for (int i = 0; i < num_available_disks; i++) {
@@ -283,7 +283,7 @@ extern "C" {
                         
                         blankUI_draw_button(win_x + 60, win_y + 160 + (i * 50), 520, 40, label);
                     }
-                    blankUI_draw_button(win_x + 60, win_y + win_h - 60, 100, 40, (char*)(char*)(char*)(char*)"Back");
+                    blankUI_draw_button(win_x + 60, win_y + win_h - 60, 100, 40, (char*)"Back");
                 }
                 
                 blankUI_draw_cursor(cursor_x, cursor_y);
@@ -292,16 +292,16 @@ extern "C" {
         }
         
         if (installing) {
-            blankUI_draw_window(win_w, win_h, (char*)(char*)(char*)(char*)"Installing BlankOS");
+            blankUI_draw_window(win_w, win_h, (char*)"Installing BlankOS");
             
             if (format_disk && selected_disk != NULL) {
-                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)(char*)(char*)(char*)"Formatting disk with GPT and FAT32 natively...", 0x000000);
+                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Formatting disk with GPT and FAT32 natively...", 0x000000);
                 swap_buffers();
                 
                 bool formatted = format_disk_gpt_fat32(SystemTable, selected_disk);
                 
                 if (formatted) {
-                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)(char*)(char*)(char*)"Disk successfully formatted!", 0x008800);
+                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"Disk successfully formatted!", 0x008800);
                     // Attempt to reconnect controller so FAT32 driver binds to new partition
                     // We pass NULL for DriverImageHandle and DevicePath to ConnectController
                     // We will just do a blind ConnectController
@@ -309,26 +309,26 @@ extern "C" {
                     // (This might require a reboot to see the disk if the firmware doesn't rescan, 
                     // but we will proceed with the simulated copy which searches for writable disks).
                 } else {
-                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)(char*)(char*)(char*)"Format failed!", 0xAA0000);
+                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"Format failed!", 0xAA0000);
                 }
                 swap_buffers();
                 for (volatile int d = 0; d < 80000000; d++); 
             }
             
-            blankUI_draw_text_color(win_x + 60, win_y + 160, (char*)(char*)(char*)(char*)"Searching for writable FAT32 disks...", 0x000000);
+            blankUI_draw_text_color(win_x + 60, win_y + 160, (char*)"Searching for writable FAT32 disks...", 0x000000);
             swap_buffers();
             
             for (volatile int d = 0; d < 40000000; d++);
             
             bool success = perform_real_installation(SystemTable);
             
-            blankUI_draw_window(win_w, win_h, (char*)(char*)(char*)(char*)"Installing BlankOS");
+            blankUI_draw_window(win_w, win_h, (char*)"Installing BlankOS");
             
             if (success) {
-                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)(char*)(char*)(char*)"Success! BlankOS wrote to the disk natively.", 0x008800);
+                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Success! BlankOS wrote to the disk natively.", 0x008800);
             } else {
-                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)(char*)(char*)(char*)"Error: No writable FAT32 disk found or copy failed.", 0xAA0000);
-                blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)(char*)(char*)(char*)"(A reboot may be required before the UEFI firmware recognizes the new partition)", 0x555555);
+                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Error: No writable FAT32 disk found or copy failed.", 0xAA0000);
+                blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"(A reboot may be required before the UEFI firmware recognizes the new partition)", 0x555555);
             }
             swap_buffers();
             
@@ -338,7 +338,7 @@ extern "C" {
         if (blockIoHandles) SystemTable->BootServices->FreePool(blockIoHandles);
         
         // Clear screen and redraw empty desktop
-        blankUI_draw_toast((char*)(char*)(char*)(char*)"Ready", (char*)"BlankOS is ready to use. Please restart the system.");
+        blankUI_draw_toast((char*)"Ready", (char*)"BlankOS is ready to use. Please restart the system.");
         swap_buffers();
         for (volatile int d = 0; d < 50000000; d++);
     }
