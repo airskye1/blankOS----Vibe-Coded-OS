@@ -33,6 +33,9 @@ extern "C" {
     extern void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable);
     extern void launch_updater(EFI_SYSTEM_TABLE *SystemTable);
     extern void launch_app_store(EFI_SYSTEM_TABLE *SystemTable);
+    extern void launch_loading_screen(EFI_SYSTEM_TABLE *SystemTable);
+    extern void launch_login_screen(EFI_SYSTEM_TABLE *SystemTable);
+    extern bool is_os_installed(EFI_SYSTEM_TABLE *SystemTable);
     
     extern bool load_and_run_elf(EFI_SYSTEM_TABLE *SystemTable, CHAR16* filename);
     extern void pci_enumerate(EFI_SYSTEM_TABLE *SystemTable);
@@ -78,11 +81,16 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
         init_compositor(SystemTable);
     }
     
-    // Hand off to Setup Screen (OOBE)
-    launch_setup_screen(SystemTable);
+    // Boot Flow Layering
+    if (is_os_installed(SystemTable)) {
+        launch_loading_screen(SystemTable);
+        launch_login_screen(SystemTable);
+    } else {
+        launch_setup_screen(SystemTable);
+    }
     
-    // Launch C++ apps
-    launch_updater(SystemTable);
+    // Updater is an app, maybe launched from desktop later, but here is a hook
+    // launch_updater(SystemTable); // Removing auto-launch of updater to keep desktop clean
     
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n[ SYSTEM ] Entering Desktop Environment...\r\n");
     
@@ -116,7 +124,8 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
                     int clicked_app = blankUI_hit_test_dock(cursor_x, cursor_y);
                     if (clicked_app != -1) {
                         if (clicked_app == 1) { // Settings (index 1)
-                            load_and_run_elf(SystemTable, (CHAR16*)L"SETTINGS.ELF");
+                            extern void launch_sysinfo(void);
+                            launch_sysinfo();
                         } else if (clicked_app == 2) { // Browser (index 2)
                             load_and_run_elf(SystemTable, (CHAR16*)L"BLANKBROWSER.ELF");
                         } else if (clicked_app == 3) { // App Store (index 3)

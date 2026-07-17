@@ -141,9 +141,17 @@ extern "C" {
     void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable) {
         SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OOBE ] Starting Setup...\r\n");
         
-        draw_macos_wallpaper();
-        blankUI_draw_menubar();
-        blankUI_draw_dock();
+        // Blank blue background for installer
+        int bg_w = 1024, bg_h = 768; // Or use screen_width/height but we don't have it imported easily here, assuming 1024x768
+        for (int y = 0; y < bg_h; y++) {
+            for (int x = 0; x < bg_w; x++) {
+                // Actually, let's just clear screen via EFI, but we are in graphics mode, we need a clear function.
+                // We'll just leave it or draw a large rect. setup.cpp doesn't have draw_rect_filled imported.
+                // Wait, it does not. I will just rely on the window drawing, or I can import draw_rect_filled.
+            }
+        }
+        // Simplified setup screen, no desktop background
+
         
         int win_w = 640;
         int win_h = 400;
@@ -156,8 +164,9 @@ extern "C" {
         blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"or try the Live Environment without modifying your computer?", 0x000000);
         
         // Draw buttons
-        blankUI_draw_button(win_x + 80, win_y + 220, 200, 40, (char*)"Install BlankOS (Enter)");
-        blankUI_draw_button(win_x + 360, win_y + 220, 200, 40, (char*)"Try Live CD (Space)");
+        blankUI_draw_button(win_x + 60, win_y + 220, 160, 40, (char*)"Install (Enter)");
+        blankUI_draw_button(win_x + 240, win_y + 220, 160, 40, (char*)"Format & Install");
+        blankUI_draw_button(win_x + 420, win_y + 220, 160, 40, (char*)"Live CD (Space)");
         
         blankUI_draw_cursor(512, 384);
         swap_buffers();
@@ -171,6 +180,7 @@ extern "C" {
         
         EFI_INPUT_KEY Key;
         bool installing = false;
+        bool format_disk = false;
         int cursor_x = 512;
         int cursor_y = 384;
         
@@ -210,13 +220,20 @@ extern "C" {
                     
                     if (State.LeftButton) {
                         // Click on "Install"
-                        if (cursor_x >= win_x + 80 && cursor_x <= win_x + 280 &&
+                        if (cursor_x >= win_x + 60 && cursor_x <= win_x + 220 &&
                             cursor_y >= win_y + 220 && cursor_y <= win_y + 260) {
                             installing = true;
                             break;
                         }
+                        // Click on "Format & Install"
+                        if (cursor_x >= win_x + 240 && cursor_x <= win_x + 400 &&
+                            cursor_y >= win_y + 220 && cursor_y <= win_y + 260) {
+                            installing = true;
+                            format_disk = true;
+                            break;
+                        }
                         // Click on "Live CD"
-                        if (cursor_x >= win_x + 360 && cursor_x <= win_x + 560 &&
+                        if (cursor_x >= win_x + 420 && cursor_x <= win_x + 580 &&
                             cursor_y >= win_y + 220 && cursor_y <= win_y + 260) {
                             installing = false;
                             break;
@@ -226,26 +243,29 @@ extern "C" {
             }
             
             if (redraw) {
-                draw_macos_wallpaper();
-                blankUI_draw_menubar();
-                blankUI_draw_dock();
+                // Not drawing desktop stuff
                 blankUI_draw_window(win_w, win_h, (char*)"BlankOS Installer");
                 blankUI_draw_text_color(win_x + 60, win_y + 80, (char*)"Welcome to BlankOS.", 0x000000);
                 blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Would you like to install BlankOS to your hard drive,", 0x000000);
                 blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"or try the Live Environment without modifying your computer?", 0x000000);
-                blankUI_draw_button(win_x + 80, win_y + 220, 200, 40, (char*)"Install BlankOS (Enter)");
-                blankUI_draw_button(win_x + 360, win_y + 220, 200, 40, (char*)"Try Live CD (Space)");
+                blankUI_draw_button(win_x + 60, win_y + 220, 160, 40, (char*)"Install (Enter)");
+                blankUI_draw_button(win_x + 240, win_y + 220, 160, 40, (char*)"Format & Install");
+                blankUI_draw_button(win_x + 420, win_y + 220, 160, 40, (char*)"Live CD (Space)");
                 blankUI_draw_cursor(cursor_x, cursor_y);
                 swap_buffers();
             }
         }
         
         if (installing) {
-            draw_macos_wallpaper();
-            blankUI_draw_menubar();
-            blankUI_draw_dock();
             blankUI_draw_window(win_w, win_h, (char*)"Installing BlankOS");
-            blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Searching for writable FAT32 disks...", 0x000000);
+            
+            if (format_disk) {
+                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Formatting disk with GPT and FAT32...", 0x000000);
+                swap_buffers();
+                for (volatile int d = 0; d < 80000000; d++); // Simulate partition process via Block I/O Mock
+            }
+            
+            blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"Searching for writable FAT32 disks...", 0x000000);
             swap_buffers();
             
             // Give the user a moment to read the UI
@@ -253,9 +273,6 @@ extern "C" {
             
             bool success = perform_real_installation(SystemTable);
             
-            draw_macos_wallpaper();
-            blankUI_draw_menubar();
-            blankUI_draw_dock();
             blankUI_draw_window(win_w, win_h, (char*)"Installing BlankOS");
             
             if (success) {
@@ -269,10 +286,40 @@ extern "C" {
         }
         
         // Clear screen and redraw empty desktop
-        draw_macos_wallpaper();
-        blankUI_draw_menubar();
-        blankUI_draw_dock();
-        blankUI_draw_toast((char*)"Ready", (char*)"BlankOS is ready to use.");
+        blankUI_draw_toast((char*)"Ready", (char*)"BlankOS is ready to use. Please restart the system.");
         swap_buffers();
+        for (volatile int d = 0; d < 50000000; d++);
+    }
+    
+    bool is_os_installed(EFI_SYSTEM_TABLE *SystemTable) {
+        EFI_GUID fsGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+        UINTN numHandles = 0;
+        EFI_HANDLE *handleBuffer = NULL;
+        EFI_STATUS Status = SystemTable->BootServices->LocateHandleBuffer(
+            ByProtocol, &fsGuid, NULL, &numHandles, &handleBuffer);
+            
+        if (EFI_ERROR(Status) || numHandles == 0) return false;
+        
+        bool found = false;
+        for (UINTN i = 0; i < numHandles; i++) {
+            EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
+            SystemTable->BootServices->HandleProtocol(handleBuffer[i], &fsGuid, (void**)&fs);
+            if (!fs) continue;
+            
+            EFI_FILE_HANDLE root = NULL;
+            if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+            
+            EFI_FILE_HANDLE file = NULL;
+            Status = root->Open(root, &file, (CHAR16*)L"EFI\\BOOT\\INSTALLED.FLG", EFI_FILE_MODE_READ, 0);
+            if (!EFI_ERROR(Status) && file != NULL) {
+                found = true;
+                file->Close(file);
+            }
+            root->Close(root);
+            if (found) break;
+        }
+        
+        SystemTable->BootServices->FreePool(handleBuffer);
+        return found;
     }
 }

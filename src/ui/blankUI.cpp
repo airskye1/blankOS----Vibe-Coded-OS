@@ -208,22 +208,32 @@ void blankUI_draw_dock() {
     int start_x = dock_x + 16;
     int start_y = dock_y + 6;
     
-    // Icon 1: Finder (Blue)
+    // Icon 1: Finder
     draw_rect_rounded(start_x, start_y, icon_size, icon_size, 12, 0x007AFF, 255);
-    // Icon 2: Settings (Grey)
+    blankUI_draw_text_color(start_x, start_y + icon_size + 2, (char*)"Finder", 0x333333);
+    
+    // Icon 2: Settings
     draw_rect_rounded(start_x + (icon_size+spacing)*1, start_y, icon_size, icon_size, 12, 0x8E8E93, 255);
-    // Icon 3: Browser (Light blue)
+    blankUI_draw_text_color(start_x + (icon_size+spacing)*1 - 8, start_y + icon_size + 2, (char*)"Settings", 0x333333);
+    
+    // Icon 3: Browser
     draw_rect_rounded(start_x + (icon_size+spacing)*2, start_y, icon_size, icon_size, 12, 0x5AC8FA, 255);
-    // Icon 4: App Store (Blue)
+    blankUI_draw_text_color(start_x + (icon_size+spacing)*2 - 4, start_y + icon_size + 2, (char*)"Browser", 0x333333);
+    
+    // Icon 4: App Store
     draw_rect_rounded(start_x + (icon_size+spacing)*3, start_y, icon_size, icon_size, 12, 0x007AFF, 255);
-    // Icon 5: Terminal (Black)
+    blankUI_draw_text_color(start_x + (icon_size+spacing)*3 + 4, start_y + icon_size + 2, (char*)"Store", 0x333333);
+    
+    // Icon 5: Terminal
     draw_rect_rounded(start_x + (icon_size+spacing)*4, start_y, icon_size, icon_size, 12, 0x1C1C1E, 255);
+    blankUI_draw_text_color(start_x + (icon_size+spacing)*4 - 8, start_y + icon_size + 2, (char*)"Terminal", 0x333333);
     
     // Divider
     draw_rect_filled(start_x + (icon_size+spacing)*5, start_y + 8, 1, icon_size - 16, 0x000000, 40);
     
-    // Icon 6: Trash (White/Grey)
+    // Icon 6: Trash
     draw_rect_rounded(start_x + (icon_size+spacing)*5 + 10, start_y, icon_size, icon_size, 12, 0xE5E5EA, 255);
+    blankUI_draw_text_color(start_x + (icon_size+spacing)*5 + 14, start_y + icon_size + 2, (char*)"Trash", 0x333333);
 }
 
 // 12x19 macOS style cursor bitmap (0=transparent, 1=black border, 2=white fill)
