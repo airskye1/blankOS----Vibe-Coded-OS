@@ -73,8 +73,13 @@ extern "C" {
     }
 }
 
+extern "C" {
+    extern EFI_SYSTEM_TABLE* global_ST;
+}
+
 extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_info) {
     gSystemTable = SystemTable;
+    global_ST = SystemTable;
     
     // Set up Interrupt Descriptor Table (IDT) for hardware panic catching
     extern void init_idt();
