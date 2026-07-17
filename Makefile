@@ -42,17 +42,14 @@ src/boot/mbr_stub.bin: src/boot/mbr_stub.asm
 	nasm -f bin $< -o $@
 
 blankOS.iso: src/boot/BOOTX64.EFI src/boot/mbr_stub.bin
+	rm -rf store_repo
+	git clone https://github.com/airskye1/blankOS-App-Store store_repo
 	cd store_repo && $(MAKE)
 	rm -rf iso
 	mkdir -p iso/EFI/BOOT
 	mkdir -p iso/EFI/APPS
 	cp src/boot/BOOTX64.EFI iso/EFI/BOOT/BOOTX64.EFI
-	cp store_repo/apps/discord.elf iso/EFI/APPS/discord.elf
-	cp store_repo/apps/youtube.elf iso/EFI/APPS/youtube.elf
-	cp store_repo/apps/x.elf iso/EFI/APPS/x.elf
-	cp store_repo/apps/settings.elf iso/EFI/APPS/settings.elf
-	cp store_repo/apps/blankdrop.elf iso/EFI/APPS/blankdrop.elf
-	cp store_repo/apps/blankbrowser.elf iso/EFI/APPS/blankbrowser.elf
+	cp store_repo/apps/*.elf iso/EFI/APPS/ 2>/dev/null || true
 	cp src/boot/BOOTX64.EFI iso/EFI/BOOT/BOOTIA32.EFI
 	cp version.json iso/version.json
 	cp src/boot/mbr_stub.bin iso/mbr_stub.bin
@@ -63,13 +60,8 @@ blankOS.iso: src/boot/BOOTX64.EFI src/boot/mbr_stub.bin
 	mcopy -i iso/efiboot.img iso/EFI/BOOT/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
 	mcopy -i iso/efiboot.img iso/EFI/BOOT/BOOTIA32.EFI ::/EFI/BOOT/BOOTIA32.EFI
 	mmd -i iso/efiboot.img ::/EFI/APPS
-	mcopy -i iso/efiboot.img iso/EFI/APPS/discord.elf ::/EFI/APPS/discord.elf
-	mcopy -i iso/efiboot.img iso/EFI/APPS/youtube.elf ::/EFI/APPS/youtube.elf
-	mcopy -i iso/efiboot.img iso/EFI/APPS/x.elf ::/EFI/APPS/x.elf
-	mcopy -i iso/efiboot.img iso/EFI/APPS/settings.elf ::/EFI/APPS/settings.elf
-	mcopy -i iso/efiboot.img iso/EFI/APPS/blankdrop.elf ::/EFI/APPS/blankdrop.elf
-	mcopy -i iso/efiboot.img iso/EFI/APPS/blankbrowser.elf ::/EFI/APPS/blankbrowser.elf
-	mcopy -i iso/efiboot.img store_repo/catalog.json ::/EFI/APPS/catalog.json
+	mcopy -i iso/efiboot.img iso/EFI/APPS/*.elf ::/EFI/APPS/ 2>/dev/null || true
+	mcopy -i iso/efiboot.img store_repo/catalog.json ::/EFI/APPS/catalog.json 2>/dev/null || true
 	xorriso -as mkisofs -R -f -e efiboot.img -no-emul-boot -o $@ iso
 
 run: blankOS.iso
