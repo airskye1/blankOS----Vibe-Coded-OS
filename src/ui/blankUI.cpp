@@ -175,7 +175,7 @@ void blankUI_draw_button(int x, int y, int width, int height, char* text) {
     blankUI_draw_text_color(text_x, text_y, text, 0xFFFFFF); // White text on dark button
 }
 
-extern (char*)(char*)(char*)"C" {
+extern "C" {
     extern bool wifi_connected;
     extern char connected_ssid[32];
     extern int wifi_signal_strength;
@@ -664,4 +664,4 @@ void blankUI_draw_progress_bar(int x, int y, int width, float percentage) {
 }
 void blankUI_draw_tabs(int x, int y, char** tab_names, int tab_count, int active_index) {}
 
-} // extern (char*)(char*)(char*)"C"
+} // extern "C"
