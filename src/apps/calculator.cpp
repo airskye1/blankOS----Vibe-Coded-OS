@@ -72,7 +72,7 @@ extern "C" {
         bool new_number = true;
         
         const char* btn_labels[20] = {
-            "C", "+/-", "%", "/",
+            (char*)(char*)(char*)"C", "+/-", "%", "/",
             "7", "8", "9", "*",
             "4", "5", "6", "-",
             "1", "2", "3", "+",

@@ -23,7 +23,7 @@ void cookie_jar_store(char* domain, char* raw_cookie_string) {
 }
 
 // Called by the OS networking stack when making an HTTP request to append "Cookie:" headers
-char* cookie_jar_retrieve(char* domain) {
+const char* cookie_jar_retrieve(char* domain) {
     // 1. Query blankReg for all keys matching "network/cookies/<domain>/*"
     // 2. Construct the "Cookie: name1=value1; name2=value2" string
     // 3. Return the string to be injected into the TCP packet
