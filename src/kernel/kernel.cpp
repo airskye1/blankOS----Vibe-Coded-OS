@@ -36,6 +36,7 @@ extern "C" {
     
     extern bool load_and_run_elf(EFI_SYSTEM_TABLE *SystemTable, CHAR16* filename);
     extern void pci_enumerate(EFI_SYSTEM_TABLE *SystemTable);
+    extern void sync_ntp_time(EFI_SYSTEM_TABLE *SystemTable);
 }
 
 extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_info) {
@@ -51,6 +52,9 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] Requesting DHCP IPv4 Lease...\r\n");
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] IPv4 Address: 192.168.1.42 (DHCP Success)\r\n");
     SystemTable->BootServices->Stall(500000); // 0.5 sec delay
+    
+    // Sync time using newly established network
+    sync_ntp_time(SystemTable);
     
     // Clear the screen and jump to UI
     SystemTable->ConOut->ClearScreen(SystemTable->ConOut);
