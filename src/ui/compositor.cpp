@@ -128,7 +128,17 @@ void draw_frosted_glass_rounded(int x, int y, int w, int h, int r, uint32_t tint
 }
 
 void init_compositor(EFI_SYSTEM_TABLE *SystemTable) {
-    SystemTable->BootServices->AllocatePool(EfiLoaderData, screen_width * screen_height * 4, (void**)&backbuffer);
+    EFI_STATUS status = SystemTable->BootServices->AllocatePool(EfiLoaderData, screen_width * screen_height * 4, (void**)&backbuffer);
+    if (EFI_ERROR(status) || !backbuffer) {
+        // Fallback to page allocation if pool allocation fails
+        UINTN pages = (screen_width * screen_height * 4 + 4095) / 4096;
+        status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, pages, (EFI_PHYSICAL_ADDRESS*)&backbuffer);
+        if (EFI_ERROR(status)) {
+            // Unrecoverable, print and halt
+            SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"CRITICAL ERROR: Failed to allocate backbuffer memory pages!\r\n");
+            while(1) { __asm__ volatile("hlt"); }
+        }
+    }
     draw_macos_wallpaper();
     init_blankUI_toolkit();
     swap_buffers();

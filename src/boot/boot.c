@@ -47,18 +47,49 @@ EFI_STATUS __attribute__((sysv_abi)) efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM
     /* Retrieve the Graphics Output Protocol (GOP) handle */
     EFI_STATUS status = SystemTable->BootServices->LocateProtocol(&gopGuid, NULL, (VOID**)&gop);
     if (status == EFI_SUCCESS && gop != NULL) {
-        UINT32 max_res = 0;
         UINT32 best_mode = gop->Mode->Mode;
+        BOOLEAN mode_found = FALSE;
         
+        // 1. Search for 1024x768 to match the standard UI layouts
         for (UINT32 i = 0; i < gop->Mode->MaxMode; i++) {
             EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
             UINTN sizeOfInfo;
             if (gop->QueryMode(gop, i, &sizeOfInfo, &info) == EFI_SUCCESS) {
-                UINT32 res = info->HorizontalResolution * info->VerticalResolution;
-                if (res > max_res) {
-                    // Prefer 1920x1080 if available, otherwise just highest
-                    max_res = res;
+                if (info->HorizontalResolution == 1024 && info->VerticalResolution == 768) {
                     best_mode = i;
+                    mode_found = TRUE;
+                    break;
+                }
+            }
+        }
+        
+        // 2. Fallback to 1280x800
+        if (!mode_found) {
+            for (UINT32 i = 0; i < gop->Mode->MaxMode; i++) {
+                EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+                UINTN sizeOfInfo;
+                if (gop->QueryMode(gop, i, &sizeOfInfo, &info) == EFI_SUCCESS) {
+                    if (info->HorizontalResolution == 1280 && info->VerticalResolution == 800) {
+                        best_mode = i;
+                        mode_found = TRUE;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 3. Fallback to highest available
+        if (!mode_found) {
+            UINT32 max_res = 0;
+            for (UINT32 i = 0; i < gop->Mode->MaxMode; i++) {
+                EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+                UINTN sizeOfInfo;
+                if (gop->QueryMode(gop, i, &sizeOfInfo, &info) == EFI_SUCCESS) {
+                    UINT32 res = info->HorizontalResolution * info->VerticalResolution;
+                    if (res > max_res) {
+                        max_res = res;
+                        best_mode = i;
+                    }
                 }
             }
         }
