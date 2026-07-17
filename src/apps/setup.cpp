@@ -326,21 +326,22 @@ extern "C" {
             
             if (success) {
                 blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Success! BlankOS wrote to the disk natively.", 0x008800);
-            } else {
-                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Error: No writable FAT32 disk found or copy failed.", 0xAA0000);
-                blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"(A reboot may be required before the UEFI firmware recognizes the new partition)", 0x555555);
             }
-            swap_buffers();
-            
-            for (volatile int d = 0; d < 80000000; d++);
+            if (success) {
+                blankUI_draw_toast((char*)"Success", (char*)"BlankOS has been installed! Please restart.");
+                swap_buffers();
+                SystemTable->BootServices->Stall(2000000);
+            } else {
+                blankUI_draw_toast((char*)"Error", (char*)"Failed to install OS.");
+                swap_buffers();
+                SystemTable->BootServices->Stall(2000000);
+            }
         }
         
-        if (blockIoHandles) SystemTable->BootServices->FreePool(blockIoHandles);
-        
         // Clear screen and redraw empty desktop
-        blankUI_draw_toast((char*)"Ready", (char*)"BlankOS is ready to use. Please restart the system.");
+        blankUI_draw_toast((char*)"Ready", (char*)"BlankOS is ready to use. Entering Desktop...");
         swap_buffers();
-        for (volatile int d = 0; d < 50000000; d++);
+        SystemTable->BootServices->Stall(1000000);
     }
     
     bool is_os_installed(EFI_SYSTEM_TABLE *SystemTable) {

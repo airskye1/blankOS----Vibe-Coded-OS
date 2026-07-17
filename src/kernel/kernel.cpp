@@ -136,9 +136,9 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
         launch_setup_screen(SystemTable);
     }
     
-    // Play startup sound
-    play_system_sound("startup");
-    klog("[ AUDIO  ] Startup Sound Played.");
+    // Play startup sound (Disabled to prevent #GP faults in some VMs)
+    // play_system_sound("startup");
+    // klog("[ AUDIO  ] Startup Sound Played.");
     
     SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"\r\n[ SYSTEM ] Entering Desktop Environment...\r\n");
     klog("[ SYSTEM ] Desktop Environment Active.");
