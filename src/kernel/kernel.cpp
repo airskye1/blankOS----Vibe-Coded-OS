@@ -73,7 +73,7 @@ extern "C" {
     }
 }
 
-extern (char*)(char*)(char*)"C" {
+extern "C" {
     extern EFI_SYSTEM_TABLE* global_ST;
 }
 
