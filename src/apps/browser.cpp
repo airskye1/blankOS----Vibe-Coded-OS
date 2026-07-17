@@ -8,6 +8,7 @@ extern "C" {
     extern void dui_draw_wallpaper();
     extern void dui_rect(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
     extern void dui_rect_rounded(int x, int y, int w, int h, int radius, uint32_t color, uint8_t alpha);
+    extern void dui_rect_rounded_outline(int x, int y, int w, int h, int radius, uint32_t color, int thickness);
     extern void dui_rect_outline(int x, int y, int w, int h, uint32_t color, int thickness);
     extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
     extern int dui_text_width(const char* text, int scale);

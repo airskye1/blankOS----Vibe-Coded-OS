@@ -105,6 +105,31 @@ foreach ($file in $files) {
         Write-Host "[AUTO-FIX] Added <stdint.h> to $relName" -ForegroundColor Green
     }
 
+    # F. Check for missing externs for dui_ and blankUI_ functions
+    if ($relName -notmatch "blankDUI.cpp" -and $relName -notmatch "blankUI.cpp" -and $relName -notmatch "compositor.cpp") {
+        $matches = [regex]::Matches($content, '\b(dui_[a-zA-Z0-9_]+|blankUI_[a-zA-Z0-9_]+)\s*\(')
+        foreach ($m in $matches) {
+            $funcName = $m.Groups[1].Value
+            if ($content -notmatch "extern\s+[^\r\n]*\b$funcName\b") {
+                Report-Warning "$relName calls '$funcName' but is missing an extern declaration! This causes compilation errors."
+            }
+        }
+    }
+
+    # G. Auto-fix OutputString missing (CHAR16*) cast for L"..."
+    if ($content -match 'OutputString\s*\([^,]+,\s*L"') {
+        $content = [regex]::Replace($content, '(OutputString\s*\([^,]+,\s*)(L"[^"]*")', '$1(CHAR16*)$2')
+        $changed = $true
+        Write-Host "[AUTO-FIX] Added (CHAR16*) cast to OutputString in $relName" -ForegroundColor Green
+    }
+    
+    # H. Auto-fix missing (char*) cast for string literals in blankUI functions to prevent -Wwrite-strings
+    if ($content -match 'blankUI_[a-zA-Z0-9_]+\s*\([^"]*?"') {
+        $content = [regex]::Replace($content, '(blankUI_[a-zA-Z0-9_]+\s*\([^"]*?)("[^"]*")', '$1(char*)$2')
+        $changed = $true
+        Write-Host "[AUTO-FIX] Added (char*) cast to blankUI string arguments in $relName" -ForegroundColor Green
+    }
+
     # Save if auto-fixes were applied
     if ($changed) {
         [System.IO.File]::WriteAllText($file.FullName, $content)
