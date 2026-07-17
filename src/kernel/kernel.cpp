@@ -46,7 +46,7 @@ extern "C" {
     extern bool load_and_run_elf(EFI_SYSTEM_TABLE *SystemTable, CHAR16* filename);
     extern void pci_enumerate(EFI_SYSTEM_TABLE *SystemTable);
     extern void sync_ntp_time(EFI_SYSTEM_TABLE *SystemTable);
-    extern void play_system_sound(int sound_id);
+    extern void play_system_sound(char* sound_name);
 
     // Kernel boot log buffer
     static char boot_log[4096];
