@@ -1,7 +1,9 @@
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <efi.h>
 #include <efilib.h>
+#include <efiprot.h>
 
 extern "C" {
     extern void swap_buffers();
@@ -14,6 +16,100 @@ extern "C" {
     extern void blankUI_draw_button(int x, int y, int width, int height, char* text);
     extern void blankUI_draw_toast(char* title, char* message);
     extern void blankUI_draw_cursor(int x, int y);
+    
+    bool perform_real_installation(EFI_SYSTEM_TABLE *SystemTable) {
+        EFI_GUID fsGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+        UINTN numHandles = 0;
+        EFI_HANDLE *handleBuffer = NULL;
+        
+        EFI_STATUS Status = SystemTable->BootServices->LocateHandleBuffer(
+            ByProtocol, &fsGuid, NULL, &numHandles, &handleBuffer);
+            
+        if (EFI_ERROR(Status) || numHandles == 0) return false;
+        
+        // Step 1: Read the OS from the Live Environment (CD/USB)
+        void* fileBuffer = NULL;
+        UINTN fileSize = 0;
+        
+        for (UINTN i = 0; i < numHandles; i++) {
+            EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
+            SystemTable->BootServices->HandleProtocol(handleBuffer[i], &fsGuid, (void**)&fs);
+            if (!fs) continue;
+            
+            EFI_FILE_HANDLE root = NULL;
+            if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+            
+            EFI_FILE_HANDLE sourceFile = NULL;
+            Status = root->Open(root, &sourceFile, (CHAR16*)L"EFI\\BOOT\\BOOTX64.EFI", EFI_FILE_MODE_READ, 0);
+            
+            if (!EFI_ERROR(Status) && sourceFile != NULL) {
+                fileSize = 2 * 1024 * 1024; // Max 2MB buffer for the OS binary
+                SystemTable->BootServices->AllocatePool(EfiLoaderData, fileSize, &fileBuffer);
+                
+                Status = sourceFile->Read(sourceFile, &fileSize, fileBuffer);
+                if (EFI_ERROR(Status) || fileSize == 0) {
+                    SystemTable->BootServices->FreePool(fileBuffer);
+                    fileBuffer = NULL;
+                }
+                sourceFile->Close(sourceFile);
+            }
+            root->Close(root);
+            if (fileBuffer) break; // Found the OS binary!
+        }
+        
+        if (!fileBuffer) {
+            SystemTable->BootServices->FreePool(handleBuffer);
+            return false;
+        }
+        
+        bool installed = false;
+        
+        // Step 2: Copy the OS to the hard drive
+        for (UINTN i = 0; i < numHandles; i++) {
+            EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
+            SystemTable->BootServices->HandleProtocol(handleBuffer[i], &fsGuid, (void**)&fs);
+            if (!fs) continue;
+            
+            EFI_FILE_HANDLE root = NULL;
+            if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+            
+            // Test if drive is writable
+            EFI_FILE_HANDLE testFile = NULL;
+            Status = root->Open(root, &testFile, (CHAR16*)L"TEST.TMP", 
+                                EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+                                
+            if (!EFI_ERROR(Status) && testFile != NULL) {
+                testFile->Delete(testFile); // It's writable!
+                
+                // Create directory structure
+                EFI_FILE_HANDLE efiDir = NULL;
+                root->Open(root, &efiDir, (CHAR16*)L"EFI", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, EFI_FILE_DIRECTORY);
+                if (efiDir) {
+                    EFI_FILE_HANDLE bootDir = NULL;
+                    efiDir->Open(efiDir, &bootDir, (CHAR16*)L"BOOT", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, EFI_FILE_DIRECTORY);
+                    if (bootDir) {
+                        EFI_FILE_HANDLE destFile = NULL;
+                        Status = bootDir->Open(bootDir, &destFile, (CHAR16*)L"BOOTX64.EFI", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+                        if (!EFI_ERROR(Status) && destFile != NULL) {
+                            // WRITE THE KERNEL!
+                            destFile->Write(destFile, &fileSize, fileBuffer);
+                            destFile->Close(destFile);
+                            installed = true;
+                        }
+                        bootDir->Close(bootDir);
+                    }
+                    efiDir->Close(efiDir);
+                }
+            }
+            root->Close(root);
+            
+            if (installed) break; // Only install to the first writable drive
+        }
+        
+        SystemTable->BootServices->FreePool(fileBuffer);
+        SystemTable->BootServices->FreePool(handleBuffer);
+        return installed;
+    }
     
     void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable) {
         SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OOBE ] Starting Setup...\r\n");
@@ -39,9 +135,22 @@ extern "C" {
         blankUI_draw_cursor(512, 384);
         swap_buffers();
         
+        EFI_GUID SimplePointerProtocolGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
+        EFI_SIMPLE_POINTER_PROTOCOL *Mouse = NULL;
+        SystemTable->BootServices->LocateProtocol(&SimplePointerProtocolGuid, NULL, (void**)&Mouse);
+        if (Mouse) {
+            Mouse->Reset(Mouse, TRUE);
+        }
+        
         EFI_INPUT_KEY Key;
         bool installing = false;
+        int cursor_x = 512;
+        int cursor_y = 384;
+        
         while (1) {
+            bool redraw = false;
+            
+            // Check Keyboard
             EFI_STATUS Status = SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &Key);
             if (Status == EFI_SUCCESS) {
                 if (Key.UnicodeChar == '\r' || Key.UnicodeChar == '\n') {
@@ -52,27 +161,84 @@ extern "C" {
                     break;
                 }
             }
-        }
-        
-        if (installing) {
-            const char* stages[] = {
-                "Formatting /dev/nvme0n1...",
-                "Creating EFI System Partition...",
-                "Copying kernel.elf...",
-                "Writing Boot Sector...",
-                "Installation Complete!"
-            };
-            for (int step = 0; step < 5; step++) {
+            
+            // Check Mouse
+            if (Mouse) {
+                EFI_SIMPLE_POINTER_STATE State;
+                Status = Mouse->GetState(Mouse, &State);
+                if (Status == EFI_SUCCESS) {
+                    // Typical relative movement scaling (can vary by VM, 1000 is a safe guess)
+                    int dx = State.RelativeMovementX / 1000;
+                    int dy = State.RelativeMovementY / 1000;
+                    
+                    if (dx != 0 || dy != 0) {
+                        cursor_x += dx;
+                        cursor_y += dy;
+                        if (cursor_x < 0) cursor_x = 0;
+                        if (cursor_x > 1023) cursor_x = 1023;
+                        if (cursor_y < 0) cursor_y = 0;
+                        if (cursor_y > 767) cursor_y = 767;
+                        redraw = true;
+                    }
+                    
+                    if (State.LeftButton) {
+                        // Click on "Install"
+                        if (cursor_x >= win_x + 80 && cursor_x <= win_x + 280 &&
+                            cursor_y >= win_y + 220 && cursor_y <= win_y + 260) {
+                            installing = true;
+                            break;
+                        }
+                        // Click on "Live CD"
+                        if (cursor_x >= win_x + 360 && cursor_x <= win_x + 560 &&
+                            cursor_y >= win_y + 220 && cursor_y <= win_y + 260) {
+                            installing = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (redraw) {
                 draw_macos_wallpaper();
                 blankUI_draw_menubar();
                 blankUI_draw_dock();
-                blankUI_draw_window(win_w, win_h, (char*)"Installing BlankOS");
-                
-                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)stages[step], 0x000000);
+                blankUI_draw_window(win_w, win_h, (char*)"BlankOS Installer");
+                blankUI_draw_text_color(win_x + 60, win_y + 80, (char*)"Welcome to BlankOS.", 0x000000);
+                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Would you like to install BlankOS to your hard drive,", 0x000000);
+                blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"or try the Live Environment without modifying your computer?", 0x000000);
+                blankUI_draw_button(win_x + 80, win_y + 220, 200, 40, (char*)"Install BlankOS (Enter)");
+                blankUI_draw_button(win_x + 360, win_y + 220, 200, 40, (char*)"Try Live CD (Space)");
+                blankUI_draw_cursor(cursor_x, cursor_y);
                 swap_buffers();
-                // fake progress
-                for (volatile int d = 0; d < 80000000; d++);
             }
+        }
+        
+        if (installing) {
+            draw_macos_wallpaper();
+            blankUI_draw_menubar();
+            blankUI_draw_dock();
+            blankUI_draw_window(win_w, win_h, (char*)"Installing BlankOS");
+            blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Searching for writable FAT32 disks...", 0x000000);
+            swap_buffers();
+            
+            // Give the user a moment to read the UI
+            for (volatile int d = 0; d < 40000000; d++);
+            
+            bool success = perform_real_installation(SystemTable);
+            
+            draw_macos_wallpaper();
+            blankUI_draw_menubar();
+            blankUI_draw_dock();
+            blankUI_draw_window(win_w, win_h, (char*)"Installing BlankOS");
+            
+            if (success) {
+                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Success! BlankOS wrote to the disk natively.", 0x008800);
+            } else {
+                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Error: No writable FAT32 disk found.", 0xAA0000);
+            }
+            swap_buffers();
+            
+            for (volatile int d = 0; d < 80000000; d++);
         }
         
         // Clear screen and redraw empty desktop

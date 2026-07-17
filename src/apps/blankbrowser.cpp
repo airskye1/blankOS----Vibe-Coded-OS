@@ -1,94 +1,86 @@
+#include <stdint.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include <efi.h>
 #include <efilib.h>
+#include <efiprot.h>
 
 extern "C" {
-    extern void init_compositor(void);
-    extern void blankUI_draw_topbar(char* app_title);
+    extern void swap_buffers();
+    extern void draw_macos_wallpaper();
+    extern void blankUI_draw_menubar();
+    extern void blankUI_draw_dock();
     extern void blankUI_draw_window(int width, int height, char* title);
-    extern void blankUI_draw_text(int x, int y, char* text);
+    extern void blankUI_draw_text_color(int x, int y, char* text, uint32_t color);
     extern void blankUI_draw_button(int x, int y, int width, int height, char* text);
+    extern void blankUI_draw_cursor(int x, int y);
     extern void blankUI_draw_search_bar(int x, int y, int width);
-    extern void blankUI_draw_toast(char* title, char* message);
+    extern int blankUI_hit_test_window_close(int cursor_x, int cursor_y, int width, int height);
     
     void launch_blankbrowser(EFI_SYSTEM_TABLE *SystemTable) {
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ BROWSER ] Launching Native C++ blankBrowser Engine...\r\n");
-
         int win_w = 800;
         int win_h = 560;
         int win_x = (1024 - win_w) / 2;
         int win_y = (768 - win_h) / 2;
-
-        // Render Browser with YouTube page simulation
-        init_compositor();
-        blankUI_draw_topbar((char*)"blankBrowser v1.2.8");
-        blankUI_draw_window(win_w, win_h, (char*)"blankBrowser - YouTube (Native, No API Key)");
         
-        blankUI_draw_search_bar(win_x + 40, win_y + 60, 500);
-        blankUI_draw_button(win_x + 550, win_y + 60, 60, 28, (char*)"Go");
+        EFI_GUID SimplePointerProtocolGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
+        EFI_SIMPLE_POINTER_PROTOCOL *Mouse = NULL;
+        SystemTable->BootServices->LocateProtocol(&SimplePointerProtocolGuid, NULL, (void**)&Mouse);
+        if (Mouse) Mouse->Reset(Mouse, TRUE);
 
-        blankUI_draw_text(win_x + 40, win_y + 110, (char*)"Recommended Videos:");
-
-        // Video cards layout
-        blankUI_draw_text(win_x + 40, win_y + 150, (char*)"[1] How to build an OS in C++");
-        blankUI_draw_button(win_x + 40, win_y + 175, 120, 25, (char*)"Watch");
-
-        blankUI_draw_text(win_x + 300, win_y + 150, (char*)"[2] Lofi Beats to Code To");
-        blankUI_draw_button(win_x + 300, win_y + 175, 120, 25, (char*)"Watch");
-
-        blankUI_draw_text(win_x + 560, win_y + 150, (char*)"[3] Vibe Coding 101");
-        blankUI_draw_button(win_x + 560, win_y + 175, 120, 25, (char*)"Watch");
-
-        blankUI_draw_toast((char*)"Engine Ready", (char*)"HTML5 layout pipeline initialized.");
-
-        // Simulate reading page
-        for (volatile int d = 0; d < 80000000; d++);
-
-        // Simulate user clicking on video [1] - play animated ASCII art inside a viewport
-        const char* frames[] = {
-            "  +----------------------------+  ",
-            "  |   ( O S  L O A D I N G )   |  ",
-            "  |         [======>    ]      |  ",
-            "  +----------------------------+  ",
-            "  +----------------------------+  ",
-            "  |   ( O S  L O A D I N G )   |  ",
-            "  |         [==========>]      |  ",
-            "  +----------------------------+  ",
-            "  +----------------------------+  ",
-            "  |   ( O S  L O A D I N G )   |  ",
-            "  |         [SUCCESS!]         |  ",
-            "  +----------------------------+  ",
-            "  +----------------------------+  ",
-            "  |   *   *   *   *   *   *    |  ",
-            "  |     G U I  A C T I V E     |  ",
-            "  |   *   *   *   *   *   *    |  ",
-            "  +----------------------------+  "
-        };
-
-        for (int frame = 0; frame < 4; frame++) {
-            init_compositor();
-            blankUI_draw_topbar((char*)"blankBrowser v1.2.8");
-            blankUI_draw_window(win_w, win_h, (char*)"blankBrowser - Playing: 'How to build an OS in C++'");
-            
-            blankUI_draw_search_bar(win_x + 40, win_y + 60, 500);
-            blankUI_draw_button(win_x + 550, win_y + 60, 60, 28, (char*)"Back");
-            
-            // Video viewport area
-            int view_x = win_x + 120;
-            int view_y = win_y + 120;
-            
-            // Render outline
-            blankUI_draw_text(view_x, view_y, (char*)"[ VIDEO DECODER PLAYBACK ]");
-            for (int line = 0; line < 4; line++) {
-                blankUI_draw_text(view_x, view_y + 30 + (line * 20), (char*)frames[frame * 4 + line]);
+        int cursor_x = 512;
+        int cursor_y = 384;
+        bool done = false;
+        bool redraw = true;
+        
+        while (!done) {
+            if (Mouse) {
+                EFI_SIMPLE_POINTER_STATE State;
+                if (Mouse->GetState(Mouse, &State) == EFI_SUCCESS) {
+                    int dx = State.RelativeMovementX / 1000;
+                    int dy = State.RelativeMovementY / 1000;
+                    
+                    if (dx != 0 || dy != 0) {
+                        cursor_x += dx;
+                        cursor_y += dy;
+                        if (cursor_x < 0) cursor_x = 0;
+                        if (cursor_x > 1023) cursor_x = 1023;
+                        if (cursor_y < 0) cursor_y = 0;
+                        if (cursor_y > 767) cursor_y = 767;
+                        redraw = true;
+                    }
+                    
+                    if (State.LeftButton) {
+                        if (blankUI_hit_test_window_close(cursor_x, cursor_y, win_w, win_h)) {
+                            done = true;
+                        }
+                    }
+                }
             }
             
-            // Video progress
-            blankUI_draw_text(view_x, view_y + 130, (char*)"Timeline: 0:02 / 5:12");
-            
-            blankUI_draw_toast((char*)"Video Stream", (char*)"Hardware H.264 decoder active.");
-            
-            for (volatile int d = 0; d < 80000000; d++);
+            if (redraw) {
+                draw_macos_wallpaper();
+                blankUI_draw_menubar();
+                blankUI_draw_dock();
+                
+                blankUI_draw_window(win_w, win_h, (char*)"blankBrowser 1.2.8");
+                blankUI_draw_search_bar(win_x + 40, win_y + 50, 600);
+                
+                blankUI_draw_text_color(win_x + 40, win_y + 110, (char*)"Recommended Videos:", 0x000000);
+                
+                blankUI_draw_text_color(win_x + 40, win_y + 150, (char*)"[1] How to build an OS in C++", 0x333333);
+                blankUI_draw_button(win_x + 40, win_y + 175, 120, 25, (char*)"Watch");
+                
+                blankUI_draw_text_color(win_x + 300, win_y + 150, (char*)"[2] Lofi Beats to Code To", 0x333333);
+                blankUI_draw_button(win_x + 300, win_y + 175, 120, 25, (char*)"Watch");
+                
+                blankUI_draw_text_color(win_x + 560, win_y + 150, (char*)"[3] Vibe Coding 101", 0x333333);
+                blankUI_draw_button(win_x + 560, win_y + 175, 120, 25, (char*)"Watch");
+                
+                blankUI_draw_cursor(cursor_x, cursor_y);
+                swap_buffers();
+                redraw = false;
+            }
         }
     }
 }

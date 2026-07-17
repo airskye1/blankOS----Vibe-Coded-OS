@@ -1,6 +1,9 @@
+#include <stddef.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <efi.h>
 #include <efilib.h>
+#include <efiprot.h>
 
 // Framebuffer Info struct matching boot.c
 typedef struct {
@@ -17,11 +20,18 @@ extern "C" {
     extern int pixels_per_scanline;
     
     extern void init_compositor(EFI_SYSTEM_TABLE *SystemTable);
+    extern void swap_buffers();
+    extern void draw_macos_wallpaper();
+    extern void blankUI_draw_menubar();
+    extern void blankUI_draw_dock();
+    extern void blankUI_draw_cursor(int x, int y);
+    extern int blankUI_hit_test_dock(int cursor_x, int cursor_y);
     
     extern void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable);
     extern void launch_updater(EFI_SYSTEM_TABLE *SystemTable);
     extern void launch_app_store(EFI_SYSTEM_TABLE *SystemTable);
     extern void launch_blankbrowser(EFI_SYSTEM_TABLE *SystemTable);
+    extern void launch_settings(EFI_SYSTEM_TABLE *SystemTable);
 }
 
 extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_info) {
@@ -52,8 +62,57 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
     // Launch C++ apps
     launch_updater(SystemTable);
     
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n[ SYSTEM ] System halted safely.\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n[ SYSTEM ] Entering Desktop Environment...\r\n");
+    
+    EFI_GUID SimplePointerProtocolGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
+    EFI_SIMPLE_POINTER_PROTOCOL *Mouse = NULL;
+    SystemTable->BootServices->LocateProtocol(&SimplePointerProtocolGuid, NULL, (void**)&Mouse);
+    if (Mouse) Mouse->Reset(Mouse, TRUE);
+
+    int cursor_x = 512;
+    int cursor_y = 384;
+    bool redraw = true;
+    
     while(1) {
-        __asm__ volatile("hlt");
+        if (Mouse) {
+            EFI_SIMPLE_POINTER_STATE State;
+            if (Mouse->GetState(Mouse, &State) == EFI_SUCCESS) {
+                int dx = State.RelativeMovementX / 1000;
+                int dy = State.RelativeMovementY / 1000;
+                
+                if (dx != 0 || dy != 0) {
+                    cursor_x += dx;
+                    cursor_y += dy;
+                    if (cursor_x < 0) cursor_x = 0;
+                    if (cursor_x > 1023) cursor_x = 1023;
+                    if (cursor_y < 0) cursor_y = 0;
+                    if (cursor_y > 767) cursor_y = 767;
+                    redraw = true;
+                }
+                
+                if (State.LeftButton) {
+                    int clicked_app = blankUI_hit_test_dock(cursor_x, cursor_y);
+                    if (clicked_app != -1) {
+                        if (clicked_app == 1) { // Settings (index 1)
+                            launch_settings(SystemTable);
+                        } else if (clicked_app == 2) { // Browser (index 2)
+                            launch_blankbrowser(SystemTable);
+                        } else if (clicked_app == 3) { // App Store (index 3)
+                            launch_app_store(SystemTable);
+                        }
+                        redraw = true; // Redraw desktop after app closes
+                    }
+                }
+            }
+        }
+        
+        if (redraw) {
+            draw_macos_wallpaper();
+            blankUI_draw_menubar();
+            blankUI_draw_dock();
+            blankUI_draw_cursor(cursor_x, cursor_y);
+            swap_buffers();
+            redraw = false;
+        }
     }
 }

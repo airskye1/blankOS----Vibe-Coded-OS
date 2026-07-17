@@ -226,14 +226,80 @@ void blankUI_draw_dock() {
     draw_rect_rounded(start_x + (icon_size+spacing)*5 + 10, start_y, icon_size, icon_size, 12, 0xE5E5EA, 255);
 }
 
+// 12x19 macOS style cursor bitmap (0=transparent, 1=black border, 2=white fill)
+static const uint8_t cursor_bitmap[19][12] = {
+    {1,0,0,0,0,0,0,0,0,0,0,0},
+    {1,1,0,0,0,0,0,0,0,0,0,0},
+    {1,2,1,0,0,0,0,0,0,0,0,0},
+    {1,2,2,1,0,0,0,0,0,0,0,0},
+    {1,2,2,2,1,0,0,0,0,0,0,0},
+    {1,2,2,2,2,1,0,0,0,0,0,0},
+    {1,2,2,2,2,2,1,0,0,0,0,0},
+    {1,2,2,2,2,2,2,1,0,0,0,0},
+    {1,2,2,2,2,2,2,2,1,0,0,0},
+    {1,2,2,2,2,2,2,2,2,1,0,0},
+    {1,2,2,2,2,2,2,2,2,2,1,0},
+    {1,2,2,2,2,2,2,1,1,1,1,1},
+    {1,2,2,2,1,2,2,1,0,0,0,0},
+    {1,2,2,1,0,1,2,2,1,0,0,0},
+    {1,2,1,0,0,1,2,2,1,0,0,0},
+    {1,1,0,0,0,0,1,2,2,1,0,0},
+    {1,0,0,0,0,0,1,2,2,1,0,0},
+    {0,0,0,0,0,0,0,1,1,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0}
+};
+
 void blankUI_draw_cursor(int x, int y) {
-    // Draw classic pointer with black fill and white border
-    for (int i = 0; i < 15; i++) {
-        draw_rect_filled(x, y + i, i, 1, 0xFFFFFF, 255);
+    for (int row = 0; row < 19; row++) {
+        for (int col = 0; col < 12; col++) {
+            uint8_t pixel = cursor_bitmap[row][col];
+            if (pixel == 1) {
+                put_pixel_alpha(x + col, y + row, 0x000000, 255); // Black border
+            } else if (pixel == 2) {
+                put_pixel_alpha(x + col, y + row, 0xFFFFFF, 255); // White fill
+            }
+        }
     }
-    for (int i = 1; i < 14; i++) {
-        draw_rect_filled(x + 1, y + i, i - 1, 1, 0x000000, 255);
+}
+
+int blankUI_hit_test_dock(int cursor_x, int cursor_y) {
+    int dock_w = 400;
+    int dock_h = 60;
+    int dock_x = (screen_width - dock_w) / 2;
+    int dock_y = screen_height - dock_h - 10;
+    
+    if (cursor_x >= dock_x && cursor_x <= dock_x + dock_w &&
+        cursor_y >= dock_y && cursor_y <= dock_y + dock_h) {
+        
+        int icon_size = 48;
+        int spacing = 12;
+        int start_x = dock_x + 16;
+        int start_y = dock_y + 6;
+        
+        for (int i = 0; i < 6; i++) {
+            // Trash is separated by a divider
+            int icon_x = start_x + (icon_size + spacing) * i;
+            if (i == 5) icon_x += 10; 
+            
+            if (cursor_x >= icon_x && cursor_x <= icon_x + icon_size &&
+                cursor_y >= start_y && cursor_y <= start_y + icon_size) {
+                return i;
+            }
+        }
     }
+    return -1;
+}
+
+int blankUI_hit_test_window_close(int cursor_x, int cursor_y, int width, int height) {
+    int x = (screen_width - width) / 2;
+    int y = (screen_height - height) / 2;
+    // Red close button is at x + 16, y + 16 with radius 6
+    int cx = x + 16;
+    int cy = y + 16;
+    if ((cursor_x - cx) * (cursor_x - cx) + (cursor_y - cy) * (cursor_y - cy) <= 100) {
+        return 1;
+    }
+    return 0;
 }
 
 void blankUI_draw_window_controls(int window_x, int window_y) {
