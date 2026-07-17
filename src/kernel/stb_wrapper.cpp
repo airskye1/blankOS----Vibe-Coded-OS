@@ -19,6 +19,7 @@ extern "C" {
 #define STBI_NO_STDIO
 #define STBI_NO_HDR
 #define STBI_NO_LINEAR
+#define STBI_NO_SIMD // Prevents including emmintrin.h and stdlib.h for SSE2
 #define STBI_MALLOC uefi_malloc
 #define STBI_REALLOC uefi_realloc
 #define STBI_FREE uefi_free
@@ -26,6 +27,10 @@ extern "C" {
 #define STBI_MEMSET __builtin_memset
 #define STBI_ABS(x) ((x) < 0 ? -(x) : (x))
 #define STBI_ASSERT(x)
+
+extern "C" {
+    static inline int abs(int x) { return x < 0 ? -x : x; }
+}
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "../stb_image.h"

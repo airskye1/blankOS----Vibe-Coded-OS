@@ -6,7 +6,7 @@ extern "C" {
 
     void* uefi_malloc(UINTN size) {
         if (!gSystemTable) return NULL;
-        UINTN* ptr = NULL;
+        UINTN* ptr = (UINTN*)NULL;
         gSystemTable->BootServices->AllocatePool(EfiLoaderData, size + sizeof(UINTN), (void**)&ptr);
         if (ptr) {
             *ptr = size;
