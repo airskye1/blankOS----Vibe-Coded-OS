@@ -22,7 +22,7 @@ extern int dui_text_height(int scale);
 static bool reduce_motion_enabled = false;
 static int last_mouse_x = 0;
 static int last_mouse_y = 0;
-static float dock_icon_scales[8] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+static float dock_icon_scales[9] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
 
 // Basic 8x8 bitmap font (subset for GUI text)
 const uint8_t font8x8_basic[95][8] = {
@@ -173,6 +173,45 @@ void blankUI_draw_button(int x, int y, int width, int height, char* text) {
     blankUI_draw_text_color(text_x, text_y, text, 0xFFFFFF); // White text on dark button
 }
 
+extern "C" {
+    extern bool wifi_connected;
+    extern char connected_ssid[32];
+    extern int wifi_signal_strength;
+    extern bool bluetooth_connected;
+    extern char paired_device_name[32];
+    extern bool bluetooth_enabled;
+    
+    struct RTC_Time {
+        uint8_t second;
+        uint8_t minute;
+        uint8_t hour;
+        uint8_t day;
+        uint8_t month;
+        uint32_t year;
+    };
+    extern void get_rtc_time(RTC_Time *time);
+    
+    bool wifi_menu_open = false;
+    bool bt_menu_open = false;
+    bool battery_menu_open = false;
+    bool rclick_menu_open = false;
+    int rclick_menu_x = 0;
+    int rclick_menu_y = 0;
+    
+    static void format_time_str(char* buf) {
+        RTC_Time t;
+        get_rtc_time(&t);
+        int h = t.hour;
+        int m = t.minute;
+        buf[0] = '0' + (h / 10);
+        buf[1] = '0' + (h % 10);
+        buf[2] = ':';
+        buf[3] = '0' + (m / 10);
+        buf[4] = '0' + (m % 10);
+        buf[5] = '\0';
+    }
+}
+
 void blankUI_draw_menubar() {
     // Top bar, frosted glass look, light mode
     draw_frosted_glass_rounded(0, 0, screen_width, 24, 0, 0xFFFFFF, 180);
@@ -187,15 +226,104 @@ void blankUI_draw_menubar() {
     blankUI_draw_text_color(270, 8, (char*)"Window", 0x000000);
     blankUI_draw_text_color(340, 8, (char*)"Help", 0x000000);
     
-    // Right side items
-    blankUI_draw_text_color(screen_width - 200, 8, (char*)"100%", 0x000000);
-    blankUI_draw_text_color(screen_width - 120, 8, (char*)"Thu 9:41 AM", 0x000000);
+    // Right side items - Clock (Dynamic!)
+    char time_str[8];
+    format_time_str(time_str);
+    blankUI_draw_text_color(screen_width - 70, 8, time_str, 0x000000);
+    
+    // Battery widget
+    int bx = screen_width - 110;
+    draw_rect_rounded(bx, 8, 20, 10, 2, 0x555555, 255); // Outline
+    draw_rect_filled(bx + 20, 11, 2, 4, 0x555555, 255); // Notch
+    draw_rect_filled(bx + 2, 10, 16, 6, 0x34C759, 255); // Green charge level (80%)
+    
+    // Wi-Fi widget
+    int wx = screen_width - 150;
+    // Draw 4 signal bars
+    for (int b = 0; b < 4; b++) {
+        uint32_t bar_color = 0xCCCCCC; // Inactive grey
+        if (wifi_connected && wifi_signal_strength > b) bar_color = 0x007AFF; // Active blue
+        draw_rect_filled(wx + b*5, 18 - b*3, 3, b*3 + 2, bar_color, 255);
+    }
+    
+    // Bluetooth widget (Runic B shape)
+    int btx = screen_width - 180;
+    uint32_t bt_color = bluetooth_connected ? 0x007AFF : 0x8E8E93;
+    // Draw simplified Bluetooth rune
+    dui_line(btx + 4, 6, btx + 4, 18, bt_color, 1);
+    dui_line(btx + 4, 6, btx + 8, 9, bt_color, 1);
+    dui_line(btx + 8, 9, btx + 4, 12, bt_color, 1);
+    dui_line(btx + 4, 12, btx + 8, 15, bt_color, 1);
+    dui_line(btx + 8, 15, btx + 4, 18, bt_color, 1);
+
+    // Render Dropdown Menus if open
+    if (wifi_menu_open) {
+        int mx = screen_width - 230;
+        dui_shadow(mx, 28, 220, 160, 12, 6, 0x000000, 40);
+        draw_rect_rounded(mx, 28, 220, 160, 12, 0xFFFFFF, 240);
+        draw_rect_rounded(mx, 28, 220, 160, 12, 0xFFFFFF, 80);
+        
+        blankUI_draw_text_color(mx + 16, 40, (char*)"Wi-Fi Networks", 0x333333);
+        draw_rect_filled(mx + 16, 56, 188, 1, 0x000000, 20); // Divider
+        
+        if (wifi_connected) {
+            blankUI_draw_text_color(mx + 16, 68, (char*)"Connected to:", 0x8E8E93);
+            blankUI_draw_text_color(mx + 16, 88, connected_ssid, 0x007AFF);
+        } else {
+            blankUI_draw_text_color(mx + 16, 78, (char*)"Select a network...", 0x8E8E93);
+        }
+        
+        blankUI_draw_text_color(mx + 16, 114, (char*)"1. BlankOS_Secure", 0x333333);
+        blankUI_draw_text_color(mx + 16, 134, (char*)"2. Ethan_WiFi_5G", 0x333333);
+    }
+    
+    if (bt_menu_open) {
+        int mx = screen_width - 230;
+        dui_shadow(mx, 28, 220, 140, 12, 6, 0x000000, 40);
+        draw_rect_rounded(mx, 28, 220, 140, 12, 0xFFFFFF, 240);
+        draw_rect_rounded(mx, 28, 220, 140, 12, 0xFFFFFF, 80);
+        
+        blankUI_draw_text_color(mx + 16, 40, (char*)"Bluetooth Devices", 0x333333);
+        draw_rect_filled(mx + 16, 56, 188, 1, 0x000000, 20);
+        
+        if (bluetooth_connected) {
+            blankUI_draw_text_color(mx + 16, 68, (char*)"Paired device:", 0x8E8E93);
+            blankUI_draw_text_color(mx + 16, 88, paired_device_name, 0x007AFF);
+        } else {
+            blankUI_draw_text_color(mx + 16, 78, (char*)"1. AirPods Max", 0x333333);
+            blankUI_draw_text_color(mx + 16, 98, (char*)"2. Magic Keyboard", 0x333333);
+        }
+    }
+    
+    if (battery_menu_open) {
+        int mx = screen_width - 170;
+        dui_shadow(mx, 28, 160, 90, 12, 6, 0x000000, 40);
+        draw_rect_rounded(mx, 28, 160, 90, 12, 0xFFFFFF, 240);
+        draw_rect_rounded(mx, 28, 160, 90, 12, 0xFFFFFF, 80);
+        
+        blankUI_draw_text_color(mx + 16, 40, (char*)"Battery Level: 80%", 0x333333);
+        blankUI_draw_text_color(mx + 16, 60, (char*)"Power Source: DC", 0x8E8E93);
+    }
+    
+    // Context Menu Draw
+    if (rclick_menu_open) {
+        int mx = rclick_menu_x;
+        int my = rclick_menu_y;
+        dui_shadow(mx, my, 160, 110, 8, 6, 0x000000, 40);
+        draw_rect_rounded(mx, my, 160, 110, 8, 0xFFFFFF, 240);
+        draw_rect_rounded(mx, my, 160, 110, 8, 0xFFFFFF, 80);
+        
+        blankUI_draw_text_color(mx + 12, my + 10, (char*)"System Info", 0x333333);
+        blankUI_draw_text_color(mx + 12, my + 36, (char*)"Terminal", 0x333333);
+        blankUI_draw_text_color(mx + 12, my + 62, (char*)"Trigger Panic", 0xFF3B30); // Red panic trigger
+        blankUI_draw_text_color(mx + 12, my + 88, (char*)"Cancel Menu", 0x8E8E93);
+    }
 }
 
 void blankUI_draw_dock() {
     int icon_size = 48;
     int spacing = 10;
-    int num_icons = 8; // Finder, Settings, Browser, Store, Terminal, Calculator, Weather, Trash
+    int num_icons = 9; // Finder, Settings, Browser, Store, Terminal, Calculator, Weather, Doom, Trash
     int dock_content_w = num_icons * icon_size + (num_icons - 1) * spacing + 32;
     int dock_w = dock_content_w;
     int dock_h = 64;
@@ -209,9 +337,9 @@ void blankUI_draw_dock() {
     int start_x = dock_x + 16;
     int start_y = dock_y + 4;
     
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 9; i++) {
         int base_x = start_x + (icon_size + spacing) * i;
-        if (i == 7) base_x += 8; // Trash offset
+        if (i == 8) base_x += 8; // Trash offset
         
         float target = 1.0f;
         if (last_mouse_x >= base_x && last_mouse_x <= base_x + icon_size &&
@@ -246,17 +374,22 @@ void blankUI_draw_dock() {
             draw_rect_rounded(cx, cy, s, s, 12, 0x30B0C7, 255);
             blankUI_draw_text_color(base_x - 4, start_y + icon_size + 2, (char*)"Weather", 0x333333);
         } else if (i == 7) {
+            draw_rect_rounded(cx, cy, s, s, 12, 0xFF3B30, 255); // Red Doom app box
+            blankUI_draw_text_color(base_x + 8, start_y + icon_size + 2, (char*)"Doom", 0x333333);
+        } else if (i == 8) {
             draw_rect_rounded(cx, cy, s, s, 12, 0xE5E5EA, 255);
             blankUI_draw_text_color(base_x + 12, start_y + icon_size + 2, (char*)"Trash", 0x333333);
         }
     }
     
-    // Divider
-    draw_rect_filled(start_x + (icon_size+spacing)*7, start_y + 8, 1, icon_size - 16, 0x000000, 40);
+    // Divider moved for 9 icons
+    draw_rect_filled(start_x + (icon_size+spacing)*8, start_y + 8, 1, icon_size - 16, 0x000000, 40);
 }
 
-// 12x19 macOS style cursor bitmap (0=transparent, 1=black border, 2=white fill)
-static const uint8_t cursor_bitmap[19][12] = {
+// Multi-cursor state & bitmaps (0=transparent, 1=black, 2=white)
+static int current_cursor_type = 0;
+
+static const uint8_t cursor_arrow[19][12] = {
     {1,0,0,0,0,0,0,0,0,0,0,0},
     {1,1,0,0,0,0,0,0,0,0,0,0},
     {1,2,1,0,0,0,0,0,0,0,0,0},
@@ -278,12 +411,88 @@ static const uint8_t cursor_bitmap[19][12] = {
     {0,0,0,0,0,0,0,0,0,0,0,0}
 };
 
+static const uint8_t cursor_hand[19][12] = {
+    {0,0,0,1,1,0,0,0,0,0,0,0},
+    {0,0,1,2,2,1,0,0,0,0,0,0},
+    {0,0,1,2,2,1,0,0,0,0,0,0},
+    {0,0,1,2,2,1,0,0,0,0,0,0},
+    {0,0,1,2,2,1,1,1,0,0,0,0},
+    {0,0,1,2,2,2,2,2,1,1,0,0},
+    {0,1,1,2,2,2,2,2,2,2,1,0},
+    {1,2,2,2,2,2,2,2,2,2,2,1},
+    {1,2,2,2,2,2,2,2,2,2,2,1},
+    {1,2,2,2,2,2,2,2,2,2,2,1},
+    {0,1,2,2,2,2,2,2,2,2,2,1},
+    {0,0,1,2,2,2,2,2,2,2,1,0},
+    {0,0,0,1,2,2,2,2,2,1,0,0},
+    {0,0,0,0,1,2,2,2,1,0,0,0},
+    {0,0,0,0,0,1,2,1,0,0,0,0},
+    {0,0,0,0,0,0,1,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0}
+};
+
+static const uint8_t cursor_ibeam[19][12] = {
+    {1,1,1,1,1,1,1,1,1,1,1,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {1,1,1,1,1,1,1,1,1,1,1,0}
+};
+
+static const uint8_t cursor_move[19][12] = {
+    {0,0,0,0,0,1,0,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,1,2,2,2,1,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {1,1,0,0,1,2,1,0,0,1,1,0},
+    {2,2,1,1,1,2,1,1,1,2,2,0},
+    {1,2,2,2,2,2,2,2,2,2,1,0},
+    {0,1,1,1,1,2,1,1,1,1,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,1,2,2,2,1,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,0,1,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0}
+};
+
+void blankUI_set_cursor_type(int type) {
+    current_cursor_type = type;
+}
+
 void blankUI_draw_cursor(int x, int y) {
     last_mouse_x = x;
     last_mouse_y = y;
+    const uint8_t (*bitmap)[12] = cursor_arrow;
+    
+    if (current_cursor_type == 1) bitmap = cursor_hand;
+    else if (current_cursor_type == 2) bitmap = cursor_ibeam;
+    else if (current_cursor_type == 3 || current_cursor_type == 4 || current_cursor_type == 5) bitmap = cursor_move;
+    
     for (int row = 0; row < 19; row++) {
         for (int col = 0; col < 12; col++) {
-            uint8_t pixel = cursor_bitmap[row][col];
+            uint8_t pixel = bitmap[row][col];
             if (pixel == 1) {
                 put_pixel_alpha(x + col, y + row, 0x000000, 255); // Black border
             } else if (pixel == 2) {
@@ -322,10 +531,72 @@ int blankUI_hit_test_dock(int cursor_x, int cursor_y) {
     return -1;
 }
 
+int active_win_x = -1;
+int active_win_y = -1;
+bool is_dragging = false;
+int drag_offset_x = 0;
+int drag_offset_y = 0;
+int last_width = 0;
+int last_height = 0;
+
+void blankUI_get_window_pos(int* x, int* y, int width, int height) {
+    if (width != last_width || height != last_height) {
+        active_win_x = (screen_width - width) / 2;
+        active_win_y = (screen_height - height) / 2;
+        last_width = width;
+        last_height = height;
+        is_dragging = false;
+    }
+    *x = active_win_x;
+    *y = active_win_y;
+}
+
+void blankUI_update_window_drag(int mouse_x, int mouse_y, bool mouse_pressed, int width, int height) {
+    int wx = 0, wy = 0;
+    blankUI_get_window_pos(&wx, &wy, width, height);
+
+    bool hover_title = (mouse_x >= wx && mouse_x <= wx + width &&
+                        mouse_y >= wy && mouse_y <= wy + 32);
+    
+    bool hover_close = (mouse_x >= wx + 10 && mouse_x <= wx + 70 &&
+                        mouse_y >= wy + 10 && mouse_y <= wy + 26);
+    
+    if (hover_close) {
+        blankUI_set_cursor_type(1); // Hand
+    } else if (hover_title && !is_dragging) {
+        blankUI_set_cursor_type(3); // Move
+    } else if (is_dragging) {
+        blankUI_set_cursor_type(3); // Keep Move while dragging
+    } else {
+        blankUI_set_cursor_type(0); // Arrow
+    }
+
+    if (!mouse_pressed) {
+        is_dragging = false;
+        return;
+    }
+    
+    if (mouse_pressed && !is_dragging) {
+        if (hover_title && !hover_close) {
+            is_dragging = true;
+            drag_offset_x = mouse_x - wx;
+            drag_offset_y = mouse_y - wy;
+        }
+    }
+    
+    if (is_dragging) {
+        active_win_x = mouse_x - drag_offset_x;
+        active_win_y = mouse_y - drag_offset_y;
+        
+        if (active_win_y < 24) active_win_y = 24;
+        if (active_win_x < -width + 100) active_win_x = -width + 100;
+        if (active_win_x > screen_width - 100) active_win_x = screen_width - 100;
+    }
+}
+
 int blankUI_hit_test_window_close(int cursor_x, int cursor_y, int width, int height) {
-    int x = (screen_width - width) / 2;
-    int y = (screen_height - height) / 2;
-    // Red close button is at x + 16, y + 16 with radius 6
+    int x, y;
+    blankUI_get_window_pos(&x, &y, width, height);
     int cx = x + 16;
     int cy = y + 16;
     if ((cursor_x - cx) * (cursor_x - cx) + (cursor_y - cy) * (cursor_y - cy) <= 100) {
@@ -341,8 +612,8 @@ void blankUI_draw_window_controls(int window_x, int window_y) {
 }
 
 void blankUI_draw_window(int width, int height, char* title) {
-    int x = (screen_width - width) / 2;
-    int y = (screen_height - height) / 2;
+    int x, y;
+    blankUI_get_window_pos(&x, &y, width, height);
 
     // Soft drop shadow
     draw_rect_rounded(x + 10, y + 10, width, height, 12, 0x000000, 40);
