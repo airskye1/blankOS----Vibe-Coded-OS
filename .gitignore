@@ -12,3 +12,6 @@ iso/
 # Ignore everything in 3rdparty_apps except the .gitkeep file
 src/3rdparty_apps/*
 !src/3rdparty_apps/.gitkeep
+
+# Temporary build repos
+store_repo/
