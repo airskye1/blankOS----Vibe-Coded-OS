@@ -5,6 +5,25 @@
 #include <efilib.h>
 #include <efiprot.h>
 
+static void uint64_to_dec(uint64_t val, char* buf) {
+    if (val == 0) {
+        buf[0] = '0';
+        buf[1] = '\0';
+        return;
+    }
+    char temp[24];
+    int i = 0;
+    while (val > 0) {
+        temp[i++] = '0' + (val % 10);
+        val /= 10;
+    }
+    int j = 0;
+    while (i > 0) {
+        buf[j++] = temp[--i];
+    }
+    buf[j] = '\0';
+}
+
 extern "C" {
     extern void swap_buffers();
     extern void draw_macos_wallpaper();
@@ -22,6 +41,9 @@ extern "C" {
     extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
     extern void dui_draw_wallpaper();
     extern int blankUI_hit_test_window_close(int cursor_x, int cursor_y, int width, int height);
+    
+    extern int screen_width;
+    extern int screen_height;
     
     // STB Image Definition
     extern unsigned char *stbi_load_from_memory(unsigned char const *buffer, int len, int *x, int *y, int *channels_in_file, int desired_channels);
@@ -297,7 +319,7 @@ extern "C" {
             float speed = 12.4f + (i % 5) * 0.7f; // Fluctuating speed
             int seconds_left = (100 - i) / 2;
             
-            char speed_str[64] = (char*)"Speed: 12.4 MB/s | Time Remaining: 12s";
+            char speed_str[64] = "Speed: 12.4 MB/s | Time Remaining: 12s";
             // Custom string formatting helper
             char* dest = speed_str;
             const char* sp_lbl = "Speed: ";
