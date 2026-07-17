@@ -44,10 +44,12 @@ src/boot/mbr_stub.bin: src/boot/mbr_stub.asm
 blankOS.iso: src/boot/BOOTX64.EFI src/boot/mbr_stub.bin
 	rm -rf store_repo
 	git clone https://github.com/airskye1/blankOS-App-Store store_repo
-	cd store_repo && $(MAKE)
+	cd store_repo && $(MAKE) CXXFLAGS="-ffreestanding -fno-stack-protector -fpic -fpie -mno-red-zone -m64 -c -fno-exceptions -fno-rtti -I /usr/include/efi -I /usr/include/efi/x86_64"
 	rm -rf iso
 	mkdir -p iso/EFI/BOOT
 	mkdir -p iso/EFI/APPS
+	mkdir -p iso/assets
+	cp assets/* iso/assets/ 2>/dev/null || true
 	cp src/boot/BOOTX64.EFI iso/EFI/BOOT/BOOTX64.EFI
 	cp store_repo/apps/*.elf iso/EFI/APPS/ 2>/dev/null || true
 	cp src/boot/BOOTX64.EFI iso/EFI/BOOT/BOOTIA32.EFI
@@ -62,6 +64,8 @@ blankOS.iso: src/boot/BOOTX64.EFI src/boot/mbr_stub.bin
 	mmd -i iso/efiboot.img ::/EFI/APPS
 	mcopy -i iso/efiboot.img iso/EFI/APPS/*.elf ::/EFI/APPS/ 2>/dev/null || true
 	mcopy -i iso/efiboot.img store_repo/catalog.json ::/EFI/APPS/catalog.json 2>/dev/null || true
+	mmd -i iso/efiboot.img ::/assets
+	mcopy -i iso/efiboot.img iso/assets/* ::/assets/ 2>/dev/null || true
 	xorriso -as mkisofs -R -f -e efiboot.img -no-emul-boot -o $@ iso
 
 run: blankOS.iso

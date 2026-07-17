@@ -115,6 +115,16 @@ extern "C" {
                         appsDir->Close(appsDir);
                     }
                     
+                    // Also create an INSTALLED.FLG so the updater knows this is a real OS
+                    EFI_FILE_HANDLE flag = NULL;
+                    Status = efiDir->Open(efiDir, &flag, (CHAR16*)L"INSTALLED.FLG", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+                    if (!EFI_ERROR(Status) && flag != NULL) {
+                        char msg[] = "YES";
+                        UINTN sz = 3;
+                        flag->Write(flag, &sz, msg);
+                        flag->Close(flag);
+                    }
+                    
                     efiDir->Close(efiDir);
                 }
             }
