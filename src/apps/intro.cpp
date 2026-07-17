@@ -13,26 +13,26 @@ extern "C" void launch_introduction_walkthrough(void) {
     switch(current_step) {
         case 0:
             blankUI_draw_modal(800, 600, 
-                (char*)(char*)(char*)"Welcome to BlankOS", 
+                (char*)"Welcome to BlankOS", 
                 "Let's take a quick tour of your new operating system!\n\nBlankOS features a fully custom kernel and the beautiful blankUI framework."
             );
             // Draw "Next" button -> advances current_step to 1
             break;
         case 1:
             blankUI_draw_modal(800, 600, 
-                (char*)(char*)(char*)"Global Search", 
+                (char*)"Global Search", 
                 "You can press the Super Key (Windows key) at any time to open the Global Search Bar to find files, settings, or .bloe applications."
             );
             break;
         case 2:
             blankUI_draw_modal(800, 600, 
-                (char*)(char*)(char*)"Power Management", 
+                (char*)"Power Management", 
                 "Click the battery icon in the topbar to see your laptop battery percentage, or to quickly Sleep, Hibernate, Restart, or Shutdown."
             );
             break;
         case 3:
             blankUI_draw_modal(800, 600, 
-                (char*)(char*)(char*)"You're Ready!", 
+                (char*)"You're Ready!", 
                 "Enjoy the vibe of BlankOS, overseen by airskye."
             );
             // Draw "Finish" button to close modal

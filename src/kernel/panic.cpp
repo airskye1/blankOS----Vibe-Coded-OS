@@ -99,7 +99,7 @@ extern "C" {
     // The actual hardware exception panic display
     void blankOS_panic_handler(CpuState* state) {
         // Stop sound
-        play_system_sound((char*)"error");
+        play_system_sound("error");
         
         // Render styled macOS Black Screen of Death panic panel
         dui_rect(0, 0, screen_width, screen_height, 0x0A0A0A, 255); // Jet black

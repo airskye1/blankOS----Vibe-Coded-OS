@@ -62,19 +62,19 @@ extern "C" {
                 blankUI_draw_menubar();
                 blankUI_draw_dock();
                 
-                blankUI_draw_window(win_w, win_h, (char*)(char*)(char*)(char*)"App Store");
+                blankUI_draw_window(win_w, win_h, (char*)"App Store");
                 
-                blankUI_draw_text_color(win_x + 40, win_y + 80, (char*)(char*)(char*)(char*)"Natively logged in as: admin", 0x666666);
-                blankUI_draw_text_color(win_x + 40, win_y + 130, (char*)(char*)(char*)(char*)"App Catalog", 0x000000);
+                blankUI_draw_text_color(win_x + 40, win_y + 80, (char*)"Natively logged in as: admin", 0x666666);
+                blankUI_draw_text_color(win_x + 40, win_y + 130, (char*)"App Catalog", 0x000000);
                 
-                blankUI_draw_text_color(win_x + 40, win_y + 170, (char*)(char*)(char*)(char*)"1. Discord (Chat)", 0x000000);
-                blankUI_draw_button(win_x + 460, win_y + 160, 100, 30, (char*)(char*)(char*)(char*)"Get");
+                blankUI_draw_text_color(win_x + 40, win_y + 170, (char*)"1. Discord (Chat)", 0x000000);
+                blankUI_draw_button(win_x + 460, win_y + 160, 100, 30, (char*)"Get");
                 
-                blankUI_draw_text_color(win_x + 40, win_y + 220, (char*)(char*)(char*)(char*)"2. Spotify (Music)", 0x000000);
-                blankUI_draw_button(win_x + 460, win_y + 210, 100, 30, (char*)(char*)(char*)(char*)"Get");
+                blankUI_draw_text_color(win_x + 40, win_y + 220, (char*)"2. Spotify (Music)", 0x000000);
+                blankUI_draw_button(win_x + 460, win_y + 210, 100, 30, (char*)"Get");
 
-                blankUI_draw_text_color(win_x + 40, win_y + 270, (char*)(char*)(char*)(char*)"3. VS Code (Code)", 0x000000);
-                blankUI_draw_button(win_x + 460, win_y + 260, 100, 30, (char*)(char*)(char*)(char*)"Get");
+                blankUI_draw_text_color(win_x + 40, win_y + 270, (char*)"3. VS Code (Code)", 0x000000);
+                blankUI_draw_button(win_x + 460, win_y + 260, 100, 30, (char*)"Get");
                 
                 blankUI_draw_cursor(cursor_x, cursor_y);
                 swap_buffers();

@@ -40,7 +40,7 @@ void __attribute__((weak)) bdrm_set_brightness(float brightness) {}
 void __attribute__((weak)) bdrm_draw_bitmap(int x, int y, char* image_data) {}
 
 void __attribute__((weak)) outb(uint16_t port, uint8_t val) {
-    __asm__ volatile ((char*)(char*)(char*)"outb %0, %1" : : "a"(val), "Nd"(port));
+    __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
 }
 
 void __attribute__((weak)) read_file_from_disk(char* path) {}

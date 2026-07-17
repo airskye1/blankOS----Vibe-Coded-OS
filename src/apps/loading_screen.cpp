@@ -25,7 +25,7 @@ extern "C" {
         // Progressively load
         for (int i = 0; i <= 100; i += 2) {
             draw_rect_filled(0, 0, screen_width, screen_height, 0x000000, 255);
-            blankUI_draw_text_color(text_x, text_y, (char*)(char*)(char*)(char*)"BlankOS", 0xFFFFFF);
+            blankUI_draw_text_color(text_x, text_y, (char*)"BlankOS", 0xFFFFFF);
             
             // Progress bar
             draw_rect_rounded(bar_x, bar_y, bar_w, 4, 2, 0x333333, 255);

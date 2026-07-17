@@ -64,15 +64,15 @@ extern "C" {
                 draw_macos_wallpaper();
                 draw_frosted_glass_rounded(win_x, win_y, win_w, win_h, 16, 0xFFFFFF, 180);
                 
-                blankUI_draw_text_color(win_x + (win_w - 7 * 8)/2, win_y + 40, (char*)(char*)(char*)(char*)"BlankOS", 0x000000);
+                blankUI_draw_text_color(win_x + (win_w - 7 * 8)/2, win_y + 40, (char*)"BlankOS", 0x000000);
                 
                 // Mock password field
                 draw_rect_rounded(win_x + 50, win_y + 70, 200, 30, 8, 0xFFFFFF, 255);
-                blankUI_draw_text_color(win_x + 60, win_y + 80, (char*)(char*)(char*)(char*)"**********", 0x000000);
+                blankUI_draw_text_color(win_x + 60, win_y + 80, (char*)"**********", 0x000000);
                 
                 // Login Button
                 draw_rect_rounded(win_x + 100, win_y + 120, 100, 32, 16, 0x007AFF, 255);
-                blankUI_draw_text_color(win_x + 130, win_y + 130, (char*)(char*)(char*)(char*)"Login", 0xFFFFFF);
+                blankUI_draw_text_color(win_x + 130, win_y + 130, (char*)"Login", 0xFFFFFF);
                 
                 blankUI_draw_cursor(cursor_x, cursor_y);
                 swap_buffers();
