@@ -4,7 +4,7 @@ param(
 )
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host " Running Advanced Vibe-Coded Auto-Linter v1.2.9" -ForegroundColor Cyan
+Write-Host " Running Advanced Vibe-Coded Auto-Linter v1.3.0" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 $errorFound = $false
 
@@ -36,7 +36,7 @@ if (Test-Path $Makefile) {
     }
 
     # Verify that all source files are compiled and linked (prevent orphan files like compositor.cpp)
-    $srcFiles = Get-ChildItem -Path $TargetDir -Recurse -Include *.cpp, *.c | Where-Object { $_.FullName -notmatch "boot.c" }
+    $srcFiles = Get-ChildItem -Path $TargetDir -Recurse -Include *.cpp, *.c | Where-Object { $_.FullName -notmatch "boot.c" -and $_.FullName -notmatch "doom_src" }
     foreach ($src in $srcFiles) {
         # Get relative path with forward slashes (e.g. src/ui/compositor.o)
         $relPath = $src.FullName.Replace((Get-Item .).FullName + "\", "").Replace("\", "/")
@@ -51,7 +51,8 @@ if (Test-Path $Makefile) {
 # 2. Source Code static analysis
 $files = Get-ChildItem -Path $TargetDir -Recurse -Include *.cpp,*.c,*.h
 foreach ($file in $files) {
-    if ($file -match "stb_") {
+    # Skip library / third-party files
+    if ($file.FullName -match "stb_" -or $file.FullName -match "doom_src" -or $file.FullName -match "libc_stubs") {
         continue
     }
 
@@ -73,7 +74,6 @@ foreach ($file in $files) {
     }
 
     # C. Check for OutputString UTF-16 wide string compliance (requires L prefix)
-    # Match OutputString(...) calls where the second arg is a plain string e.g. "Text" instead of L"Text"
     if ($content -match 'OutputString\s*\([^,]+,\s*"') {
         Report-Warning "$relName has OutputString calls passing standard ASCII string literals. UEFI expects wide UTF-16 strings prefixed with L (e.g. L`\"Text`\")."
     }
@@ -106,8 +106,21 @@ foreach ($file in $files) {
     }
 
     # F. Check for missing externs for dui_ and blankUI_ functions
-    if ($relName -notmatch "blankDUI.cpp" -and $relName -notmatch "blankUI.cpp" -and $relName -notmatch "compositor.cpp") {
-        $matches = [regex]::Matches($content, '\b(dui_[a-zA-Z0-9_]+|blankUI_[a-zA-Z0-9_]+)\s*\(')
+    $checkDui = $true
+    $checkBlankUI = $true
+    if ($relName -match "blankDUI.cpp" -or $relName -match "compositor.cpp" -or $relName -match "stubs.cpp") {
+        $checkDui = $false
+        $checkBlankUI = $false
+    }
+    if ($relName -match "blankUI.cpp") {
+        $checkBlankUI = $false
+    }
+    if ($checkDui -or $checkBlankUI) {
+        $pattern = if ($checkDui -and $checkBlankUI) { '\b(dui_[a-zA-Z0-9_]+|blankUI_[a-zA-Z0-9_]+)\s*\(' }
+                   elseif ($checkDui) { '\b(dui_[a-zA-Z0-9_]+)\s*\(' }
+                   else { '\b(blankUI_[a-zA-Z0-9_]+)\s*\(' }
+        
+        $matches = [regex]::Matches($content, $pattern)
         foreach ($m in $matches) {
             $funcName = $m.Groups[1].Value
             if ($content -notmatch "extern\s+[^\r\n]*\b$funcName\b") {
@@ -121,6 +134,14 @@ foreach ($file in $files) {
         $content = [regex]::Replace($content, '(OutputString\s*\([^,]+,\s*)(L"[^"]*")', '$1(CHAR16*)$2')
         $changed = $true
         Write-Host "[AUTO-FIX] Added (CHAR16*) cast to OutputString in $relName" -ForegroundColor Green
+    }
+    
+    # G2. Auto-fix wide string assignments/initializers lacking cast
+    if ($content -match 'CHAR16\*\s+[a-zA-Z0-9_]+\s*=\s*L"') {
+        $content = [regex]::Replace($content, '(const\s+CHAR16\*\s+[a-zA-Z0-9_]+\s*=\s*)(L"[^"]*")', '$1(const CHAR16*)$2')
+        $content = [regex]::Replace($content, '(?<!const\s+)(CHAR16\*\s+[a-zA-Z0-9_]+\s*=\s*)(L"[^"]*")', '$1(CHAR16*)$2')
+        $changed = $true
+        Write-Host "[AUTO-FIX] Added CHAR16* cast to assignments in $relName" -ForegroundColor Green
     }
     
     # H. Auto-fix missing (char*) cast for string literals in blankUI functions to prevent -Wwrite-strings

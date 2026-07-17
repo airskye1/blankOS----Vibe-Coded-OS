@@ -73,7 +73,7 @@ extern "C" {
     }
 }
 
-extern "C" {
+extern (char*)(char*)(char*)"C" {
     extern EFI_SYSTEM_TABLE* global_ST;
 }
 
@@ -221,7 +221,7 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
                                 volatile int zero = 0;
                                 volatile int val = 1 / zero;
                                 (void)val;
-                                blankOS_panic("DIV_BY_ZERO", "Division by zero triggered dynamically.");
+                                blankOS_panic((char*)(char*)(char*)"DIV_BY_ZERO", "Division by zero triggered dynamically.");
                             }
                         }
                         rclick_menu_open = false;

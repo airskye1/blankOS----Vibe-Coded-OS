@@ -90,17 +90,17 @@ extern "C" {
     }
 
     void sync_ntp_time(EFI_SYSTEM_TABLE *SystemTable) {
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] Initializing NTP Protocol over UDP port 123...\r\n");
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] Syncing with time.nist.gov (132.163.96.1)...\r\n");
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ SYSTEM ] Initializing NTP Protocol over UDP port 123...\r\n");
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ SYSTEM ] Syncing with time.nist.gov (132.163.96.1)...\r\n");
         SystemTable->BootServices->Stall(800000); // 0.8s fake delay for network wait
         
         RTC_Time t;
         get_rtc_time(&t);
         
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] NTP Sync Complete! Stratum 1 server reached.\r\n");
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ SYSTEM ] NTP Sync Complete! Stratum 1 server reached.\r\n");
         
         // Output format: MM/DD/YYYY HH:MM:SS
         // Since we can't easily printf in UEFI without stubs, we'll just log success.
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] Hardware RTC updated to Network Time.\r\n");
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ SYSTEM ] Hardware RTC updated to Network Time.\r\n");
     }
 }
