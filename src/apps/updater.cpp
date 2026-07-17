@@ -17,6 +17,11 @@ extern "C" {
     extern void blankUI_draw_cursor(int x, int y);
     extern void put_pixel_alpha(int x, int y, uint32_t color, uint8_t alpha);
     extern void play_system_sound(char* sound_name);
+    extern void dui_rect(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
+    extern void dui_rect_rounded(int x, int y, int w, int h, int radius, uint32_t color, uint8_t alpha);
+    extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
+    extern void dui_draw_wallpaper();
+    extern int blankUI_hit_test_window_close(int cursor_x, int cursor_y, int width, int height);
     
     // STB Image Definition
     extern unsigned char *stbi_load_from_memory(unsigned char const *buffer, int len, int *x, int *y, int *channels_in_file, int desired_channels);

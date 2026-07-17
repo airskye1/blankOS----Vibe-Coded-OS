@@ -141,7 +141,7 @@ extern "C" {
     }
     
     void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable) {
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OOBE ] Starting Setup...\r\n");
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ OOBE ] Starting Setup...\r\n");
         
         int win_w = 640;
         int win_h = 400;

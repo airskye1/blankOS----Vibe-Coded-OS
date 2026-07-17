@@ -18,6 +18,8 @@ extern void draw_frosted_glass_rounded(int x, int y, int w, int h, int r, uint32
 extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
 extern int dui_text_width(const char* text, int scale);
 extern int dui_text_height(int scale);
+extern void dui_line(int x0, int y0, int x1, int y1, uint32_t color, int thickness);
+extern void dui_shadow(int x, int y, int w, int h, int radius, int blur_radius, uint32_t color, uint8_t alpha);
 
 static bool reduce_motion_enabled = false;
 static int last_mouse_x = 0;
