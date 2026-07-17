@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include <stdint.h>
 #include <efi.h>
 
@@ -37,7 +38,7 @@ extern "C" {
     extern bool svga_init(uint8_t bus, uint8_t device, uint8_t function);
 
     void pci_enumerate(EFI_SYSTEM_TABLE *SystemTable) {
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ SYSTEM ] Enumerating PCI Bus for Hardware...\r\n");
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ SYSTEM ] Enumerating PCI Bus for Hardware...\r\n");
         for(uint16_t bus = 0; bus < 256; bus++) {
             for(uint8_t dev = 0; dev < 32; dev++) {
                 uint16_t vendor = pci_get_vendor((uint8_t)bus, dev, 0);
@@ -45,15 +46,15 @@ extern "C" {
                     uint16_t device = pci_get_device((uint8_t)bus, dev, 0);
                     // Mock printing found hardware
                     if (vendor == 0x8086) { // Intel
-                        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ HARDWARE ] Found Intel Hardware Controller\r\n");
+                        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ HARDWARE ] Found Intel Hardware Controller\r\n");
                     }
                     if (vendor == 0x14E4) { // Broadcom
-                        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ HARDWARE ] Found Broadcom Wi-Fi/Bluetooth Controller!\r\n");
+                        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ HARDWARE ] Found Broadcom Wi-Fi/Bluetooth Controller!\r\n");
                     }
                     if (vendor == 0x15AD && device == 0x0405) {
-                        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ HARDWARE ] Found VMware SVGA II GPU!\r\n");
+                        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ HARDWARE ] Found VMware SVGA II GPU!\r\n");
                         if (svga_init((uint8_t)bus, dev, 0)) {
-                            SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ GPU      ] Hardware acceleration driver loaded.\r\n");
+                            SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ GPU      ] Hardware acceleration driver loaded.\r\n");
                         }
                     }
                 }

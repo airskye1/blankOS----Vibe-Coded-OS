@@ -35,14 +35,14 @@ EFI_STATUS __attribute__((sysv_abi)) efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
     EFI_GUID gopGuid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
 
-    /* Immediate sign-of-life â€” if this prints, the ABI is correct */
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"BlankOS UEFI Hybrid Boot Loader v1.2.9\r\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"--------------------------------------\r\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"  Welcome to BlankOS v1.2.9 Bootloader  \r\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"========================================\r\n\r\n");
+    /* Immediate sign-of-life Ã¢â‚¬â€ if this prints, the ABI is correct */
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"BlankOS UEFI Hybrid Boot Loader v1.2.9\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"--------------------------------------\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"  Welcome to BlankOS v1.2.9 Bootloader  \r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"========================================\r\n\r\n");
 
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OK ] UEFI Firmware Detected.\r\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OK ] Locating Graphics Output Protocol (GOP)...\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ OK ] UEFI Firmware Detected.\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ OK ] Locating Graphics Output Protocol (GOP)...\r\n");
 
     /* Retrieve the Graphics Output Protocol (GOP) handle */
     EFI_STATUS status = SystemTable->BootServices->LocateProtocol(&gopGuid, NULL, (VOID**)&gop);
@@ -69,17 +69,17 @@ EFI_STATUS __attribute__((sysv_abi)) efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM
         fb_info.width = gop->Mode->Info->HorizontalResolution;
         fb_info.height = gop->Mode->Info->VerticalResolution;
         fb_info.pixels_per_scanline = gop->Mode->Info->PixelsPerScanLine;
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OK ] Graphics Mode Initialized successfully (Highest Resolution).\r\n");
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ OK ] Graphics Mode Initialized successfully (Highest Resolution).\r\n");
     } else {
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ WARN ] GOP not found! Defaulting to Text Mode.\r\n");
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ WARN ] GOP not found! Defaulting to Text Mode.\r\n");
     }
 
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ OK ] Handing off to C++ kernel...\r\n\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ OK ] Handing off to C++ kernel...\r\n\r\n");
 
     /* Call kernel_main with the SystemTable and our GOP Framebuffer details */
     kernel_main(SystemTable, &fb_info);
 
-    /* Fallback halt â€” should never reach here */
+    /* Fallback halt Ã¢â‚¬â€ should never reach here */
     while(1) { __asm__ volatile("hlt"); }
     return EFI_SUCCESS;
 }

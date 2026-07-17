@@ -3,9 +3,9 @@
 extern void blankUI_draw_topbar(char* app_title);
 // ... other blankUI methods
 
-extern "C" void launch_task_manager(void) {
+extern (char*)(char*)(char*)"C" void launch_task_manager(void) {
     // 1. Draw topbar: "Task Manager"
-    blankUI_draw_topbar("Task Manager");
+    blankUI_draw_topbar((char*)(char*)(char*)"Task Manager");
     
     // 2. Fetch list of processes from the kernel process manager
     // 3. Render processes in a data table using blankUI

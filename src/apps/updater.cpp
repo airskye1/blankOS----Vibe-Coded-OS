@@ -17,6 +17,11 @@ extern "C" {
     extern void blankUI_draw_cursor(int x, int y);
     extern void put_pixel_alpha(int x, int y, uint32_t color, uint8_t alpha);
     extern void play_system_sound(char* sound_name);
+    extern void dui_rect(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
+    extern void dui_rect_rounded(int x, int y, int w, int h, int radius, uint32_t color, uint8_t alpha);
+    extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
+    extern void dui_draw_wallpaper();
+    extern int blankUI_hit_test_window_close(int cursor_x, int cursor_y, int width, int height);
     
     // STB Image Definition
     extern unsigned char *stbi_load_from_memory(unsigned char const *buffer, int len, int *x, int *y, int *channels_in_file, int desired_channels);
@@ -96,7 +101,7 @@ extern "C" {
             
             // Check if INSTALLED.FLG exists on this volume
             EFI_FILE_HANDLE flag = NULL;
-            if (root->Open(root, &flag, (CHAR16*)L"EFI\\BOOT\\INSTALLED.FLG", EFI_FILE_MODE_READ, 0) == EFI_SUCCESS) {
+            if (root->Open(root, &flag, (CHAR16*)L(char*)(char*)(char*)"EFI\\BOOT\\INSTALLED.FLG", EFI_FILE_MODE_READ, 0) == EFI_SUCCESS) {
                 flag->Close(flag);
                 // 1. Rename BOOTX64.EFI -> BOOTOLD.EFI
                 // EFI File API requires modifying EFI_FILE_INFO for rename, which is complex.
@@ -128,7 +133,7 @@ extern "C" {
         // 1. Live OS Detection
         void* temp = NULL;
         UINTN tsz = 0;
-        bool is_installed = read_fat32_file(SystemTable, (CHAR16*)L"EFI\\BOOT\\INSTALLED.FLG", &temp, &tsz);
+        bool is_installed = read_fat32_file(SystemTable, (CHAR16*)L(char*)(char*)(char*)"EFI\\BOOT\\INSTALLED.FLG", &temp, &tsz);
         if (temp) SystemTable->BootServices->FreePool(temp);
         
         if (!is_installed) {
@@ -137,9 +142,9 @@ extern "C" {
             dui_draw_wallpaper();
             blankUI_draw_menubar();
             blankUI_draw_dock();
-            blankUI_draw_window(win_w, win_h, (char*)"System Settings - Software Update");
-            blankUI_draw_text_color(win_x + 220, win_y + 160, (char*)"Update Failed: Live CD Mode", 0xFF3B30);
-            blankUI_draw_text_color(win_x + 220, win_y + 200, (char*)"Software updates require a disk installation.", 0x333333);
+            blankUI_draw_window(win_w, win_h, (char*)(char*)(char*)(char*)"System Settings - Software Update");
+            blankUI_draw_text_color(win_x + 220, win_y + 160, (char*)(char*)(char*)(char*)"Update Failed: Live CD Mode", 0xFF3B30);
+            blankUI_draw_text_color(win_x + 220, win_y + 200, (char*)(char*)(char*)(char*)"Software updates require a disk installation.", 0x333333);
             swap_buffers();
             for (volatile int d = 0; d < 60000000; d++);
             return;
@@ -173,7 +178,7 @@ extern "C" {
             dui_draw_wallpaper();
             blankUI_draw_menubar();
             blankUI_draw_dock();
-            blankUI_draw_window(win_w, win_h, (char*)"System Settings - Software Update");
+            blankUI_draw_window(win_w, win_h, (char*)(char*)(char*)(char*)"System Settings - Software Update");
             
             // Draw Sequoia Layout: Sidebar
             dui_rect(win_x + 1, win_y + 33, 200, win_h - 34, 0xF2F2F7, 240); // Sidebar BG
@@ -194,7 +199,7 @@ extern "C" {
             SystemTable->BootServices->Stall(16000);
         }
         
-        play_system_sound((char*)"update");
+        play_system_sound((char*)(char*)(char*)(char*)"update");
 
         // 3. Display Update Logs and "Update Available"
         while (!downloading) {
@@ -239,7 +244,7 @@ extern "C" {
             dui_draw_wallpaper();
             blankUI_draw_menubar();
             blankUI_draw_dock();
-            blankUI_draw_window(win_w, win_h, (char*)"System Settings - Software Update");
+            blankUI_draw_window(win_w, win_h, (char*)(char*)(char*)(char*)"System Settings - Software Update");
             
             // Sidebar
             dui_rect(win_x + 1, win_y + 33, 200, win_h - 34, 0xF2F2F7, 240);
@@ -261,7 +266,7 @@ extern "C" {
             dui_text(win_x + 220, win_y + 256, "* V-Sync locking double buffer blitter to fix screen tearing", 0x48484A, 1);
             dui_text(win_x + 220, win_y + 280, "* Clickable Wi-Fi and Bluetooth status dropdown widgets", 0x48484A, 1);
 
-            blankUI_draw_button(win_x + 220, win_y + 380, 200, 32, (char*)"Update Now");
+            blankUI_draw_button(win_x + 220, win_y + 380, 200, 32, (char*)(char*)(char*)(char*)"Update Now");
             blankUI_draw_cursor(cursor_x, cursor_y);
             swap_buffers();
             SystemTable->BootServices->Stall(16000);
@@ -275,7 +280,7 @@ extern "C" {
             dui_draw_wallpaper();
             blankUI_draw_menubar();
             blankUI_draw_dock();
-            blankUI_draw_window(win_w, win_h, (char*)"System Settings - Software Update");
+            blankUI_draw_window(win_w, win_h, (char*)(char*)(char*)(char*)"System Settings - Software Update");
             
             // Sidebar
             dui_rect(win_x + 1, win_y + 33, 200, win_h - 34, 0xF2F2F7, 240);
@@ -292,7 +297,7 @@ extern "C" {
             float speed = 12.4f + (i % 5) * 0.7f; // Fluctuating speed
             int seconds_left = (100 - i) / 2;
             
-            char speed_str[64] = "Speed: 12.4 MB/s | Time Remaining: 12s";
+            char speed_str[64] = (char*)(char*)(char*)"Speed: 12.4 MB/s | Time Remaining: 12s";
             // Custom string formatting helper
             char* dest = speed_str;
             const char* sp_lbl = "Speed: ";
@@ -333,7 +338,7 @@ extern "C" {
         dui_draw_wallpaper();
         blankUI_draw_menubar();
         blankUI_draw_dock();
-        blankUI_draw_window(win_w, win_h, (char*)"System Settings - Software Update");
+        blankUI_draw_window(win_w, win_h, (char*)(char*)(char*)(char*)"System Settings - Software Update");
         dui_text(win_x + 220, win_y + 120, "Update completed successfully! BOOTNEXT.EFI staged.", 0x34C759, 2);
         dui_text(win_x + 220, win_y + 160, "Rebooting system to apply updates...", 0x333333, 1);
         swap_buffers();
