@@ -180,7 +180,7 @@ extern "C" {
         entry->attributes = 0;
         
         // Name: "EFI System"
-        const CHAR16* name = L"EFI System";
+        const CHAR16* name = (const CHAR16*)L"EFI System";
         for (int i=0; name[i]; i++) entry->partition_name[i] = name[i];
 
         uint32_t part_array_crc = calculate_crc32(part_array, 16384);

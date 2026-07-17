@@ -389,7 +389,7 @@ extern "C" {
                 
             } else if (tabs[active_tab_idx].page_type == 3) {
                 // Apple page Mock
-                dui_rect_filled(win_x + 40, content_y + 20, win_w - 80, 80, 0x1A1A1A, 255);
+                dui_rect(win_x + 40, content_y + 20, win_w - 80, 80, 0x1A1A1A, 255);
                 dui_text(win_x + win_w/2 - 60, content_y + 45, "Apple Store", 0xFFFFFF, 3);
                 
                 dui_text(win_x + 60, content_y + 130, "macOS Sequoia - Elevate your productivity.", 0x111827, 2);
