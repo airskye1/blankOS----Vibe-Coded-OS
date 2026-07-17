@@ -32,28 +32,102 @@ typedef struct {
 
 extern "C" {
     extern void swap_buffers();
-    extern void draw_macos_wallpaper();
+    extern void dui_draw_wallpaper();
     extern void blankUI_draw_menubar();
     extern void blankUI_draw_dock();
+    extern void blankUI_set_cursor_type(int type);
     extern void blankUI_draw_cursor(int x, int y);
-    extern void blankUI_draw_window(int width, int height, char* title);
-    extern void blankUI_draw_text_color(int x, int y, char* text, uint32_t color);
-    extern void blankUI_draw_button(int x, int y, int width, int height, char* text);
-    extern int blankUI_hit_test_window_close(int cursor_x, int cursor_y, int width, int height);
+    
+    extern void dui_rect(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
+    extern void dui_rect_rounded(int x, int y, int w, int h, int radius, uint32_t color, uint8_t alpha);
+    extern void dui_rect_outline(int x, int y, int w, int h, uint32_t color, int thickness);
+    extern void dui_circle(int cx, int cy, int r, uint32_t color, uint8_t alpha);
+    extern void dui_line(int x0, int y0, int x1, int y1, uint32_t color, int thickness);
+    extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
+    extern int dui_text_width(const char* text, int scale);
+    extern int dui_text_height(int scale);
+    extern void dui_shadow(int x, int y, int w, int h, int radius, int blur_radius, uint32_t color, uint8_t alpha);
+    
+    extern void play_system_sound(char* sound_name);
+    extern void blankOS_panic(const char* error_code, const char* details);
+    
+    struct RTC_Time {
+        uint8_t second;
+        uint8_t minute;
+        uint8_t hour;
+        uint8_t day;
+        uint8_t month;
+        uint32_t year;
+    };
+    extern void get_rtc_time(RTC_Time *time);
     
     typedef void (*AppMainFunc)(OS_API* api);
 
     bool load_and_run_elf(EFI_SYSTEM_TABLE *SystemTable, CHAR16* filename) {
         OS_API api;
         api.swap_buffers = swap_buffers;
-        api.draw_macos_wallpaper = draw_macos_wallpaper;
-        api.blankUI_draw_menubar = blankUI_draw_menubar;
-        api.blankUI_draw_dock = blankUI_draw_dock;
-        api.blankUI_draw_cursor = blankUI_draw_cursor;
-        api.blankUI_draw_window = blankUI_draw_window;
-        api.blankUI_draw_text_color = blankUI_draw_text_color;
-        api.blankUI_draw_button = blankUI_draw_button;
-        api.blankUI_hit_test_window_close = blankUI_hit_test_window_close;
+        api.draw_wallpaper = dui_draw_wallpaper;
+        api.draw_menubar = blankUI_draw_menubar;
+        api.draw_dock = blankUI_draw_dock;
+        
+        api.set_cursor_type = [](SDK_CursorType type) {
+            blankUI_set_cursor_type((int)type);
+        };
+        api.draw_cursor = blankUI_draw_cursor;
+        
+        api.draw_rect = dui_rect;
+        api.draw_rect_rounded = dui_rect_rounded;
+        api.draw_rect_outline = dui_rect_outline;
+        api.draw_circle = dui_circle;
+        api.draw_line = dui_line;
+        api.draw_text = dui_text;
+        api.get_text_width = dui_text_width;
+        api.get_text_height = dui_text_height;
+        
+        api.draw_window = [](int x, int y, int w, int h, const char* title) {
+            dui_shadow(x, y, w, h, 12, 12, 0x000000, 60);
+            dui_rect_rounded(x, y, w, h, 12, 0xFFFFFF, 255);
+            dui_rect_rounded(x, y, w, 32, 12, 0xE5E5EA, 255);
+            dui_rect(x, y + 20, w, 12, 0xE5E5EA, 255);
+            dui_circle(x + 16, y + 16, 6, 0xFF5F56, 255);
+            dui_circle(x + 36, y + 16, 6, 0xFFBD2E, 255);
+            dui_circle(x + 56, y + 16, 6, 0x27C93F, 255);
+            dui_text(x + 80, y + 12, title, 0x333333, 1);
+        };
+        
+        api.draw_button = [](int x, int y, int w, int h, const char* text, int mouse_x, int mouse_y, bool mouse_click) -> bool {
+            bool hover = (mouse_x >= x && mouse_x <= x + w && mouse_y >= y && mouse_y <= y + h);
+            uint32_t color = hover ? 0x0056B3 : 0x007AFF;
+            dui_rect_rounded(x, y, w, h, 8, color, 255);
+            int tw = dui_text_width(text, 1);
+            dui_text(x + (w - tw)/2, y + (h - 8)/2, text, 0xFFFFFF, 1);
+            return hover && mouse_click;
+        };
+        
+        api.open_file = [](const char* path, void** buffer, uint64_t* size) -> bool {
+            return false;
+        };
+        
+        api.write_file = [](const char* path, void* buffer, uint64_t size) -> bool {
+            return false;
+        };
+        
+        api.play_sound = [](const char* sound_name) {
+            play_system_sound((char*)sound_name);
+        };
+        
+        api.get_time = [](int* hour, int* minute, int* second) {
+            RTC_Time t;
+            get_rtc_time(&t);
+            if (hour) *hour = t.hour;
+            if (minute) *minute = t.minute;
+            if (second) *second = t.second;
+        };
+        
+        api.panic = [](const char* error_code, const char* details) {
+            blankOS_panic(error_code, details);
+        };
+        
         api.SystemTable = SystemTable;
         
         EFI_GUID fsGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
@@ -104,15 +178,10 @@ extern "C" {
             return false; // Not a valid ELF
         }
         
-        // Very basic ELF execution jump
-        // In a true paging OS, we'd map PT_LOAD segments here.
-        // For our PIC flat ELFs, we compute offset and jump.
         AppMainFunc app_entry = (AppMainFunc)((uint8_t*)fileBuffer + header->e_entry);
         
-        // System Call! Give control to the user app
         app_entry(&api);
         
-        // App returned! Free memory and return to OS desktop
         SystemTable->BootServices->FreePool(fileBuffer);
         return true;
     }

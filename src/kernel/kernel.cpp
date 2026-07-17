@@ -85,7 +85,7 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
     extern void init_idt();
     init_idt();
     
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ KERNEL ] BlankOS Monolithic Architecture Loaded.\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ KERNEL ] BlankOS Monolithic Architecture Loaded.\r\n");
     klog("[ KERNEL ] BlankOS Monolithic Architecture Loaded.");
     
     // Initialize Framebuffer & Compositor FIRST so hardware drivers know the screen resolution
