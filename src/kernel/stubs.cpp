@@ -10,7 +10,7 @@
 extern "C" {
 
 void __attribute__((weak)) init_compositor(void) {}
-void __attribute__((weak)) vm_allocate(void) {}
+void* __attribute__((weak)) vm_allocate(uint32_t size) { (void)size; return NULL; }
 
 void __attribute__((weak)) blankUI_draw_toast(char* title, char* message) {}
 void __attribute__((weak)) blankUI_draw_topbar(char* app_title) {}

@@ -143,7 +143,7 @@ extern "C" {
 }
 
 extern "C" {
-    extern EFI_SYSTEM_TABLE* global_ST;
+    EFI_SYSTEM_TABLE* global_ST = NULL;
 }
 
 extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_info) {

@@ -1,9 +1,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+extern "C" {
 extern void blankUI_draw_modal(int width, int height, char* title, char* content);
 extern void blankUI_draw_button(int x, int y, int width, int height, char* text);
 extern void blankUI_animate_slide_up(void* component);
+}
 
 static int current_step = 0;
 

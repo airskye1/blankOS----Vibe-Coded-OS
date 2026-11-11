@@ -13,7 +13,7 @@ function Report-Warning([string]$msg, [string]$level = "RED") {
     $color = if ($level -eq "RED") { "Red" } else { "Yellow" }
     Write-Host "[LINT $level] $msg" -ForegroundColor $color
     if ($level -eq "RED") {
-        $global:errorFound = $true
+        $script:errorFound = $true
     }
 }
 
@@ -41,6 +41,12 @@ if (Test-Path $Makefile) {
     }
     if ($makeContent -notmatch '--output-target(=|\s+)efi-app-x86_64') {
         Report-Warning "Makefile must use --output-target efi-app-x86_64 in OBJCOPY! Using --target fails on Binutils 2.46+ with 'boot.so: file format not recognized'."
+    }
+    if ($makeContent -notmatch '-mno-avx') {
+        Report-Warning "Makefile is missing -mno-avx in CFLAGS! UEFI firmware does not enable CR4.OSXSAVE/AVX, so VEX-encoded instructions (vpxor/vmovdqu) cause an immediate #UD firmware exception."
+    }
+    if ($makeContent -notmatch '--no-undefined') {
+        Report-Warning "Makefile is missing --no-undefined in LDFLAGS! Without it, ld -shared silently emits 0x0 GOT/PLT entries for undefined symbols and crashes UEFI at runtime."
     }
 
     # Verify that all source files are compiled and linked (prevent orphan files like compositor.cpp)
@@ -170,6 +176,11 @@ foreach ($file in $files) {
             $changed = $true
             Write-Host "[AUTO-FIX] Added (char*) cast to string arguments in $relName" -ForegroundColor Green
         }
+    }
+
+    # I. Ensure C++ files with extern declarations use extern "C" to prevent C++ name mangling mismatches
+    if ($relName -like "*.cpp" -and $content -match '\bextern\s+(?!\"C\")' -and $content -notmatch 'extern\s+"C"') {
+        Report-Warning "$relName has extern declarations without extern `"C`"! This causes undefined C++-mangled symbols in BOOTX64.EFI."
     }
 
     # Save if auto-fixes were applied

@@ -4,6 +4,41 @@
 extern "C" {
     extern EFI_SYSTEM_TABLE *gSystemTable;
 
+    UINTN uefi_strlen(const char* s) {
+        if (!s) return 0;
+        UINTN len = 0;
+        while (s[len]) len++;
+        return len;
+    }
+
+    void* uefi_memcpy(void* dst, const void* src, UINTN n) {
+        if (!dst || !src) return dst;
+        uint8_t* d = (uint8_t*)dst;
+        const uint8_t* s = (const uint8_t*)src;
+        for (UINTN i = 0; i < n; i++) d[i] = s[i];
+        return dst;
+    }
+
+    void* uefi_memset(void* dst, int val, UINTN n) {
+        if (!dst) return dst;
+        uint8_t* d = (uint8_t*)dst;
+        uint8_t v = (uint8_t)val;
+        for (UINTN i = 0; i < n; i++) d[i] = v;
+        return dst;
+    }
+
+    UINTN __attribute__((weak)) strlen(const char* s) {
+        return uefi_strlen(s);
+    }
+
+    void* __attribute__((weak)) memcpy(void* dst, const void* src, UINTN n) {
+        return uefi_memcpy(dst, src, n);
+    }
+
+    void* __attribute__((weak)) memset(void* dst, int val, UINTN n) {
+        return uefi_memset(dst, val, n);
+    }
+
     void* uefi_malloc(UINTN size) {
         if (!gSystemTable) return NULL;
         UINTN* ptr = (UINTN*)NULL;

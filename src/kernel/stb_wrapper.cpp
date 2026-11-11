@@ -6,6 +6,9 @@ extern "C" {
     void* uefi_malloc(UINTN size);
     void uefi_free(void* ptr);
     void* uefi_realloc(void* ptr, UINTN new_size);
+    UINTN uefi_strlen(const char* s);
+    void* uefi_memcpy(void* dst, const void* src, UINTN n);
+    void* uefi_memset(void* dst, int val, UINTN n);
     double uefi_floor(double x);
     double uefi_ceil(double x);
     double uefi_sqrt(double x);
@@ -20,11 +23,12 @@ extern "C" {
 #define STBI_NO_HDR
 #define STBI_NO_LINEAR
 #define STBI_NO_SIMD // Prevents including emmintrin.h and stdlib.h for SSE2
+#define STBI_NO_THREAD_LOCALS // Prevents __thread / __tls_get_addr in freestanding UEFI
 #define STBI_MALLOC uefi_malloc
 #define STBI_REALLOC uefi_realloc
 #define STBI_FREE uefi_free
-#define STBI_MEMCPY __builtin_memcpy
-#define STBI_MEMSET __builtin_memset
+#define STBI_MEMCPY uefi_memcpy
+#define STBI_MEMSET uefi_memset
 #define STBI_ABS(x) ((x) < 0 ? -(x) : (x))
 #define STBI_ASSERT(x)
 
@@ -46,6 +50,9 @@ extern "C" {
 #define STBTT_fabs(x)     STBI_ABS(x)
 #define STBTT_malloc(x,u) uefi_malloc(x)
 #define STBTT_free(x,u)   uefi_free(x)
+#define STBTT_memcpy      uefi_memcpy
+#define STBTT_memset      uefi_memset
+#define STBTT_strlen(x)   uefi_strlen(x)
 #define STBTT_assert(x)
 
 #define STB_TRUETYPE_IMPLEMENTATION
