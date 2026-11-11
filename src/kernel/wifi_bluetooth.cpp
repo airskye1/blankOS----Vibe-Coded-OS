@@ -39,10 +39,14 @@ bool is_wifi_connected(void) {
 }
 
 const char* get_connected_ssid(void) {
+    static char s_ssid_buf[64];
     NetStatus st;
     net_get_status(&st);
     if (!st.nic_present) return "No Network Adapter";
-    return st.adapter_name;
+    int i = 0;
+    while (i < 63 && st.adapter_name[i]) { s_ssid_buf[i] = st.adapter_name[i]; i++; }
+    s_ssid_buf[i] = 0;
+    return s_ssid_buf;
 }
 
 int get_wifi_signal_strength(void) {

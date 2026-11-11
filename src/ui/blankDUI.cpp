@@ -1793,7 +1793,7 @@ void dui_draw_sys_icon(int x, int y, int size, int sys_icon_id, uint32_t color) 
             draw_thick_line(x_mid_r, cy - 1, x_bot, y + size * 86 / 100, color, t);
             break;
         }
-        case 19: { // shield
+        case 19:   // shield
         default: {
             int sw = size * 64 / 100;
             int lx = cx - sw / 2;
