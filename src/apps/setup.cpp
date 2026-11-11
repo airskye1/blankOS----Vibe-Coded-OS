@@ -5,374 +5,1073 @@
 #include <efilib.h>
 #include <efiprot.h>
 
+#include "../ui/blankDUI.h"
+#include "../ui/theme.h"
+#include "../kernel/input.h"
+#include "../kernel/audio.h"
+
 extern "C" {
-    extern void swap_buffers();
-    extern void draw_macos_wallpaper();
-    extern void init_compositor(EFI_SYSTEM_TABLE *SystemTable);
-    extern void blankUI_draw_menubar();
-    extern void blankUI_draw_dock();
-    extern void blankUI_draw_window(int width, int height, char* title);
-    extern void blankUI_draw_text_color(int x, int y, char* text, uint32_t color);
-    extern void blankUI_draw_button(int x, int y, int width, int height, char* text);
-    extern void blankUI_draw_toast(char* title, char* message);
-    extern void blankUI_draw_cursor(int x, int y);
-    extern int screen_width;
-    extern int screen_height;
-    extern bool format_disk_gpt_fat32(EFI_SYSTEM_TABLE *SystemTable, EFI_BLOCK_IO_PROTOCOL* BlockIo);
-    bool g_is_live_cd = false;
+    extern bool g_is_live_cd;
+    extern bool format_disk_gpt_fat32(EFI_SYSTEM_TABLE* SystemTable, EFI_BLOCK_IO_PROTOCOL* BlockIo);
+    extern bool blankReg_save(EFI_SYSTEM_TABLE* st);
+    extern void os_restart(void);
+}
 
-    bool perform_real_installation(EFI_SYSTEM_TABLE *SystemTable) {
-        if (!SystemTable) return false;
+#define SETUP_MAX_DISKS 10
+#define SETUP_CHUNK_SIZE (256 * 1024)
 
-        EFI_GUID fsGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
-        UINTN numHandles = 0;
-        EFI_HANDLE *handleBuffer = NULL;
-        
-        EFI_STATUS Status = SystemTable->BootServices->LocateHandleBuffer(
-            ByProtocol, &fsGuid, NULL, &numHandles, &handleBuffer);
-            
-        if (EFI_ERROR(Status) || numHandles == 0 || !handleBuffer) return false;
-        
-        // Step 1: Read the OS binary from the Live Environment (CD/USB)
-        void* fileBuffer = NULL;
-        UINTN fileSize = 8 * 1024 * 1024; // 8MB buffer for OS binary
-        SystemTable->BootServices->AllocatePool(EfiLoaderData, fileSize, &fileBuffer);
-        if (!fileBuffer) {
-            SystemTable->BootServices->FreePool(handleBuffer);
-            return false;
-        }
-        
-        bool foundSource = false;
-        for (UINTN i = 0; i < numHandles; i++) {
-            EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
-            SystemTable->BootServices->HandleProtocol(handleBuffer[i], &fsGuid, (void**)&fs);
-            if (!fs) continue;
-            
-            EFI_FILE_HANDLE root = NULL;
-            if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
-            
-            EFI_FILE_HANDLE sourceFile = NULL;
-            Status = root->Open(root, &sourceFile, (CHAR16*)L"EFI\\BOOT\\BOOTX64.EFI", EFI_FILE_MODE_READ, 0);
-            if (!EFI_ERROR(Status) && sourceFile != NULL) {
-                UINTN readSize = fileSize;
-                Status = sourceFile->Read(sourceFile, &readSize, fileBuffer);
-                if (!EFI_ERROR(Status) && readSize > 0) {
-                    fileSize = readSize;
-                    foundSource = true;
-                }
-                sourceFile->Close(sourceFile);
-            }
-            root->Close(root);
-            if (foundSource) break;
-        }
-        
-        if (!foundSource) {
-            SystemTable->BootServices->FreePool(fileBuffer);
-            SystemTable->BootServices->FreePool(handleBuffer);
-            return false;
-        }
-        
-        bool installed = false;
-        
-        // Step 2: Copy the OS to any writable disk volume
-        for (UINTN i = 0; i < numHandles; i++) {
-            EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
-            SystemTable->BootServices->HandleProtocol(handleBuffer[i], &fsGuid, (void**)&fs);
-            if (!fs) continue;
-            
-            EFI_FILE_HANDLE root = NULL;
-            if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
-            
-            // Test if drive volume is writable
-            EFI_FILE_HANDLE testFile = NULL;
-            Status = root->Open(root, &testFile, (CHAR16*)L"TEST.TMP", 
-                                EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
-                                
-            if (!EFI_ERROR(Status) && testFile != NULL) {
-                testFile->Delete(testFile); // Confirmed writable drive!
-                
-                // Create directory structure: EFI/BOOT and EFI/BLANKOS
-                EFI_FILE_HANDLE efiDir = NULL;
-                root->Open(root, &efiDir, (CHAR16*)L"EFI", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, EFI_FILE_DIRECTORY);
-                if (efiDir) {
-                    EFI_FILE_HANDLE bootDir = NULL;
-                    efiDir->Open(efiDir, &bootDir, (CHAR16*)L"BOOT", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, EFI_FILE_DIRECTORY);
-                    if (bootDir) {
-                        EFI_FILE_HANDLE destFile = NULL;
-                        Status = bootDir->Open(bootDir, &destFile, (CHAR16*)L"BOOTX64.EFI", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
-                        if (!EFI_ERROR(Status) && destFile != NULL) {
-                            destFile->Write(destFile, &fileSize, fileBuffer);
-                            destFile->Close(destFile);
-                            installed = true;
-                        }
-                        
-                        // Flag installed OS
-                        EFI_FILE_HANDLE flag = NULL;
-                        Status = bootDir->Open(bootDir, &flag, (CHAR16*)L"INSTALLED.FLG", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
-                        if (!EFI_ERROR(Status) && flag != NULL) {
-                            char msg[] = "YES";
-                            UINTN sz = 3;
-                            flag->Write(flag, &sz, msg);
-                            flag->Close(flag);
-                        }
-                        bootDir->Close(bootDir);
-                    }
-                    
-                    // Create APPS directory for App Store repository
-                    EFI_FILE_HANDLE appsDir = NULL;
-                    efiDir->Open(efiDir, &appsDir, (CHAR16*)L"APPS", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, EFI_FILE_DIRECTORY);
-                    if (appsDir) {
-                        EFI_FILE_HANDLE catalog = NULL;
-                        Status = appsDir->Open(appsDir, &catalog, (CHAR16*)L"catalog.json", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
-                        if (!EFI_ERROR(Status) && catalog != NULL) {
-                            const char json[] = "{\"store_name\":\"BlankOS App Store\",\"version\":\"1.3.0\"}";
-                            UINTN sz = sizeof(json)-1;
-                            catalog->Write(catalog, &sz, (void*)json);
-                            catalog->Close(catalog);
-                        }
-                        appsDir->Close(appsDir);
-                    }
-                    
-                    efiDir->Close(efiDir);
-                }
-            }
-            root->Close(root);
-            if (installed) break;
-        }
-        
-        SystemTable->BootServices->FreePool(fileBuffer);
-        SystemTable->BootServices->FreePool(handleBuffer);
-        return installed;
+typedef struct {
+    EFI_HANDLE handle;
+    EFI_BLOCK_IO_PROTOCOL* blk;
+    uint64_t size_mb;
+    uint32_t block_size;
+    bool removable;
+    bool gpt_compatible;
+} SetupDiskInfo;
+
+typedef struct {
+    uint8_t type;
+    uint8_t sub_type;
+    uint8_t length[2];
+} SetupDevPathNode;
+
+typedef struct {
+    int phase_idx;
+    int total_phases;
+    float progress;
+    char status_line[96];
+    char current_file[64];
+    uint64_t bytes_copied;
+    int files_copied;
+} SetupInstallProgress;
+
+typedef enum {
+    STEP_WELCOME = 0,
+    STEP_DISK_SELECT = 1,
+    STEP_INSTALLING = 2,
+    STEP_COMPLETE = 3
+} SetupStep;
+
+static void stp_str_copy(char* dst, const char* src, int max_len) {
+    if (!dst || max_len <= 0) return;
+    int i = 0;
+    while (src && src[i] && i < max_len - 1) {
+        dst[i] = src[i];
+        i++;
     }
-    
-    void launch_setup_screen(EFI_SYSTEM_TABLE *SystemTable) {
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ OOBE ] Starting Setup...\r\n");
-        
-        int win_w = 640;
-        int win_h = 400;
-        int win_x = (screen_width - win_w) / 2;
-        int win_y = (screen_height - win_h) / 2;
-        
-        EFI_GUID SimplePointerProtocolGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
-        EFI_SIMPLE_POINTER_PROTOCOL *Mouse = NULL;
-        SystemTable->BootServices->LocateProtocol(&SimplePointerProtocolGuid, NULL, (void**)&Mouse);
-        if (Mouse) Mouse->Reset(Mouse, TRUE);
-        
-        EFI_GUID blockIoGuid = EFI_BLOCK_IO_PROTOCOL_GUID;
-        UINTN numBlockIo = 0;
-        EFI_HANDLE *blockIoHandles = NULL;
-        SystemTable->BootServices->LocateHandleBuffer(ByProtocol, &blockIoGuid, NULL, &numBlockIo, &blockIoHandles);
-        
-        // Find valid physical disks (not partitions, not read-only)
-        EFI_BLOCK_IO_PROTOCOL* available_disks[10];
-        int num_available_disks = 0;
-        for (UINTN i = 0; i < numBlockIo && num_available_disks < 10; i++) {
-            EFI_BLOCK_IO_PROTOCOL *blk = NULL;
-            SystemTable->BootServices->HandleProtocol(blockIoHandles[i], &blockIoGuid, (void**)&blk);
-            if (blk && blk->Media && !blk->Media->LogicalPartition && !blk->Media->ReadOnly) {
-                available_disks[num_available_disks++] = blk;
+    dst[i] = '\0';
+}
+
+static int stp_str_len(const char* s) {
+    int n = 0;
+    while (s && s[n]) n++;
+    return n;
+}
+
+static void stp_str_append(char* dst, const char* src, int max_len) {
+    int cur = stp_str_len(dst);
+    if (cur >= max_len - 1) return;
+    stp_str_copy(dst + cur, src, max_len - cur);
+}
+
+static int stp_u64_to_str(uint64_t v, char* out) {
+    char tmp[32];
+    int p = 0;
+    if (v == 0) {
+        tmp[p++] = '0';
+    } else {
+        while (v > 0 && p < 30) {
+            tmp[p++] = (char)('0' + (v % 10ULL));
+            v /= 10ULL;
+        }
+    }
+    int n = 0;
+    while (p > 0) out[n++] = tmp[--p];
+    out[n] = '\0';
+    return n;
+}
+
+static void stp_format_bytes(uint64_t bytes, char* out, int max_len) {
+    char num[32];
+    if (bytes >= 1024ULL * 1024ULL) {
+        uint64_t mb = bytes / (1024ULL * 1024ULL);
+        uint64_t dec = ((bytes % (1024ULL * 1024ULL)) * 100ULL) / (1024ULL * 1024ULL);
+        stp_u64_to_str(mb, num);
+        stp_str_copy(out, num, max_len);
+        stp_str_append(out, ".", max_len);
+        if (dec < 10) stp_str_append(out, "0", max_len);
+        stp_u64_to_str(dec, num);
+        stp_str_append(out, num, max_len);
+        stp_str_append(out, " MB", max_len);
+    } else {
+        uint64_t kb = (bytes + 1023ULL) / 1024ULL;
+        stp_u64_to_str(kb, num);
+        stp_str_copy(out, num, max_len);
+        stp_str_append(out, " KB", max_len);
+    }
+}
+
+static bool stp_is_cdrom_device_path(EFI_SYSTEM_TABLE* st, EFI_HANDLE handle) {
+    if (!st || !st->BootServices || !handle) return false;
+    EFI_GUID dp_guid = { 0x09576e91, 0x6d3f, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b} };
+    const uint8_t* dp = NULL;
+    EFI_STATUS status = st->BootServices->HandleProtocol(handle, &dp_guid, (void**)&dp);
+    if (EFI_ERROR(status) || !dp) return false;
+
+    uint32_t offset = 0;
+    while (offset < 4096) {
+        const SetupDevPathNode* node = (const SetupDevPathNode*)(dp + offset);
+        if (node->type == 0x7F) break; // End of Device Path
+        if (node->type == 0x04 && node->sub_type == 0x02) {
+            return true; // MEDIA_DEVICE_PATH / MEDIA_CDROM_DP
+        }
+        uint16_t node_len = (uint16_t)node->length[0] | ((uint16_t)node->length[1] << 8);
+        if (node_len < 4) break;
+        offset += node_len;
+    }
+    return false;
+}
+
+static uint32_t stp_dp_prefix_len(const uint8_t* dp) {
+    if (!dp) return 0;
+    uint32_t offset = 0;
+    while (offset < 4096) {
+        const SetupDevPathNode* node = (const SetupDevPathNode*)(dp + offset);
+        if (node->type == 0x7F) break;
+        uint16_t node_len = (uint16_t)node->length[0] | ((uint16_t)node->length[1] << 8);
+        if (node_len < 4) return 0;
+        offset += node_len;
+    }
+    return offset;
+}
+
+static bool stp_dp_is_child(EFI_SYSTEM_TABLE* st, EFI_HANDLE parent, EFI_HANDLE child) {
+    if (!st || !st->BootServices || !parent || !child) return false;
+    EFI_GUID dp_guid = { 0x09576e91, 0x6d3f, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b} };
+    const uint8_t* p_dp = NULL;
+    const uint8_t* c_dp = NULL;
+    if (EFI_ERROR(st->BootServices->HandleProtocol(parent, &dp_guid, (void**)&p_dp)) || !p_dp) return false;
+    if (EFI_ERROR(st->BootServices->HandleProtocol(child, &dp_guid, (void**)&c_dp)) || !c_dp) return false;
+
+    uint32_t p_len = stp_dp_prefix_len(p_dp);
+    uint32_t c_len = stp_dp_prefix_len(c_dp);
+    if (p_len == 0 || c_len < p_len) return false;
+
+    for (uint32_t i = 0; i < p_len; i++) {
+        if (p_dp[i] != c_dp[i]) return false;
+    }
+    return true;
+}
+
+static bool stp_is_handle_readonly_media(EFI_SYSTEM_TABLE* st, EFI_HANDLE handle) {
+    if (!st || !st->BootServices || !handle) return true;
+    if (stp_is_cdrom_device_path(st, handle)) return true;
+
+    EFI_GUID blk_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+    EFI_BLOCK_IO_PROTOCOL* blk = NULL;
+    EFI_STATUS status = st->BootServices->HandleProtocol(handle, &blk_guid, (void**)&blk);
+    if (!EFI_ERROR(status) && blk && blk->Media && blk->Media->ReadOnly) {
+        return true;
+    }
+    return false;
+}
+
+static bool stp_test_root_writable(EFI_FILE_HANDLE root) {
+    if (!root) return false;
+    EFI_FILE_HANDLE test_file = NULL;
+    EFI_STATUS st = root->Open(
+        root, &test_file, (CHAR16*)L".BLKWRT.TMP",
+        EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (EFI_ERROR(st) || !test_file) return false;
+    test_file->Delete(test_file);
+    return true;
+}
+
+static int stp_scan_physical_disks(EFI_SYSTEM_TABLE* st, SetupDiskInfo* out_disks, int max_disks) {
+    if (!st || !st->BootServices || !out_disks || max_disks <= 0) return 0;
+
+    EFI_GUID blk_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+    UINTN num_handles = 0;
+    EFI_HANDLE* handles = NULL;
+    EFI_STATUS status = st->BootServices->LocateHandleBuffer(
+        ByProtocol, &blk_guid, NULL, &num_handles, &handles);
+
+    if (EFI_ERROR(status) || !handles || num_handles == 0) {
+        if (handles) st->BootServices->FreePool(handles);
+        return 0;
+    }
+
+    int count = 0;
+    for (UINTN i = 0; i < num_handles && count < max_disks; i++) {
+        if (stp_is_cdrom_device_path(st, handles[i])) continue;
+
+        EFI_BLOCK_IO_PROTOCOL* blk = NULL;
+        status = st->BootServices->HandleProtocol(handles[i], &blk_guid, (void**)&blk);
+        if (EFI_ERROR(status) || !blk || !blk->Media) continue;
+        if (!blk->Media->MediaPresent || blk->Media->LogicalPartition || blk->Media->ReadOnly) continue;
+        if (blk->Media->BlockSize == 0) continue;
+
+        uint64_t total_blocks = (uint64_t)blk->Media->LastBlock + 1ULL;
+        uint64_t size_mb = (total_blocks * (uint64_t)blk->Media->BlockSize) / (1024ULL * 1024ULL);
+
+        out_disks[count].handle = handles[i];
+        out_disks[count].blk = blk;
+        out_disks[count].size_mb = size_mb;
+        out_disks[count].block_size = blk->Media->BlockSize;
+        out_disks[count].removable = (blk->Media->RemovableMedia != 0);
+        out_disks[count].gpt_compatible = (blk->Media->BlockSize == 512 && blk->Media->LastBlock >= 100000);
+        count++;
+    }
+
+    st->BootServices->FreePool(handles);
+    return count;
+}
+
+static void stp_draw_header_steps(int card_x, int card_y, int card_w, int active_step) {
+    const char* names[4] = { "1. Welcome", "2. Target Disk", "3. Install", "4. Complete" };
+    int pill_w = 148;
+    int pill_h = 28;
+    int gap = 12;
+    int row_w = 4 * pill_w + 3 * gap;
+    int start_x = card_x + (card_w - row_w) / 2;
+    int y = card_y + 24;
+
+    for (int i = 0; i < 4; i++) {
+        int px = start_x + i * (pill_w + gap);
+        bool cur = (i == active_step);
+        bool done = (i < active_step);
+        uint32_t bg = cur ? THEME_ACCENT_CYAN : (done ? THEME_SURFACE_ELEVATED : THEME_SURFACE_INPUT);
+        uint8_t alpha = cur ? 245 : (done ? 220 : 170);
+        dui_rect_rounded(px, y, pill_w, pill_h, THEME_RADIUS_PILL, bg, alpha);
+
+        uint32_t tc = cur ? THEME_TEXT_ON_ACCENT : (done ? THEME_ACCENT_TEAL : THEME_TEXT_MUTED);
+        int tw = dui_text_width(names[i], 1);
+        dui_text(px + (pill_w - tw) / 2, y + 6, names[i], tc, 1);
+    }
+}
+
+static void stp_render_installing_frame(EFI_SYSTEM_TABLE* st, const SetupInstallProgress* prog) {
+    (void)st;
+    BlankInputState in;
+    input_poll(&in);
+    audio_tick();
+
+    int sw = (int)(screen_width > 0 ? screen_width : 1024);
+    int sh = (int)(screen_height > 0 ? screen_height : 768);
+
+    dui_draw_wallpaper(dui_get_wallpaper_id());
+    dui_rect(0, 0, sw, sh, THEME_BG_VOID, 92);
+
+    int card_w = (sw >= 820) ? 720 : (sw - 64);
+    int card_h = 460;
+    int card_x = (sw - card_w) / 2;
+    int card_y = (sh - card_h) / 2;
+
+    dui_shadow(card_x, card_y, card_w, card_h, THEME_RADIUS_XL, 12);
+    dui_glass_card(card_x, card_y, card_w, card_h, THEME_RADIUS_XL, THEME_SURFACE_BASE, 224, true);
+
+    stp_draw_header_steps(card_x, card_y, card_w, STEP_INSTALLING);
+
+    int cx = card_x + card_w / 2;
+    const char* hdr = "Installing BlankOS Horizon";
+    int hw = dui_text_width(hdr, 2);
+    dui_text(cx - hw / 2, card_y + 78, hdr, THEME_TEXT_PRIMARY, 2);
+
+    float p = horizon_clampf(prog->progress, 0.0f, 1.0f);
+    dui_progress_ring(cx, card_y + 178, 44, 5, p, THEME_SURFACE_ELEVATED, THEME_ACCENT_CYAN);
+
+    int pct = (int)(p * 100.0f + 0.5f);
+    if (pct > 100) pct = 100;
+    char pct_str[8];
+    stp_u64_to_str((uint64_t)pct, pct_str);
+    stp_str_append(pct_str, "%", sizeof(pct_str));
+    int pw = dui_text_width(pct_str, 1);
+    dui_text(cx - pw / 2, card_y + 170, pct_str, THEME_TEXT_PRIMARY, 1);
+
+    // Status + Current File
+    int sw1 = dui_text_width(prog->status_line, 1);
+    dui_text(cx - sw1 / 2, card_y + 244, prog->status_line, THEME_TEXT_PRIMARY, 1);
+
+    if (prog->current_file[0]) {
+        int fw = dui_text_width(prog->current_file, 1);
+        dui_text(cx - fw / 2, card_y + 270, prog->current_file, THEME_ACCENT_CYAN, 1);
+    }
+
+    // Horizontal progress bar
+    int bar_w = card_w - 112;
+    int bar_x = card_x + 56;
+    int bar_y = card_y + 308;
+    dui_rect_rounded(bar_x, bar_y, bar_w, 8, 4, THEME_SURFACE_INPUT, 255);
+    int fill_w = (int)((float)bar_w * p);
+    if (fill_w >= 8) {
+        dui_gradient_rounded(bar_x, bar_y, fill_w, 8, 4, THEME_ACCENT_CYAN, THEME_ACCENT_TEAL, 255);
+    }
+
+    // Live metrics card at bottom
+    char bytes_str[32];
+    stp_format_bytes(prog->bytes_copied, bytes_str, sizeof(bytes_str));
+    char files_str[16];
+    stp_u64_to_str((uint64_t)prog->files_copied, files_str);
+
+    char metrics[96];
+    stp_str_copy(metrics, "Files Written: ", sizeof(metrics));
+    stp_str_append(metrics, files_str, sizeof(metrics));
+    stp_str_append(metrics, "   |   Data Copied: ", sizeof(metrics));
+    stp_str_append(metrics, bytes_str, sizeof(metrics));
+    int mw = dui_text_width(metrics, 1);
+    dui_text(cx - mw / 2, card_y + 344, metrics, THEME_TEXT_SECONDARY, 1);
+
+    const char* note = "Do not power off your computer during installation.";
+    int nw = dui_text_width(note, 1);
+    dui_text(cx - nw / 2, card_y + 392, note, THEME_TEXT_MUTED, 1);
+
+    blankUI_draw_cursor(in.mx, in.my, 0);
+    swap_buffers();
+}
+
+static EFI_FILE_HANDLE stp_open_or_create_dir(EFI_FILE_HANDLE parent, const CHAR16* name) {
+    if (!parent || !name) return NULL;
+    EFI_FILE_HANDLE dir = NULL;
+    EFI_STATUS st = parent->Open(
+        parent, &dir, (CHAR16*)name,
+        EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE,
+        EFI_FILE_DIRECTORY);
+    if (EFI_ERROR(st)) return NULL;
+    return dir;
+}
+
+static bool stp_write_small_file(EFI_FILE_HANDLE dir, const CHAR16* filename, const void* data, UINTN len) {
+    if (!dir || !filename || !data || len == 0) return false;
+
+    EFI_FILE_HANDLE existing = NULL;
+    if (!EFI_ERROR(dir->Open(dir, &existing, (CHAR16*)filename, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0)) && existing) {
+        existing->Delete(existing); // Delete closes the handle
+    }
+
+    EFI_FILE_HANDLE file = NULL;
+    EFI_STATUS st = dir->Open(
+        dir, &file, (CHAR16*)filename,
+        EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (EFI_ERROR(st) || !file) return false;
+
+    UINTN written = len;
+    st = file->Write(file, &written, (VOID*)data);
+    if (file->Flush) file->Flush(file);
+    file->Close(file);
+    return (!EFI_ERROR(st) && written == len);
+}
+
+static bool stp_copy_file_chunked(
+    EFI_SYSTEM_TABLE* st,
+    EFI_FILE_HANDLE src_dir,
+    EFI_FILE_HANDLE dst_dir,
+    const CHAR16* filename,
+    const char* display_name,
+    void* chunk_buf,
+    UINTN chunk_cap,
+    SetupInstallProgress* prog,
+    float progress_start,
+    float progress_end,
+    bool required
+) {
+    if (!src_dir || !dst_dir || !filename || !chunk_buf || chunk_cap == 0) return !required;
+
+    EFI_FILE_HANDLE src_file = NULL;
+    EFI_STATUS status = src_dir->Open(src_dir, &src_file, (CHAR16*)filename, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status) || !src_file) {
+        return !required;
+    }
+
+    // Remove pre-existing target file so size never trails old bytes
+    EFI_FILE_HANDLE old_dst = NULL;
+    if (!EFI_ERROR(dst_dir->Open(dst_dir, &old_dst, (CHAR16*)filename, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0)) && old_dst) {
+        old_dst->Delete(old_dst);
+    }
+
+    EFI_FILE_HANDLE dst_file = NULL;
+    status = dst_dir->Open(
+        dst_dir, &dst_file, (CHAR16*)filename,
+        EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (EFI_ERROR(status) || !dst_file) {
+        src_file->Close(src_file);
+        return false;
+    }
+
+    stp_str_copy(prog->current_file, display_name, sizeof(prog->current_file));
+    prog->progress = progress_start;
+    stp_render_installing_frame(st, prog);
+
+    bool ok = true;
+    int chunk_idx = 0;
+    while (1) {
+        UINTN to_read = chunk_cap;
+        EFI_STATUS r_st = src_file->Read(src_file, &to_read, chunk_buf);
+        if (EFI_ERROR(r_st)) {
+            ok = false;
+            break;
+        }
+        if (to_read == 0) break; // EOF
+
+        UINTN to_write = to_read;
+        EFI_STATUS w_st = dst_file->Write(dst_file, &to_write, chunk_buf);
+        if (EFI_ERROR(w_st) || to_write != to_read) {
+            ok = false;
+            break;
+        }
+
+        prog->bytes_copied += (uint64_t)to_write;
+        chunk_idx++;
+        float local_t = (float)chunk_idx / (float)(chunk_idx + 4);
+        prog->progress = horizon_lerp(progress_start, progress_end, local_t);
+        stp_render_installing_frame(st, prog);
+
+        if (to_read < chunk_cap) break; // Final partial chunk
+    }
+
+    if (ok && dst_file->Flush) {
+        dst_file->Flush(dst_file);
+    }
+    dst_file->Close(dst_file);
+    src_file->Close(src_file);
+
+    if (ok) {
+        prog->files_copied++;
+        prog->progress = progress_end;
+        stp_render_installing_frame(st, prog);
+    }
+    return ok;
+}
+
+static bool stp_run_real_installation(
+    EFI_SYSTEM_TABLE* SystemTable,
+    EFI_HANDLE selected_disk_handle,
+    EFI_BLOCK_IO_PROTOCOL* selected_blk,
+    bool do_format,
+    SetupInstallProgress* prog,
+    char* error_out,
+    int error_max
+) {
+    if (!SystemTable || !SystemTable->BootServices) {
+        stp_str_copy(error_out, "UEFI BootServices unavailable.", error_max);
+        return false;
+    }
+
+    // 1. Format target disk if requested + Reconnect UEFI Storage Controllers
+    if (do_format) {
+        if (!selected_disk_handle || !selected_blk) {
+            stp_str_copy(error_out, "No physical target disk selected.", error_max);
+            return false;
+        }
+
+        stp_str_copy(prog->status_line, "Partitioning GPT & Formatting FAT32...", sizeof(prog->status_line));
+        stp_str_copy(prog->current_file, "Writing GPT header & FAT32 VBR", sizeof(prog->current_file));
+        prog->progress = 0.08f;
+        stp_render_installing_frame(SystemTable, prog);
+
+        bool formatted = format_disk_gpt_fat32(SystemTable, selected_blk);
+        if (!formatted) {
+            stp_str_copy(error_out, "GPT/FAT32 format failed (requires 512B sectors & >= 50 MB).", error_max);
+            return false;
+        }
+
+        stp_str_copy(prog->status_line, "Reconnecting UEFI storage & mounting ESP...", sizeof(prog->status_line));
+        stp_str_copy(prog->current_file, "DisconnectController / ConnectController", sizeof(prog->current_file));
+        prog->progress = 0.16f;
+        stp_render_installing_frame(SystemTable, prog);
+
+        SystemTable->BootServices->DisconnectController(selected_disk_handle, NULL, NULL);
+        SystemTable->BootServices->ConnectController(selected_disk_handle, NULL, NULL, TRUE);
+        SystemTable->BootServices->Stall(150000);
+    }
+
+    // 2. Rescan all EFI_SIMPLE_FILE_SYSTEM_PROTOCOL handles
+    stp_str_copy(prog->status_line, "Scanning UEFI filesystem volumes...", sizeof(prog->status_line));
+    prog->current_file[0] = '\0';
+    prog->progress = 0.22f;
+    stp_render_installing_frame(SystemTable, prog);
+
+    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    UINTN num_fs = 0;
+    EFI_HANDLE* fs_handles = NULL;
+    EFI_STATUS status = SystemTable->BootServices->LocateHandleBuffer(
+        ByProtocol, &fs_guid, NULL, &num_fs, &fs_handles);
+
+    if (EFI_ERROR(status) || !fs_handles || num_fs == 0) {
+        if (fs_handles) SystemTable->BootServices->FreePool(fs_handles);
+        stp_str_copy(error_out, "No UEFI FAT32 filesystem volumes detected.", error_max);
+        return false;
+    }
+
+    // Locate Source Volume containing \EFI\BOOT\BOOTX64.EFI
+    EFI_HANDLE src_handle = NULL;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* src_fs = NULL;
+
+    for (UINTN i = 0; i < num_fs; i++) {
+        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* fs = NULL;
+        if (EFI_ERROR(SystemTable->BootServices->HandleProtocol(fs_handles[i], &fs_guid, (void**)&fs)) || !fs) continue;
+        EFI_FILE_HANDLE root = NULL;
+        if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+
+        EFI_FILE_HANDLE efi_bin = NULL;
+        EFI_STATUS o_st = root->Open(root, &efi_bin, (CHAR16*)L"EFI\\BOOT\\BOOTX64.EFI", EFI_FILE_MODE_READ, 0);
+        if (!EFI_ERROR(o_st) && efi_bin) {
+            efi_bin->Close(efi_bin);
+            src_handle = fs_handles[i];
+            src_fs = fs;
+            root->Close(root);
+            break;
+        }
+        root->Close(root);
+    }
+
+    if (!src_fs) {
+        SystemTable->BootServices->FreePool(fs_handles);
+        stp_str_copy(error_out, "Install source \\EFI\\BOOT\\BOOTX64.EFI not found.", error_max);
+        return false;
+    }
+
+    // Locate Writable Target Volume (prefer child of selected_disk_handle, else non-source writable FS)
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* dst_fs = NULL;
+
+    if (selected_disk_handle != NULL) {
+        for (UINTN i = 0; i < num_fs; i++) {
+            if (stp_is_handle_readonly_media(SystemTable, fs_handles[i])) continue;
+            if (!stp_dp_is_child(SystemTable, selected_disk_handle, fs_handles[i])) continue;
+
+            EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* fs = NULL;
+            if (EFI_ERROR(SystemTable->BootServices->HandleProtocol(fs_handles[i], &fs_guid, (void**)&fs)) || !fs) continue;
+            EFI_FILE_HANDLE root = NULL;
+            if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+            bool writable = stp_test_root_writable(root);
+            root->Close(root);
+            if (writable) {
+                dst_fs = fs;
+                break;
             }
         }
-        
-        EFI_INPUT_KEY Key;
-        bool installing = false;
-        bool format_disk = false;
-        EFI_BLOCK_IO_PROTOCOL* selected_disk = NULL;
-        int cursor_x = screen_width / 2;
-        int cursor_y = screen_height / 2;
-        
-        int state = 0; // 0 = welcome, 1 = disk select
-        
-        while (1) {
-            bool redraw = true; // Simplified render loop for UEFI installer
-            
-            // Check Keyboard
-            EFI_STATUS Status = SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &Key);
-            if (Status == EFI_SUCCESS) {
-                if (state == 0) {
-                    if (Key.UnicodeChar == '\r' || Key.UnicodeChar == '\n') {
-                        installing = true;
-                        break;
-                    } else if (Key.UnicodeChar == ' ') {
-                        installing = false;
-                        break;
-                    }
-                }
-            }
-            
-            // Check Mouse
-            if (Mouse) {
-                EFI_SIMPLE_POINTER_STATE State;
-                Status = Mouse->GetState(Mouse, &State);
-                if (Status == EFI_SUCCESS) {
-                    int dx = State.RelativeMovementX / 1000;
-                    int dy = State.RelativeMovementY / 1000;
-                    if (dx != 0 || dy != 0) {
-                        cursor_x += dx; cursor_y += dy;
-                        if (cursor_x < 0) cursor_x = 0;
-                        if (cursor_x > screen_width - 1) cursor_x = screen_width - 1;
-                        if (cursor_y < 0) cursor_y = 0;
-                        if (cursor_y > screen_height - 1) cursor_y = screen_height - 1;
-                    }
-                    
-                    if (State.LeftButton) {
-                        if (state == 0) {
-                            if (cursor_x >= win_x + 60 && cursor_x <= win_x + 220 && cursor_y >= win_y + 220 && cursor_y <= win_y + 260) {
-                                installing = true; break; // Install (No format)
-                            }
-                            if (cursor_x >= win_x + 240 && cursor_x <= win_x + 400 && cursor_y >= win_y + 220 && cursor_y <= win_y + 260) {
-                                state = 1; // Go to disk select
-                            }
-                            if (cursor_x >= win_x + 420 && cursor_x <= win_x + 580 && cursor_y >= win_y + 220 && cursor_y <= win_y + 260) {
-                                installing = false; break; // Live CD
-                            }
-                        } else if (state == 1) {
-                            for (int i = 0; i < num_available_disks; i++) {
-                                int dy_btn = win_y + 160 + (i * 50);
-                                if (cursor_x >= win_x + 60 && cursor_x <= win_x + 580 && cursor_y >= dy_btn && cursor_y <= dy_btn + 40) {
-                                    selected_disk = available_disks[i];
-                                    installing = true;
-                                    format_disk = true;
-                                    break;
-                                }
-                            }
-                            if (format_disk) break;
-                            
-                            // Back button
-                            if (cursor_x >= win_x + 60 && cursor_x <= win_x + 160 && cursor_y >= win_y + win_h - 60 && cursor_y <= win_y + win_h - 20) {
-                                state = 0;
-                            }
-                        }
-                    }
-                }
-            }
-            
-            if (redraw) {
-                blankUI_draw_window(win_w, win_h, (char*)"BlankOS Installer");
-                
-                if (state == 0) {
-                    blankUI_draw_text_color(win_x + 60, win_y + 80, (char*)"Welcome to BlankOS.", 0x000000);
-                    blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Would you like to install BlankOS to your hard drive,", 0x000000);
-                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"or try the Live Environment without modifying your computer?", 0x000000);
-                    blankUI_draw_button(win_x + 60, win_y + 220, 160, 40, (char*)"Install (Enter)");
-                    blankUI_draw_button(win_x + 240, win_y + 220, 160, 40, (char*)"Format & Install");
-                    blankUI_draw_button(win_x + 420, win_y + 220, 160, 40, (char*)"Live CD (Space)");
-                } else if (state == 1) {
-                    blankUI_draw_text_color(win_x + 60, win_y + 80, (char*)"Select a disk to Format & Install BlankOS:", 0x000000);
-                    blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"WARNING: All data on the selected disk will be erased!", 0xAA0000);
-                    
-                    if (num_available_disks == 0) {
-                        blankUI_draw_text_color(win_x + 60, win_y + 180, (char*)"No physical disks found.", 0x000000);
-                    }
-                    
-                    for (int i = 0; i < num_available_disks; i++) {
-                        char label[64];
-                        uint64_t size_mb = (available_disks[i]->Media->LastBlock * available_disks[i]->Media->BlockSize) / (1024 * 1024);
-                        // Very crude int-to-str for size
-                        char num_str[32];
-                        uint64_t tmp = size_mb;
-                        int n = 0;
-                        if (tmp == 0) { num_str[n++] = '0'; }
-                        else {
-                            char rev[32]; int r = 0;
-                            while(tmp > 0) { rev[r++] = '0' + (tmp % 10); tmp /= 10; }
-                            while(r > 0) { num_str[n++] = rev[--r]; }
-                        }
-                        num_str[n] = '\0';
-                        
-                        char* dest = label;
-                        const char* pre = "Disk "; *dest++ = 'D'; *dest++ = 'i'; *dest++ = 's'; *dest++ = 'k'; *dest++ = ' ';
-                        *dest++ = '0' + i; *dest++ = ' '; *dest++ = '(';
-                        for(int j=0; num_str[j]; j++) *dest++ = num_str[j];
-                        *dest++ = ' '; *dest++ = 'M'; *dest++ = 'B'; *dest++ = ')'; *dest = '\0';
-                        
-                        blankUI_draw_button(win_x + 60, win_y + 160 + (i * 50), 520, 40, label);
-                    }
-                    blankUI_draw_button(win_x + 60, win_y + win_h - 60, 100, 40, (char*)"Back");
-                }
-                
-                blankUI_draw_cursor(cursor_x, cursor_y);
-                swap_buffers();
+    }
+
+    if (!dst_fs) {
+        for (UINTN i = 0; i < num_fs; i++) {
+            if (fs_handles[i] == src_handle) continue;
+            if (stp_is_handle_readonly_media(SystemTable, fs_handles[i])) continue;
+
+            EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* fs = NULL;
+            if (EFI_ERROR(SystemTable->BootServices->HandleProtocol(fs_handles[i], &fs_guid, (void**)&fs)) || !fs) continue;
+            EFI_FILE_HANDLE root = NULL;
+            if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+            bool writable = stp_test_root_writable(root);
+            root->Close(root);
+            if (writable) {
+                dst_fs = fs;
+                break;
             }
         }
-        
-        if (installing) {
-            blankUI_draw_window(win_w, win_h, (char*)"Installing BlankOS");
-            
-            if (format_disk && selected_disk != NULL) {
-                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Formatting disk with GPT and FAT32 natively...", 0x000000);
-                swap_buffers();
-                
-                bool formatted = format_disk_gpt_fat32(SystemTable, selected_disk);
-                
-                if (formatted) {
-                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"Disk successfully formatted with GPT/FAT32!", 0x008800);
-                } else {
-                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"Format failed or disk is write-protected!", 0xAA0000);
-                }
-                swap_buffers();
-                SystemTable->BootServices->Stall(1000000);
+    }
+
+    if (!dst_fs && !do_format && !stp_is_handle_readonly_media(SystemTable, src_handle)) {
+        EFI_FILE_HANDLE root = NULL;
+        if (!EFI_ERROR(src_fs->OpenVolume(src_fs, &root)) && root) {
+            if (stp_test_root_writable(root)) dst_fs = src_fs;
+            root->Close(root);
+        }
+    }
+
+    if (!dst_fs) {
+        SystemTable->BootServices->FreePool(fs_handles);
+        stp_str_copy(error_out, "No writable FAT32 target partition found after scan.", error_max);
+        return false;
+    }
+
+    // Allocate 256 KB streaming buffer
+    void* chunk_buf = NULL;
+    status = SystemTable->BootServices->AllocatePool(EfiLoaderData, SETUP_CHUNK_SIZE, &chunk_buf);
+    if (EFI_ERROR(status) || !chunk_buf) {
+        SystemTable->BootServices->FreePool(fs_handles);
+        stp_str_copy(error_out, "UEFI AllocatePool failed for copy buffer.", error_max);
+        return false;
+    }
+
+    EFI_FILE_HANDLE src_root = NULL;
+    EFI_FILE_HANDLE dst_root = NULL;
+    if (EFI_ERROR(src_fs->OpenVolume(src_fs, &src_root)) || !src_root ||
+        EFI_ERROR(dst_fs->OpenVolume(dst_fs, &dst_root)) || !dst_root) {
+        if (src_root) src_root->Close(src_root);
+        if (dst_root) dst_root->Close(dst_root);
+        SystemTable->BootServices->FreePool(chunk_buf);
+        SystemTable->BootServices->FreePool(fs_handles);
+        stp_str_copy(error_out, "Failed to open source or target FAT32 root volume.", error_max);
+        return false;
+    }
+
+    bool ok = true;
+    stp_str_copy(prog->status_line, "Creating EFI & system directories...", sizeof(prog->status_line));
+    prog->progress = 0.26f;
+    stp_render_installing_frame(SystemTable, prog);
+
+    EFI_FILE_HANDLE dst_efi = stp_open_or_create_dir(dst_root, (CHAR16*)L"EFI");
+    EFI_FILE_HANDLE dst_boot = dst_efi ? stp_open_or_create_dir(dst_efi, (CHAR16*)L"BOOT") : NULL;
+    EFI_FILE_HANDLE dst_apps = dst_efi ? stp_open_or_create_dir(dst_efi, (CHAR16*)L"APPS") : NULL;
+    EFI_FILE_HANDLE dst_assets = stp_open_or_create_dir(dst_root, (CHAR16*)L"assets");
+    EFI_FILE_HANDLE dst_downloads = stp_open_or_create_dir(dst_root, (CHAR16*)L"DOWNLOADS");
+    if (dst_downloads) dst_downloads->Close(dst_downloads);
+
+    EFI_FILE_HANDLE src_efi = NULL;
+    EFI_FILE_HANDLE src_boot = NULL;
+    EFI_FILE_HANDLE src_assets = NULL;
+    EFI_FILE_HANDLE src_apps = NULL;
+    if (!EFI_ERROR(src_root->Open(src_root, &src_efi, (CHAR16*)L"EFI", EFI_FILE_MODE_READ, 0)) && src_efi) {
+        src_efi->Open(src_efi, &src_boot, (CHAR16*)L"BOOT", EFI_FILE_MODE_READ, 0);
+        src_efi->Open(src_efi, &src_apps, (CHAR16*)L"APPS", EFI_FILE_MODE_READ, 0);
+    }
+    src_root->Open(src_root, &src_assets, (CHAR16*)L"assets", EFI_FILE_MODE_READ, 0);
+
+    if (!dst_boot || !src_boot) {
+        ok = false;
+        stp_str_copy(error_out, "Unable to open \\EFI\\BOOT directory on target volume.", error_max);
+    }
+
+    if (ok) {
+        stp_str_copy(prog->status_line, "Installing UEFI kernel image...", sizeof(prog->status_line));
+        if (!stp_copy_file_chunked(SystemTable, src_boot, dst_boot, (CHAR16*)L"BOOTX64.EFI",
+                                   "\\EFI\\BOOT\\BOOTX64.EFI", chunk_buf, SETUP_CHUNK_SIZE,
+                                   prog, 0.28f, 0.62f, true)) {
+            ok = false;
+            stp_str_copy(error_out, "Failed copying \\EFI\\BOOT\\BOOTX64.EFI.", error_max);
+        }
+    }
+
+    if (ok && src_assets && dst_assets) {
+        stp_str_copy(prog->status_line, "Installing Horizon fonts & visual assets...", sizeof(prog->status_line));
+        stp_copy_file_chunked(SystemTable, src_assets, dst_assets, (CHAR16*)L"font.ttf",
+                              "\\assets\\font.ttf", chunk_buf, SETUP_CHUNK_SIZE,
+                              prog, 0.62f, 0.74f, false);
+        stp_copy_file_chunked(SystemTable, src_assets, dst_assets, (CHAR16*)L"logo.jpg",
+                              "\\assets\\logo.jpg", chunk_buf, SETUP_CHUNK_SIZE,
+                              prog, 0.74f, 0.84f, false);
+        stp_copy_file_chunked(SystemTable, src_assets, dst_assets, (CHAR16*)L"nano_banana.jpg",
+                              "\\assets\\nano_banana.jpg", chunk_buf, SETUP_CHUNK_SIZE,
+                              prog, 0.84f, 0.92f, false);
+    }
+
+    if (ok && dst_apps) {
+        bool copied_cat = false;
+        if (src_apps) {
+            copied_cat = stp_copy_file_chunked(SystemTable, src_apps, dst_apps, (CHAR16*)L"catalog.json",
+                                               "\\EFI\\APPS\\catalog.json", chunk_buf, SETUP_CHUNK_SIZE,
+                                               prog, 0.92f, 0.94f, false);
+        }
+        if (!copied_cat) {
+            const char json[] = "{\"store_name\":\"BlankOS App Store\",\"version\":\"2.0.0\"}";
+            if (stp_write_small_file(dst_apps, (CHAR16*)L"catalog.json", json, sizeof(json) - 1)) {
+                prog->files_copied++;
+                prog->bytes_copied += sizeof(json) - 1;
             }
-            
-            blankUI_draw_text_color(win_x + 60, win_y + 160, (char*)"Installing BlankOS System Files & App Catalog...", 0x000000);
-            swap_buffers();
-            SystemTable->BootServices->Stall(500000);
-            
-            bool success = perform_real_installation(SystemTable);
-            
-            blankUI_draw_window(win_w, win_h, (char*)"Installing BlankOS");
-            
-            if (success) {
-                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Success! BlankOS installed to disk.", 0x008800);
-                blankUI_draw_toast((char*)"Success", (char*)"BlankOS has been installed! Enjoy the OS.");
-            } else {
-                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Drive formatted! Continuing in Live Environment.", 0x007AFF);
-                blankUI_draw_toast((char*)"Ready", (char*)"Entering BlankOS Desktop...");
-            }
-            swap_buffers();
-            SystemTable->BootServices->Stall(2000000);
+        }
+    }
+
+    if (ok) {
+        stp_str_copy(prog->status_line, "Finalizing boot flag & Horizon registry...", sizeof(prog->status_line));
+        stp_str_copy(prog->current_file, "\\EFI\\BOOT\\INSTALLED.FLG", sizeof(prog->current_file));
+        prog->progress = 0.96f;
+        stp_render_installing_frame(SystemTable, prog);
+
+        const char flg[] = "BLANKOS_HORIZON_INSTALLED\r\n";
+        if (!stp_write_small_file(dst_boot, (CHAR16*)L"INSTALLED.FLG", flg, sizeof(flg) - 1)) {
+            ok = false;
+            stp_str_copy(error_out, "Failed writing \\EFI\\BOOT\\INSTALLED.FLG.", error_max);
         } else {
-            g_is_live_cd = true;
-            blankUI_draw_toast((char*)"Live Mode", (char*)"Running from Live CD. Changes will not be saved.");
-            swap_buffers();
-            SystemTable->BootServices->Stall(1000000);
-        }
-        
-        if (blockIoHandles && numBlockIo > 0) {
-            SystemTable->BootServices->FreePool(blockIoHandles);
-            blockIoHandles = NULL;
+            prog->files_copied++;
+            prog->bytes_copied += sizeof(flg) - 1;
         }
     }
-    
-    bool is_os_installed(EFI_SYSTEM_TABLE *SystemTable) {
-        EFI_GUID fsGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
-        UINTN numHandles = 0;
-        EFI_HANDLE *handleBuffer = NULL;
-        EFI_STATUS Status = SystemTable->BootServices->LocateHandleBuffer(
-            ByProtocol, &fsGuid, NULL, &numHandles, &handleBuffer);
-            
-        if (EFI_ERROR(Status) || numHandles == 0) return false;
-        
-        bool found = false;
-        for (UINTN i = 0; i < numHandles; i++) {
-            EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
-            SystemTable->BootServices->HandleProtocol(handleBuffer[i], &fsGuid, (void**)&fs);
-            if (!fs) continue;
-            
-            EFI_FILE_HANDLE root = NULL;
-            if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
-            
-            EFI_FILE_HANDLE file = NULL;
-            Status = root->Open(root, &file, (CHAR16*)L"EFI\\BOOT\\INSTALLED.FLG", EFI_FILE_MODE_READ, 0);
-            if (!EFI_ERROR(Status) && file != NULL) {
-                found = true;
-                file->Close(file);
+
+    if (ok) {
+        bool reg_saved = blankReg_save(SystemTable);
+        // Ensure REGISTRY.INI exists on the newly installed ESP even if firmware's first SFS handle was read-only
+        EFI_FILE_HANDLE chk_reg = NULL;
+        bool has_reg_on_dst = (!EFI_ERROR(dst_boot->Open(dst_boot, &chk_reg, (CHAR16*)L"REGISTRY.INI", EFI_FILE_MODE_READ, 0)) && chk_reg);
+        if (chk_reg) chk_reg->Close(chk_reg);
+
+        if (!reg_saved || !has_reg_on_dst) {
+            const char default_reg[] =
+                "# BlankOS Registry Hive (REGISTRY.INI)\r\n"
+                "System/OSName=str:BlankOS Horizon\r\n"
+                "UI/WallpaperTheme=int:0\r\n"
+                "UI/DynamicIsland=int:1\r\n"
+                "UI/DesktopWidgets=int:1\r\n";
+            if (stp_write_small_file(dst_boot, (CHAR16*)L"REGISTRY.INI", default_reg, sizeof(default_reg) - 1)) {
+                prog->files_copied++;
+                prog->bytes_copied += sizeof(default_reg) - 1;
             }
-            root->Close(root);
-            if (found) break;
         }
-        
-        SystemTable->BootServices->FreePool(handleBuffer);
-        return found;
+
+        prog->progress = 1.0f;
+        stp_str_copy(prog->status_line, "Installation complete!", sizeof(prog->status_line));
+        prog->current_file[0] = '\0';
+        stp_render_installing_frame(SystemTable, prog);
+        g_is_live_cd = false;
+    }
+
+    if (src_boot) src_boot->Close(src_boot);
+    if (src_apps) src_apps->Close(src_apps);
+    if (src_efi) src_efi->Close(src_efi);
+    if (src_assets) src_assets->Close(src_assets);
+
+    if (dst_boot) dst_boot->Close(dst_boot);
+    if (dst_apps) dst_apps->Close(dst_apps);
+    if (dst_efi) dst_efi->Close(dst_efi);
+    if (dst_assets) dst_assets->Close(dst_assets);
+
+    src_root->Close(src_root);
+    dst_root->Close(dst_root);
+    SystemTable->BootServices->FreePool(chunk_buf);
+    SystemTable->BootServices->FreePool(fs_handles);
+
+    return ok;
+}
+
+extern "C" bool is_os_installed(EFI_SYSTEM_TABLE* SystemTable) {
+    if (!SystemTable || !SystemTable->BootServices) return false;
+
+    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    UINTN num_handles = 0;
+    EFI_HANDLE* handle_buffer = NULL;
+
+    EFI_STATUS status = SystemTable->BootServices->LocateHandleBuffer(
+        ByProtocol, &fs_guid, NULL, &num_handles, &handle_buffer);
+
+    if (EFI_ERROR(status) || num_handles == 0 || !handle_buffer) {
+        if (handle_buffer) SystemTable->BootServices->FreePool(handle_buffer);
+        return false;
+    }
+
+    bool found = false;
+    for (UINTN i = 0; i < num_handles; i++) {
+        // Must be a non-optical, writable filesystem handle
+        if (stp_is_handle_readonly_media(SystemTable, handle_buffer[i])) continue;
+
+        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* fs = NULL;
+        status = SystemTable->BootServices->HandleProtocol(handle_buffer[i], &fs_guid, (void**)&fs);
+        if (EFI_ERROR(status) || !fs) continue;
+
+        EFI_FILE_HANDLE root = NULL;
+        if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+
+        EFI_FILE_HANDLE file = NULL;
+        status = root->Open(root, &file, (CHAR16*)L"EFI\\BOOT\\INSTALLED.FLG", EFI_FILE_MODE_READ, 0);
+        if (!EFI_ERROR(status) && file != NULL) {
+            file->Close(file);
+
+            // Confirm volume is genuinely writable (not read-only optical emulation)
+            EFI_FILE_HANDLE rw_file = NULL;
+            EFI_STATUS rw_st = root->Open(
+                root, &rw_file, (CHAR16*)L"EFI\\BOOT\\INSTALLED.FLG",
+                EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+            if (!EFI_ERROR(rw_st) && rw_file != NULL) {
+                rw_file->Close(rw_file);
+                found = true;
+            } else if (stp_test_root_writable(root)) {
+                found = true;
+            }
+        }
+        root->Close(root);
+        if (found) break;
+    }
+
+    SystemTable->BootServices->FreePool(handle_buffer);
+    return found;
+}
+
+extern "C" void launch_setup_screen(EFI_SYSTEM_TABLE* SystemTable) {
+    if (SystemTable && SystemTable->ConOut) {
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ OOBE ] Starting Horizon Setup Assistant...\r\n");
+    }
+
+    SetupDiskInfo disks[SETUP_MAX_DISKS];
+    int num_disks = stp_scan_physical_disks(SystemTable, disks, SETUP_MAX_DISKS);
+    int selected_disk_idx = (num_disks > 0) ? 0 : -1;
+    bool format_selected = (num_disks > 0 && disks[0].gpt_compatible);
+
+    SetupStep step = STEP_WELCOME;
+    bool exit_to_desktop = false;
+    bool install_ok = false;
+    char install_err[128];
+    install_err[0] = '\0';
+
+    SetupInstallProgress prog;
+    prog.phase_idx = 0;
+    prog.total_phases = 4;
+    prog.progress = 0.0f;
+    prog.status_line[0] = '\0';
+    prog.current_file[0] = '\0';
+    prog.bytes_copied = 0;
+    prog.files_copied = 0;
+
+    BlankInputState in;
+
+    while (!exit_to_desktop) {
+        input_poll(&in);
+        audio_tick();
+
+        int sw = (int)(screen_width > 0 ? screen_width : 1024);
+        int sh = (int)(screen_height > 0 ? screen_height : 768);
+
+        int card_w = (sw >= 820) ? 720 : (sw - 64);
+        int card_h = 480;
+        int card_x = (sw - card_w) / 2;
+        int card_y = (sh - card_h) / 2;
+
+        // Render Aurora wallpaper + translucent dark scrim
+        dui_draw_wallpaper(dui_get_wallpaper_id());
+        dui_rect(0, 0, sw, sh, THEME_BG_VOID, 92);
+
+        dui_shadow(card_x, card_y, card_w, card_h, THEME_RADIUS_XL, 12);
+        dui_glass_card(card_x, card_y, card_w, card_h, THEME_RADIUS_XL, THEME_SURFACE_BASE, 224, true);
+
+        stp_draw_header_steps(card_x, card_y, card_w, (int)step);
+
+        if (step == STEP_WELCOME) {
+            int cx = card_x + card_w / 2;
+
+            // Horizon orb emblem
+            dui_circle(cx, card_y + 114, 28, THEME_ACCENT_CYAN, 40);
+            dui_circle(cx, card_y + 114, 18, THEME_ACCENT_IRIS, 200);
+            dui_circle(cx, card_y + 114, 7, THEME_TEXT_PRIMARY, 240);
+
+            const char* title = "Welcome to BlankOS Horizon";
+            int tw = dui_text_width(title, 2);
+            dui_text(cx - tw / 2, card_y + 156, title, THEME_TEXT_PRIMARY, 2);
+
+            const char* sub1 = "Install BlankOS Horizon onto a GPT/FAT32 disk for persistent storage,";
+            const char* sub2 = "or try the Live Desktop environment without modifying your drives.";
+            dui_text(cx - dui_text_width(sub1, 1) / 2, card_y + 196, sub1, THEME_TEXT_SECONDARY, 1);
+            dui_text(cx - dui_text_width(sub2, 1) / 2, card_y + 216, sub2, THEME_TEXT_SECONDARY, 1);
+
+            // 3 compact feature tiles
+            const char* f_titles[3] = { "Spatial Glass UI", "GPT + FAT32 ESP", "UEFI Network" };
+            const char* f_descs[3]  = { "TrueType & frosted cards", "Native UEFI disk boot", "SNP DHCP + HTTP/1.1" };
+            int f_icons[3] = { 17, 19, 6 };
+            int tile_w = (card_w - 96 - 24) / 3;
+            int tile_y = card_y + 260;
+
+            for (int i = 0; i < 3; i++) {
+                int tx = card_x + 48 + i * (tile_w + 12);
+                dui_glass_card(tx, tile_y, tile_w, 92, THEME_RADIUS_MD, THEME_SURFACE_CARD, 195, false);
+                dui_draw_sys_icon(tx + 14, tile_y + 14, 18, f_icons[i], THEME_ACCENT_CYAN);
+                dui_text(tx + 14, tile_y + 40, f_titles[i], THEME_TEXT_PRIMARY, 1);
+                dui_text_ellipsis(tx + 14, tile_y + 62, tile_w - 28, f_descs[i], THEME_TEXT_MUTED, 1);
+            }
+
+            // Bottom Action Bar
+            int btn_y = card_y + card_h - 66;
+            if (dui_button(card_x + 48, btn_y, 200, 40, "Try Live Environment",
+                           THEME_SURFACE_ELEVATED, false, in.mx, in.my, in.left_pressed) ||
+                (in.has_key && in.key_char == ' ')) {
+                play_system_sound((char*)"click");
+                g_is_live_cd = true;
+                exit_to_desktop = true;
+            }
+
+            if (dui_button(card_x + card_w - 248, btn_y, 200, 40, "Continue Setup ->",
+                           THEME_ACCENT_CYAN, true, in.mx, in.my, in.left_pressed) ||
+                (in.has_key && (in.key_char == '\r' || in.key_char == '\n'))) {
+                play_system_sound((char*)"click");
+                num_disks = stp_scan_physical_disks(SystemTable, disks, SETUP_MAX_DISKS);
+                if (num_disks > 0 && selected_disk_idx < 0) selected_disk_idx = 0;
+                step = STEP_DISK_SELECT;
+            }
+        } else if (step == STEP_DISK_SELECT) {
+            int pad_x = card_x + 44;
+            int inner_w = card_w - 88;
+
+            dui_text(pad_x, card_y + 76, "Select Target Disk", THEME_TEXT_PRIMARY, 2);
+            if (dui_icon_pill(card_x + card_w - 152, card_y + 74, 108, 30, "Rescan", 16,
+                              false, in.mx, in.my, in.left_pressed)) {
+                play_system_sound((char*)"click");
+                num_disks = stp_scan_physical_disks(SystemTable, disks, SETUP_MAX_DISKS);
+                selected_disk_idx = (num_disks > 0) ? 0 : -1;
+                if (selected_disk_idx >= 0) format_selected = disks[selected_disk_idx].gpt_compatible;
+            }
+
+            int list_y = card_y + 120;
+            int max_show = 4;
+            if (num_disks == 0) {
+                dui_glass_card(pad_x, list_y, inner_w, 84, THEME_RADIUS_MD, THEME_SURFACE_CARD, 180, false);
+                dui_text(pad_x + 18, list_y + 20, "No writable physical disks detected.", THEME_TEXT_PRIMARY, 1);
+                dui_text(pad_x + 18, list_y + 44, "Attach a virtual disk (>= 50 MB) or choose Try Live Environment.", THEME_TEXT_SECONDARY, 1);
+            } else {
+                for (int i = 0; i < num_disks && i < max_show; i++) {
+                    int ry = list_y + i * 54;
+                    bool sel = (i == selected_disk_idx);
+                    bool hovered = (in.mx >= pad_x && in.mx < pad_x + inner_w && in.my >= ry && in.my < ry + 46);
+
+                    dui_glass_card(pad_x, ry, inner_w, 46, THEME_RADIUS_MD,
+                                   sel ? THEME_SURFACE_ELEVATED : (hovered ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD),
+                                   sel ? 235 : 195, sel);
+
+                    if (in.left_pressed && hovered) {
+                        play_system_sound((char*)"click");
+                        selected_disk_idx = i;
+                        format_selected = disks[i].gpt_compatible;
+                    }
+
+                    // Radio dot
+                    dui_circle_outline(pad_x + 22, ry + 23, 8, sel ? THEME_ACCENT_CYAN : THEME_BORDER_SPECULAR, 220);
+                    if (sel) dui_circle(pad_x + 22, ry + 23, 4, THEME_ACCENT_CYAN, 255);
+
+                    char row_lbl[64];
+                    char num_buf[32];
+                    stp_str_copy(row_lbl, "Disk ", sizeof(row_lbl));
+                    stp_u64_to_str((uint64_t)i, num_buf);
+                    stp_str_append(row_lbl, num_buf, sizeof(row_lbl));
+                    stp_str_append(row_lbl, "  -  ", sizeof(row_lbl));
+                    stp_u64_to_str(disks[i].size_mb, num_buf);
+                    stp_str_append(row_lbl, num_buf, sizeof(row_lbl));
+                    stp_str_append(row_lbl, " MB", sizeof(row_lbl));
+
+                    dui_text(pad_x + 42, ry + 14, row_lbl, THEME_TEXT_PRIMARY, 1);
+
+                    const char* badge = disks[i].removable ? "Removable" : "Fixed Drive";
+                    if (!disks[i].gpt_compatible) badge = "Too Small / Non-512B";
+                    int bw = dui_text_width(badge, 1);
+                    dui_text(pad_x + inner_w - bw - 16, ry + 14, badge,
+                             disks[i].gpt_compatible ? THEME_TEXT_SECONDARY : THEME_ACCENT_AMBER, 1);
+                }
+            }
+
+            // Format toggle row
+            int tog_y = card_y + 344;
+            bool tog_hover = (in.mx >= pad_x && in.mx < pad_x + inner_w && in.my >= tog_y && in.my < tog_y + 44);
+            dui_glass_card(pad_x, tog_y, inner_w, 44, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 210, format_selected);
+            if (in.left_pressed && tog_hover && selected_disk_idx >= 0) {
+                play_system_sound((char*)"click");
+                format_selected = !format_selected;
+            }
+            dui_toggle_switch(pad_x + 14, tog_y + 12, format_selected, THEME_ACCENT_CYAN);
+            dui_text(pad_x + 64, tog_y + 13,
+                     format_selected ? "Format disk with GPT + FAT32 (Erases all data on disk)"
+                                     : "Install to existing FAT32 EFI volume (No format)",
+                     format_selected ? THEME_ACCENT_AMBER : THEME_TEXT_SECONDARY, 1);
+
+            // Bottom Action Bar
+            int btn_y = card_y + card_h - 64;
+            if (dui_button(pad_x, btn_y, 110, 40, "Back",
+                           THEME_SURFACE_ELEVATED, false, in.mx, in.my, in.left_pressed) ||
+                (in.has_key && in.scan_code == BLANK_SCAN_ESC)) {
+                play_system_sound((char*)"click");
+                step = STEP_WELCOME;
+            }
+
+            if (dui_button(pad_x + 124, btn_y, 180, 40, "Try Live Desktop",
+                           THEME_SURFACE_ELEVATED, false, in.mx, in.my, in.left_pressed)) {
+                play_system_sound((char*)"click");
+                g_is_live_cd = true;
+                exit_to_desktop = true;
+            }
+
+            bool can_install = (!format_selected) ||
+                               (selected_disk_idx >= 0 && selected_disk_idx < num_disks &&
+                                disks[selected_disk_idx].gpt_compatible);
+            if (dui_button(card_x + card_w - 236, btn_y, 192, 40, "Install BlankOS",
+                           can_install ? THEME_ACCENT_CYAN : THEME_SURFACE_CARD, can_install,
+                           in.mx, in.my, in.left_pressed && can_install) ||
+                (can_install && in.has_key && (in.key_char == '\r' || in.key_char == '\n'))) {
+                play_system_sound((char*)"click");
+                step = STEP_INSTALLING;
+            }
+        } else if (step == STEP_INSTALLING) {
+            prog.bytes_copied = 0;
+            prog.files_copied = 0;
+            prog.progress = 0.04f;
+            prog.current_file[0] = '\0';
+            install_err[0] = '\0';
+
+            EFI_HANDLE sel_handle = (selected_disk_idx >= 0 && selected_disk_idx < num_disks)
+                                        ? disks[selected_disk_idx].handle : NULL;
+            EFI_BLOCK_IO_PROTOCOL* sel_blk = (selected_disk_idx >= 0 && selected_disk_idx < num_disks)
+                                                 ? disks[selected_disk_idx].blk : NULL;
+
+            install_ok = stp_run_real_installation(
+                SystemTable, sel_handle, sel_blk, format_selected,
+                &prog, install_err, sizeof(install_err));
+
+            play_system_sound(install_ok ? (char*)"success" : "error");
+            step = STEP_COMPLETE;
+            continue;
+        } else if (step == STEP_COMPLETE) {
+            int cx = card_x + card_w / 2;
+            int pad_x = card_x + 48;
+
+            if (install_ok) {
+                dui_circle(cx, card_y + 112, 28, THEME_ACCENT_GREEN, 45);
+                dui_draw_sys_icon(cx - 14, card_y + 98, 28, 11, THEME_ACCENT_GREEN);
+
+                const char* title = "BlankOS Horizon Installed";
+                dui_text(cx - dui_text_width(title, 2) / 2, card_y + 156, title, THEME_TEXT_PRIMARY, 2);
+
+                char bytes_str[32];
+                char files_str[16];
+                stp_format_bytes(prog.bytes_copied, bytes_str, sizeof(bytes_str));
+                stp_u64_to_str((uint64_t)prog.files_copied, files_str);
+
+                char summary[96];
+                stp_str_copy(summary, "Copied ", sizeof(summary));
+                stp_str_append(summary, files_str, sizeof(summary));
+                stp_str_append(summary, " system files (", sizeof(summary));
+                stp_str_append(summary, bytes_str, sizeof(summary));
+                stp_str_append(summary, ") to your GPT/FAT32 ESP.", sizeof(summary));
+                dui_text(cx - dui_text_width(summary, 1) / 2, card_y + 204, summary, THEME_TEXT_SECONDARY, 1);
+
+                const char* hint = "Remove installation ISO/USB before restarting to boot from disk.";
+                dui_text(cx - dui_text_width(hint, 1) / 2, card_y + 244, hint, THEME_TEXT_MUTED, 1);
+
+                int btn_y = card_y + card_h - 68;
+                if (dui_button(pad_x, btn_y, 210, 42, "Continue to Desktop",
+                               THEME_SURFACE_ELEVATED, false, in.mx, in.my, in.left_pressed)) {
+                    play_system_sound((char*)"click");
+                    g_is_live_cd = false;
+                    exit_to_desktop = true;
+                }
+                if (dui_button(card_x + card_w - 258, btn_y, 210, 42, "Restart Now",
+                               THEME_ACCENT_CYAN, true, in.mx, in.my, in.left_pressed) ||
+                    (in.has_key && (in.key_char == '\r' || in.key_char == '\n'))) {
+                    play_system_sound((char*)"click");
+                    os_restart();
+                }
+            } else {
+                dui_circle(cx, card_y + 112, 28, THEME_ACCENT_ROSE, 45);
+                dui_draw_sys_icon(cx - 14, card_y + 98, 28, 12, THEME_ACCENT_ROSE);
+
+                const char* title = "Installation Did Not Complete";
+                dui_text(cx - dui_text_width(title, 2) / 2, card_y + 156, title, THEME_TEXT_PRIMARY, 2);
+
+                const char* err_txt = install_err[0] ? install_err : "Unable to write system files to target disk.";
+                dui_text(cx - dui_text_width(err_txt, 1) / 2, card_y + 206, err_txt, THEME_ACCENT_AMBER, 1);
+
+                const char* hint = "You can retry with another disk or explore the Live Desktop.";
+                dui_text(cx - dui_text_width(hint, 1) / 2, card_y + 244, hint, THEME_TEXT_MUTED, 1);
+
+                int btn_y = card_y + card_h - 68;
+                if (dui_button(pad_x, btn_y, 200, 42, "Back to Disk Select",
+                               THEME_SURFACE_ELEVATED, false, in.mx, in.my, in.left_pressed)) {
+                    play_system_sound((char*)"click");
+                    step = STEP_DISK_SELECT;
+                }
+                if (dui_button(card_x + card_w - 248, btn_y, 200, 42, "Try Live Environment",
+                               THEME_ACCENT_CYAN, true, in.mx, in.my, in.left_pressed)) {
+                    play_system_sound((char*)"click");
+                    g_is_live_cd = true;
+                    exit_to_desktop = true;
+                }
+            }
+        }
+
+        blankUI_draw_cursor(in.mx, in.my, 0);
+        swap_buffers();
+
+        if (SystemTable && SystemTable->BootServices) {
+            SystemTable->BootServices->Stall(16000);
+        }
     }
 }

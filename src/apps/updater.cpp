@@ -5,22 +5,105 @@
 #include <efilib.h>
 #include <efiprot.h>
 
-static void uint64_to_dec(uint64_t val, char* buf) {
+#include "../ui/theme.h"
+#include "../ui/blankDUI.h"
+#include "../ui/window_manager.h"
+#include "../kernel/input.h"
+#include "../kernel/net.h"
+#include "../kernel/audio.h"
+
+extern "C" {
+    extern EFI_SYSTEM_TABLE *gSystemTable;
+    extern void sha256_compute(const uint8_t* data, uint64_t len, uint8_t output_hash[32]);
+    extern void sha256_hash(char* input_string, uint8_t* output_hash);
+    extern uint32_t crc32_compute(const uint8_t* data, uint64_t len);
+    extern void os_restart(void);
+    extern void os_send_notification(const char* title, const char* message);
+}
+
+namespace {
+
+#define MAX_READ_FILE_BYTES (8 * 1024 * 1024)
+
+typedef struct {
+    const char* label;
+    const char* disp_path;
+    const CHAR16* efi_path;
+    bool checked;
+    bool found;
+    uint64_t bytes;
+    uint32_t crc32;
+    char crc_hex[16];
+    char sha_hex[65];
+} VerifiedFile;
+
+static VerifiedFile s_files[3] = {
+    { "UEFI Kernel Binary", "\\EFI\\BOOT\\BOOTX64.EFI", (const CHAR16*)L"EFI\\BOOT\\BOOTX64.EFI", false, false, 0, 0, {0}, {0} },
+    { "TrueType UI Font",   "\\assets\\font.ttf",       (const CHAR16*)L"assets\\font.ttf",       false, false, 0, 0, {0}, {0} },
+    { "System Registry",    "\\EFI\\BOOT\\REGISTRY.INI",(const CHAR16*)L"EFI\\BOOT\\REGISTRY.INI",false, false, 0, 0, {0}, {0} }
+};
+
+static bool s_registered = false;
+static bool s_started_scan = false;
+static int s_verify_step = 0; // 0..2 = verifying file i, 3 = done
+static float s_ring_anim = 0.0f;
+static float s_pulse_phase = 0.0f;
+
+static bool s_bak_checked = false;
+static bool s_bak_exists = false;
+static uint64_t s_bak_bytes = 0;
+static uint32_t s_bak_crc = 0;
+
+static char s_status_msg[112] = "Initializing integrity verification...";
+static uint32_t s_status_color = THEME_TEXT_SECONDARY;
+
+// Optional HTTP manifest checker
+static char s_update_url[256] = "http://10.0.2.2:8000/version.json";
+static int s_url_len = 33;
+static bool s_url_focused = false;
+static int s_xfer_id = -1;
+static char s_http_result[128] = "Optional: enter an http:// manifest URL and click Check Updates";
+static uint32_t s_http_color = THEME_TEXT_MUTED;
+static float s_http_spin = 0.0f;
+
+static bool pt_in(int px, int py, int rx, int ry, int rw, int rh) {
+    return px >= rx && px < rx + rw && py >= ry && py < ry + rh;
+}
+
+static void s_copy(char* dst, const char* src, int max_len) {
+    if (!dst || max_len <= 0) return;
+    int i = 0;
+    while (src && src[i] && i < max_len - 1) {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+
+static void s_cat(char* dst, const char* src, int max_len) {
+    if (!dst || !src || max_len <= 0) return;
+    int i = 0;
+    while (dst[i] && i < max_len - 1) i++;
+    int j = 0;
+    while (src[j] && i < max_len - 1) dst[i++] = src[j++];
+    dst[i] = '\0';
+}
+
+static void u64_to_str(uint64_t val, char* buf, int max_len) {
+    if (!buf || max_len < 2) return;
     if (val == 0) {
         buf[0] = '0';
         buf[1] = '\0';
         return;
     }
-    char temp[24];
+    char tmp[24];
     int i = 0;
-    while (val > 0) {
-        temp[i++] = '0' + (val % 10);
+    while (val > 0 && i < 22) {
+        tmp[i++] = (char)('0' + (val % 10));
         val /= 10;
     }
     int j = 0;
-    while (i > 0) {
-        buf[j++] = temp[--i];
-    }
+    while (i > 0 && j < max_len - 1) buf[j++] = tmp[--i];
     buf[j] = '\0';
 }
 
@@ -33,9 +116,10 @@ static void bytes_to_hex(const uint8_t* data, int len, char* out) {
     out[len * 2] = '\0';
 }
 
-static void uint32_to_hex(uint32_t val, char* out) {
+static void u32_to_hex(uint32_t val, char* out) {
     const char* hex = "0123456789ABCDEF";
-    out[0] = '0'; out[1] = 'x';
+    out[0] = '0';
+    out[1] = 'x';
     for (int i = 0; i < 8; i++) {
         out[9 - i] = hex[val & 0xF];
         val >>= 4;
@@ -43,300 +127,449 @@ static void uint32_to_hex(uint32_t val, char* out) {
     out[10] = '\0';
 }
 
-extern "C" {
-    extern void swap_buffers();
-    extern void blankUI_draw_menubar();
-    extern void blankUI_draw_dock();
-    extern void blankUI_draw_window(int width, int height, char* title);
-    extern void blankUI_draw_text_color(int x, int y, char* text, uint32_t color);
-    extern void blankUI_draw_button(int x, int y, int width, int height, char* text);
-    extern void blankUI_draw_progress_bar(int x, int y, int width, float percentage);
-    extern void blankUI_draw_cursor(int x, int y);
-    extern void blankUI_get_window_pos(int* x, int* y, int width, int height);
-    extern void blankUI_update_window_drag(int mouse_x, int mouse_y, bool mouse_pressed, int width, int height);
-    extern void blankUI_set_cursor_type(int type);
-    extern int blankUI_hit_test_window_close(int cursor_x, int cursor_y, int width, int height);
+static void set_status(const char* msg, uint32_t col) {
+    s_copy(s_status_msg, msg, sizeof(s_status_msg));
+    s_status_color = col;
+}
 
-    extern void play_system_sound(char* sound_name);
-    extern void dui_rect(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
-    extern void dui_rect_rounded(int x, int y, int w, int h, int radius, uint32_t color, uint8_t alpha);
-    extern void dui_rect_rounded_outline(int x, int y, int w, int h, int radius, uint32_t color, int thickness);
-    extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
-    extern void dui_draw_wallpaper();
+static bool read_uefi_file_alloc(const CHAR16* path, uint8_t** out_buf, UINTN* out_size) {
+    if (out_buf) *out_buf = NULL;
+    if (out_size) *out_size = 0;
+    if (!gSystemTable || !gSystemTable->BootServices || !path) return false;
 
-    extern void sha256_compute(const uint8_t* data, uint64_t len, uint8_t output_hash[32]);
-    extern uint32_t crc32_compute(const uint8_t* data, uint64_t len);
-    extern void os_restart(void);
-
-    extern int screen_width;
-    extern int screen_height;
-
-    static bool read_efi_binary(EFI_SYSTEM_TABLE* SystemTable, CHAR16* path, uint8_t** out_buf, UINTN* out_size, bool* out_writable_vol) {
-        EFI_GUID fsGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
-        UINTN numHandles = 0;
-        EFI_HANDLE *handleBuffer = NULL;
-        EFI_STATUS Status = SystemTable->BootServices->LocateHandleBuffer(ByProtocol, &fsGuid, NULL, &numHandles, &handleBuffer);
-        if (EFI_ERROR(Status) || numHandles == 0) return false;
-
-        for (UINTN i = 0; i < numHandles; i++) {
-            EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
-            if (EFI_ERROR(SystemTable->BootServices->HandleProtocol(handleBuffer[i], &fsGuid, (void**)&fs)) || !fs) continue;
-
-            EFI_FILE_HANDLE root = NULL;
-            if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
-
-            EFI_FILE_HANDLE flg = NULL;
-            bool has_flag = (root->Open(root, &flg, (CHAR16*)L"EFI\\BOOT\\INSTALLED.FLG", EFI_FILE_MODE_READ, 0) == EFI_SUCCESS);
-            if (flg) flg->Close(flg);
-
-            EFI_FILE_HANDLE file = NULL;
-            Status = root->Open(root, &file, path, EFI_FILE_MODE_READ, 0);
-            if (!EFI_ERROR(Status) && file != NULL) {
-                UINTN cap = 8 * 1024 * 1024;
-                uint8_t* buf = NULL;
-                if (SystemTable->BootServices->AllocatePool(EfiLoaderData, cap, (void**)&buf) == EFI_SUCCESS && buf) {
-                    Status = file->Read(file, &cap, buf);
-                    file->Close(file);
-                    root->Close(root);
-                    SystemTable->BootServices->FreePool(handleBuffer);
-                    if (!EFI_ERROR(Status) && cap > 0) {
-                        *out_buf = buf;
-                        *out_size = cap;
-                        *out_writable_vol = has_flag;
-                        return true;
-                    }
-                    SystemTable->BootServices->FreePool(buf);
-                    return false;
-                }
-                file->Close(file);
-            }
-            root->Close(root);
-        }
-        SystemTable->BootServices->FreePool(handleBuffer);
+    EFI_GUID sfspGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    UINTN handle_count = 0;
+    EFI_HANDLE* handles = NULL;
+    if (EFI_ERROR(gSystemTable->BootServices->LocateHandleBuffer(ByProtocol, &sfspGuid, NULL, &handle_count, &handles)) || !handles) {
         return false;
     }
 
-    static bool write_kernel_backup_and_manifest(EFI_SYSTEM_TABLE* SystemTable, const uint8_t* kernel_buf, UINTN kernel_size, const char* sha_hex, const char* crc_hex) {
-        EFI_GUID fsGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
-        UINTN numHandles = 0;
-        EFI_HANDLE *handleBuffer = NULL;
-        if (EFI_ERROR(SystemTable->BootServices->LocateHandleBuffer(ByProtocol, &fsGuid, NULL, &numHandles, &handleBuffer))) return false;
+    bool ok = false;
+    for (UINTN i = 0; i < handle_count; i++) {
+        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* fs = NULL;
+        if (EFI_ERROR(gSystemTable->BootServices->HandleProtocol(handles[i], &sfspGuid, (void**)&fs)) || !fs) continue;
+        EFI_FILE_PROTOCOL* root = NULL;
+        if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
 
-        bool wrote_any = false;
-        for (UINTN i = 0; i < numHandles; i++) {
-            EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
-            if (EFI_ERROR(SystemTable->BootServices->HandleProtocol(handleBuffer[i], &fsGuid, (void**)&fs)) || !fs) continue;
-            EFI_FILE_HANDLE root = NULL;
-            if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
-
-            // Write EFI\BOOT\BOOTBAK.EFI (Real A/B fallback image!)
-            EFI_FILE_HANDLE bakFile = NULL;
-            if (root->Open(root, &bakFile, (CHAR16*)L"EFI\\BOOT\\BOOTBAK.EFI",
-                           EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0) == EFI_SUCCESS && bakFile) {
-                UINTN wsize = kernel_size;
-                if (bakFile->Write(bakFile, &wsize, (void*)kernel_buf) == EFI_SUCCESS) {
-                    bakFile->Flush(bakFile);
-                    wrote_any = true;
+        EFI_FILE_PROTOCOL* file = NULL;
+        if (root->Open(root, &file, (CHAR16*)path, EFI_FILE_MODE_READ, 0) == EFI_SUCCESS && file) {
+            uint8_t* buf = NULL;
+            if (gSystemTable->BootServices->AllocatePool(EfiLoaderData, MAX_READ_FILE_BYTES, (void**)&buf) == EFI_SUCCESS && buf) {
+                UINTN total = 0;
+                while (total < MAX_READ_FILE_BYTES) {
+                    UINTN chunk = MAX_READ_FILE_BYTES - total;
+                    EFI_STATUS rst = file->Read(file, &chunk, buf + total);
+                    if (EFI_ERROR(rst) || chunk == 0) break;
+                    total += chunk;
                 }
-                bakFile->Close(bakFile);
+                if (total > 0) {
+                    *out_buf = buf;
+                    *out_size = total;
+                    ok = true;
+                } else {
+                    gSystemTable->BootServices->FreePool(buf);
+                }
             }
-
-            // Write EFI\BOOT\VERSION.INF with real SHA-256 & CRC-32 manifest
-            EFI_FILE_HANDLE verFile = NULL;
-            if (root->Open(root, &verFile, (CHAR16*)L"EFI\\BOOT\\VERSION.INF",
-                           EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0) == EFI_SUCCESS && verFile) {
-                char manifest[256];
-                int p = 0;
-                const char* h1 = "OS=BlankOS Sequoia Twist 2.4.0\r\nSHA256=";
-                while (*h1) manifest[p++] = *h1++;
-                int k = 0; while (sha_hex[k]) manifest[p++] = sha_hex[k++];
-                const char* h2 = "\r\nCRC32=";
-                while (*h2) manifest[p++] = *h2++;
-                k = 0; while (crc_hex[k]) manifest[p++] = crc_hex[k++];
-                const char* h3 = "\r\nBACKUP=EFI\\BOOT\\BOOTBAK.EFI\r\n";
-                while (*h3) manifest[p++] = *h3++;
-                manifest[p] = '\0';
-
-                UINTN msize = (UINTN)p;
-                verFile->Write(verFile, &msize, manifest);
-                verFile->Flush(verFile);
-                verFile->Close(verFile);
-                wrote_any = true;
-            }
-
-            root->Close(root);
-            if (wrote_any) break;
+            file->Close(file);
         }
-        if (handleBuffer) SystemTable->BootServices->FreePool(handleBuffer);
-        return wrote_any;
+        root->Close(root);
+        if (ok) break;
     }
+    gSystemTable->BootServices->FreePool(handles);
+    return ok;
+}
 
-    void launch_updater(EFI_SYSTEM_TABLE *SystemTable) {
-        int win_w = 740;
-        int win_h = 460;
+static void probe_existing_backup(void) {
+    s_bak_checked = true;
+    s_bak_exists = false;
+    s_bak_bytes = 0;
+    s_bak_crc = 0;
 
-        EFI_GUID SimplePointerProtocolGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
-        EFI_SIMPLE_POINTER_PROTOCOL *Mouse = NULL;
-        SystemTable->BootServices->LocateProtocol(&SimplePointerProtocolGuid, NULL, (void**)&Mouse);
-        if (Mouse) Mouse->Reset(Mouse, TRUE);
-
-        int cursor_x = screen_width / 2;
-        int cursor_y = screen_height / 2;
-
-        // Read the REAL BOOTX64.EFI kernel binary from disk and compute its real SHA-256 and CRC-32!
-        uint8_t* kernel_buf = NULL;
-        UINTN kernel_size = 0;
-        bool has_installed_vol = false;
-        bool loaded_ok = read_efi_binary(SystemTable, (CHAR16*)L"EFI\\BOOT\\BOOTX64.EFI", &kernel_buf, &kernel_size, &has_installed_vol);
-
-        uint8_t sha_digest[32];
-        char sha_hex[65];
-        char crc_hex[16];
-        char size_str[32];
-
-        if (loaded_ok && kernel_buf && kernel_size > 0) {
-            sha256_compute(kernel_buf, kernel_size, sha_digest);
-            bytes_to_hex(sha_digest, 32, sha_hex);
-            uint32_t crc = crc32_compute(kernel_buf, kernel_size);
-            uint32_to_hex(crc, crc_hex);
-            uint64_to_dec(kernel_size / 1024, size_str);
-        } else {
-            const char* na = "unavailable";
-            int i = 0; while (na[i]) { sha_hex[i] = na[i]; crc_hex[i] = na[i]; i++; }
-            sha_hex[i] = '\0'; crc_hex[i] = '\0';
-            size_str[0] = '0'; size_str[1] = '\0';
-        }
-
-        bool backup_staged = false;
-        bool backup_failed = false;
-
-        while (true) {
-            int win_x = 0, win_y = 0;
-            blankUI_get_window_pos(&win_x, &win_y, win_w, win_h);
-
-            EFI_INPUT_KEY Key;
-            if (SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &Key) == EFI_SUCCESS) {
-                if (Key.ScanCode == 0x17) {
-                    if (kernel_buf) SystemTable->BootServices->FreePool(kernel_buf);
-                    return;
-                }
-            }
-
-            if (Mouse) {
-                EFI_SIMPLE_POINTER_STATE State;
-                if (Mouse->GetState(Mouse, &State) == EFI_SUCCESS) {
-                    cursor_x += State.RelativeMovementX / 1000;
-                    cursor_y += State.RelativeMovementY / 1000;
-                    if (cursor_x < 0) cursor_x = 0;
-                    if (cursor_x > screen_width - 1) cursor_x = screen_width - 1;
-                    if (cursor_y < 0) cursor_y = 0;
-                    if (cursor_y > screen_height - 1) cursor_y = screen_height - 1;
-
-                    blankUI_update_window_drag(cursor_x, cursor_y, State.LeftButton, win_w, win_h);
-
-                    if (State.LeftButton) {
-                        if (blankUI_hit_test_window_close(cursor_x, cursor_y, win_w, win_h)) {
-                            if (kernel_buf) SystemTable->BootServices->FreePool(kernel_buf);
-                            return;
-                        }
-
-                        // Button 1: Stage A/B Kernel Backup & Manifest to Disk
-                        int b1x = win_x + 220, b1y = win_y + 392;
-                        if (cursor_x >= b1x && cursor_x <= b1x + 250 && cursor_y >= b1y && cursor_y <= b1y + 36) {
-                            if (loaded_ok && kernel_buf) {
-                                if (write_kernel_backup_and_manifest(SystemTable, kernel_buf, kernel_size, sha_hex, crc_hex)) {
-                                    backup_staged = true;
-                                    backup_failed = false;
-                                    play_system_sound((char*)"update");
-                                } else {
-                                    backup_failed = true;
-                                    play_system_sound((char*)"error");
-                                }
-                            }
-                        }
-
-                        // Button 2: Reboot System
-                        int b2x = win_x + 486, b2y = win_y + 392;
-                        if (cursor_x >= b2x && cursor_x <= b2x + 160 && cursor_y >= b2y && cursor_y <= b2y + 36) {
-                            play_system_sound((char*)"click");
-                            os_restart();
-                        }
-                    }
-                }
-            }
-
-            dui_draw_wallpaper();
-            blankUI_draw_menubar();
-            blankUI_draw_dock();
-            blankUI_draw_window(win_w, win_h, (char*)"System Integrity & A/B Kernel Manager");
-
-            // Left Sidebar
-            dui_rect(win_x + 1, win_y + 33, 196, win_h - 34, 0xF2F2F7, 240);
-            dui_rect(win_x + 197, win_y + 33, 1, win_h - 34, 0xCCCCCC, 255);
-            dui_rect_rounded(win_x + 10, win_y + 52, 176, 32, 8, 0x007AFF, 255);
-            dui_text(win_x + 22, win_y + 60, "Kernel Integrity", 0xFFFFFF, 1);
-            dui_text(win_x + 22, win_y + 102, "A/B Recovery Slot", 0x333333, 1);
-            dui_text(win_x + 22, win_y + 136, "FIPS SHA-256 Engine", 0x333333, 1);
-            dui_text(win_x + 22, win_y + 170, has_installed_vol ? "Disk: Writable FAT32" : "Disk: Live ISO9660", has_installed_vol ? 0x248A3D : 0xFF9500, 1);
-
-            // Right Pane: Real Kernel Binary Verification Card
-            int rx = win_x + 216;
-            int ry = win_y + 48;
-
-            dui_text(rx, ry, "Active Kernel Image: \\EFI\\BOOT\\BOOTX64.EFI", 0x111827, 2);
-            ry += 32;
-
-            char info_line[96];
-            int p = 0;
-            const char* l1 = "Verified Binary Size: ";
-            while (*l1) info_line[p++] = *l1++;
-            int k = 0; while (size_str[k]) info_line[p++] = size_str[k++];
-            const char* l2 = " KB  |  IEEE 802.3 CRC-32: ";
-            while (*l2) info_line[p++] = *l2++;
-            k = 0; while (crc_hex[k]) info_line[p++] = crc_hex[k++];
-            info_line[p] = '\0';
-            dui_text(rx, ry, info_line, 0x007AFF, 1);
-            ry += 26;
-
-            // SHA-256 Digest Box
-            dui_rect_rounded(rx, ry, 496, 68, 10, 0x1E1E2E, 255);
-            dui_text(rx + 14, ry + 10, "LIVE FIPS 180-4 SHA-256 DIGEST (COMPUTED FROM DISK BINARY):", 0xA6ADC8, 1);
-            char sha_part1[33];
-            for (int i = 0; i < 32; i++) sha_part1[i] = sha_hex[i];
-            sha_part1[32] = '\0';
-            dui_text(rx + 14, ry + 30, sha_part1, 0xA6E3A1, 1);
-            dui_text(rx + 14, ry + 46, &sha_hex[32], 0xA6E3A1, 1);
-            ry += 82;
-
-            // Subsystem Verification Checklist
-            dui_rect_rounded(rx, ry, 496, 152, 10, 0xFFFFFF, 230);
-            dui_rect_rounded_outline(rx, ry, 496, 152, 10, 0xD1D1D6, 1);
-            dui_text(rx + 14, ry + 12, "Active Kernel Drivers & Subsystems:", 0x111827, 1);
-            dui_text(rx + 14, ry + 36, "[OK] UEFI Watchdog Timer Disabled (0s Hardware Timeout)", 0x248A3D, 1);
-            dui_text(rx + 14, ry + 58, "[OK] BDRM + VMware SVGA II / GOP Pitch-Aware Scanout", 0x248A3D, 1);
-            dui_text(rx + 14, ry + 80, "[OK] 4KB Page-Aligned GPT & FAT32 Disk Formatter", 0x248A3D, 1);
-            dui_text(rx + 14, ry + 102, "[OK] FIPS 180-4 SHA-256 & IEEE 802.3 CRC-32 Crypto Engine", 0x248A3D, 1);
-            dui_text(rx + 14, ry + 124, "[OK] Polyphonic PCM Audio Synth & Intel HDA Bus Hooks", 0x248A3D, 1);
-            ry += 164;
-
-            if (backup_staged) {
-                dui_text(rx, ry, "Wrote real backup \\EFI\\BOOT\\BOOTBAK.EFI & VERSION.INF to FAT32!", 0x248A3D, 1);
-            } else if (backup_failed) {
-                dui_text(rx, ry, "Volume is read-only (Live CD). Install OS to disk to write backup.", 0xFF3B30, 1);
-            } else {
-                dui_text(rx, ry, "Click below to write BOOTBAK.EFI fallback image & VERSION.INF to disk:", 0x666666, 1);
-            }
-
-            // Action Buttons
-            dui_rect_rounded(win_x + 220, win_y + 392, 250, 36, 10, 0x007AFF, 255);
-            dui_text(win_x + 236, win_y + 402, "Write BOOTBAK.EFI Backup", 0xFFFFFF, 1);
-
-            dui_rect_rounded(win_x + 486, win_y + 392, 160, 36, 10, 0x1C1C1E, 255);
-            dui_text(win_x + 514, win_y + 402, "Reboot System", 0xFFFFFF, 1);
-
-            blankUI_draw_cursor(cursor_x, cursor_y);
-            swap_buffers();
-            SystemTable->BootServices->Stall(16000);
-        }
+    uint8_t* buf = NULL;
+    UINTN sz = 0;
+    if (read_uefi_file_alloc((const CHAR16*)L"EFI\\BOOT\\BOOTX64.BAK", &buf, &sz) && buf && sz > 0) {
+        s_bak_exists = true;
+        s_bak_bytes = (uint64_t)sz;
+        s_bak_crc = crc32_compute(buf, (uint64_t)sz);
+        gSystemTable->BootServices->FreePool(buf);
     }
 }
+
+static void verify_one_file(int idx) {
+    if (idx < 0 || idx >= 3) return;
+    VerifiedFile* vf = &s_files[idx];
+    vf->checked = true;
+    vf->found = false;
+    vf->bytes = 0;
+    vf->crc32 = 0;
+    s_copy(vf->crc_hex, "N/A", sizeof(vf->crc_hex));
+    s_copy(vf->sha_hex, "unavailable", sizeof(vf->sha_hex));
+
+    uint8_t* buf = NULL;
+    UINTN sz = 0;
+    if (read_uefi_file_alloc(vf->efi_path, &buf, &sz) && buf && sz > 0) {
+        uint8_t digest[32];
+        sha256_compute(buf, (uint64_t)sz, digest);
+        bytes_to_hex(digest, 32, vf->sha_hex);
+        vf->crc32 = crc32_compute(buf, (uint64_t)sz);
+        u32_to_hex(vf->crc32, vf->crc_hex);
+        vf->bytes = (uint64_t)sz;
+        vf->found = true;
+        gSystemTable->BootServices->FreePool(buf);
+    }
+}
+
+static void start_full_verification(void) {
+    s_started_scan = true;
+    s_verify_step = 0;
+    s_ring_anim = 0.0f;
+    for (int i = 0; i < 3; i++) {
+        s_files[i].checked = false;
+        s_files[i].found = false;
+        s_files[i].bytes = 0;
+        s_files[i].crc32 = 0;
+    }
+    s_bak_checked = false;
+    set_status("Computing SHA-256 & CRC-32 checksums...", THEME_ACCENT_CYAN);
+}
+
+static bool create_bootx64_backup(void) {
+    if (!gSystemTable || !gSystemTable->BootServices) return false;
+
+    uint8_t* kbuf = NULL;
+    UINTN ksz = 0;
+    if (!read_uefi_file_alloc((const CHAR16*)L"EFI\\BOOT\\BOOTX64.EFI", &kbuf, &ksz) || !kbuf || ksz == 0) {
+        set_status("Cannot read \\EFI\\BOOT\\BOOTX64.EFI for backup", THEME_ACCENT_ROSE);
+        play_system_sound((char*)"error");
+        return false;
+    }
+
+    EFI_GUID sfspGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    UINTN handle_count = 0;
+    EFI_HANDLE* handles = NULL;
+    if (EFI_ERROR(gSystemTable->BootServices->LocateHandleBuffer(ByProtocol, &sfspGuid, NULL, &handle_count, &handles)) || !handles) {
+        gSystemTable->BootServices->FreePool(kbuf);
+        return false;
+    }
+
+    bool wrote = false;
+    for (UINTN i = 0; i < handle_count; i++) {
+        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* fs = NULL;
+        if (EFI_ERROR(gSystemTable->BootServices->HandleProtocol(handles[i], &sfspGuid, (void**)&fs)) || !fs) continue;
+        EFI_FILE_PROTOCOL* root = NULL;
+        if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+
+        EFI_FILE_PROTOCOL* efi_dir = NULL;
+        if (root->Open(root, &efi_dir, (CHAR16*)L"EFI",
+                       EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+                       EFI_FILE_DIRECTORY) == EFI_SUCCESS && efi_dir) {
+            EFI_FILE_PROTOCOL* boot_dir = NULL;
+            if (efi_dir->Open(efi_dir, &boot_dir, (CHAR16*)L"BOOT",
+                              EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+                              EFI_FILE_DIRECTORY) == EFI_SUCCESS && boot_dir) {
+                // Remove old BOOTX64.BAK if present
+                EFI_FILE_PROTOCOL* old_bak = NULL;
+                if (boot_dir->Open(boot_dir, &old_bak, (CHAR16*)L"BOOTX64.BAK",
+                                   EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0) == EFI_SUCCESS && old_bak) {
+                    old_bak->Delete(old_bak);
+                }
+
+                EFI_FILE_PROTOCOL* bak = NULL;
+                if (boot_dir->Open(boot_dir, &bak, (CHAR16*)L"BOOTX64.BAK",
+                                   EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0) == EFI_SUCCESS && bak) {
+                    UINTN wlen = ksz;
+                    if (bak->Write(bak, &wlen, kbuf) == EFI_SUCCESS && wlen == ksz) {
+                        bak->Flush(bak);
+                        wrote = true;
+                    }
+                    bak->Close(bak);
+                }
+                boot_dir->Close(boot_dir);
+            }
+            efi_dir->Close(efi_dir);
+        }
+        root->Close(root);
+        if (wrote) break;
+    }
+
+    gSystemTable->BootServices->FreePool(handles);
+    gSystemTable->BootServices->FreePool(kbuf);
+
+    if (wrote) {
+        probe_existing_backup();
+        play_system_sound((char*)"success");
+        os_send_notification("System Updater", "Created \\EFI\\BOOT\\BOOTX64.BAK backup on FAT32.");
+        set_status("Backup \\EFI\\BOOT\\BOOTX64.BAK written & verified!", THEME_ACCENT_GREEN);
+    } else {
+        play_system_sound((char*)"error");
+        set_status("Volume is read-only (Live ISO9660) - cannot write BOOTX64.BAK", THEME_ACCENT_ROSE);
+    }
+    return wrote;
+}
+
+static void start_http_manifest_check(void) {
+    if (!s_update_url[0]) {
+        s_copy(s_http_result, "Enter an http:// manifest URL first", sizeof(s_http_result));
+        s_http_color = THEME_ACCENT_AMBER;
+        return;
+    }
+    if (s_xfer_id >= 0) {
+        net_http_close(s_xfer_id);
+        s_xfer_id = -1;
+    }
+    s_xfer_id = net_http_start(s_update_url, NULL);
+    if (s_xfer_id >= 0) {
+        play_system_sound((char*)"click");
+        s_copy(s_http_result, "Connecting to update manifest server...", sizeof(s_http_result));
+        s_http_color = THEME_ACCENT_CYAN;
+    } else {
+        play_system_sound((char*)"error");
+        s_copy(s_http_result, "Failed to initiate HTTP request (check URL / NIC)", sizeof(s_http_result));
+        s_http_color = THEME_ACCENT_ROSE;
+    }
+}
+
+static void updater_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, const BlankInputState* in) {
+    (void)win;
+    if (!s_started_scan) start_full_verification();
+
+    // Non-blocking stepped verification (1 file per frame)
+    if (s_verify_step < 3) {
+        verify_one_file(s_verify_step);
+        s_verify_step++;
+        if (s_verify_step == 3) {
+            probe_existing_backup();
+            int ok_cnt = 0;
+            for (int i = 0; i < 3; i++) if (s_files[i].found) ok_cnt++;
+            if (ok_cnt == 3) {
+                set_status("All 3 core system files verified on disk (CRC-32 & SHA-256)", THEME_ACCENT_GREEN);
+            } else {
+                set_status("Verification complete with missing files", THEME_ACCENT_AMBER);
+            }
+        }
+    }
+
+    s_pulse_phase += 0.05f;
+    if (s_pulse_phase > 6.283f) s_pulse_phase -= 6.283f;
+
+    int verified_cnt = 0;
+    int checked_cnt = 0;
+    for (int i = 0; i < 3; i++) {
+        if (s_files[i].checked) checked_cnt++;
+        if (s_files[i].found) verified_cnt++;
+    }
+    float target_prog = (float)checked_cnt / 3.0f;
+    s_ring_anim = horizon_spring_step(s_ring_anim, target_prog, 0.16f);
+
+    int pad = 16;
+    int px = cx + pad;
+    int py = cy + 12;
+    int pw = cw - pad * 2;
+
+    // Top Hero Integrity Card with Animated Verification Ring
+    int hero_h = 98;
+    dui_glass_card(px, py, pw, hero_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 228, false);
+
+    int ring_cx = px + 54;
+    int ring_cy = py + hero_h / 2;
+    uint32_t ring_col = (s_verify_step < 3) ? THEME_ACCENT_CYAN
+                        : ((verified_cnt == 3) ? THEME_ACCENT_GREEN : THEME_ACCENT_AMBER);
+    dui_progress_ring(ring_cx, ring_cy, 34, 7, s_ring_anim, THEME_SURFACE_INPUT, ring_col);
+
+    char score_txt[16], vb[8];
+    u64_to_str((uint64_t)verified_cnt, vb, sizeof(vb));
+    s_copy(score_txt, vb, sizeof(score_txt));
+    s_cat(score_txt, "/3", sizeof(score_txt));
+    int stw = dui_text_width(score_txt, 1);
+    dui_text(ring_cx - stw / 2, ring_cy - 8, score_txt, THEME_TEXT_PRIMARY, 1);
+
+    dui_text(px + 106, py + 12, "System Integrity & Firmware Backup", THEME_TEXT_PRIMARY, 2);
+    dui_text_ellipsis(px + 106, py + 40, pw - 266, s_status_msg, s_status_color, 1);
+
+    // Backup status line inside hero
+    char bak_line[96];
+    if (!s_bak_checked) {
+        s_copy(bak_line, "Checking \\EFI\\BOOT\\BOOTX64.BAK...", sizeof(bak_line));
+    } else if (s_bak_exists) {
+        char bs[16], crcb[16];
+        u64_to_str(s_bak_bytes, bs, sizeof(bs));
+        u32_to_hex(s_bak_crc, crcb);
+        s_copy(bak_line, "Backup Present: BOOTX64.BAK (", sizeof(bak_line));
+        s_cat(bak_line, bs, sizeof(bak_line));
+        s_cat(bak_line, " B, ", sizeof(bak_line));
+        s_cat(bak_line, crcb, sizeof(bak_line));
+        if (s_files[0].found && s_bak_crc == s_files[0].crc32) {
+            s_cat(bak_line, " - Exact Match)", sizeof(bak_line));
+        } else {
+            s_cat(bak_line, ")", sizeof(bak_line));
+        }
+    } else {
+        s_copy(bak_line, "No \\EFI\\BOOT\\BOOTX64.BAK backup on disk yet", sizeof(bak_line));
+    }
+    dui_text_ellipsis(px + 106, py + 64, pw - 266, bak_line,
+                      s_bak_exists ? THEME_ACCENT_GREEN : THEME_TEXT_MUTED, 1);
+
+    if (dui_button(px + pw - 148, py + 14, 134, 30, "Re-Verify Files", THEME_SURFACE_ELEVATED, false,
+                   in->mx, in->my, in->left_pressed)) {
+        play_system_sound((char*)"click");
+        start_full_verification();
+    }
+    if (dui_button(px + pw - 148, py + 52, 134, 30, "Backup .BAK", THEME_ACCENT_GREEN, true,
+                   in->mx, in->my, in->left_pressed)) {
+        create_bootx64_backup();
+    }
+
+    // Verified Disk Files List (3 cards with mini animated rings + CRC32 + SHA-256 + exact byte size)
+    int list_y = py + hero_h + 10;
+    int card_h = 58;
+    for (int i = 0; i < 3; i++) {
+        VerifiedFile* vf = &s_files[i];
+        int fy = list_y + i * (card_h + 7);
+        dui_glass_card(px, fy, pw, card_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 218, false);
+
+        float fprog = vf->checked ? (vf->found ? 1.0f : 0.35f) : 0.1f;
+        uint32_t fcol = !vf->checked ? THEME_ACCENT_CYAN : (vf->found ? THEME_ACCENT_GREEN : THEME_ACCENT_ROSE);
+        dui_progress_ring(px + 28, fy + card_h / 2, 13, 4, fprog, THEME_SURFACE_INPUT, fcol);
+
+        dui_text(px + 52, fy + 9, vf->label, THEME_TEXT_PRIMARY, 1);
+        dui_text(px + 220, fy + 9, vf->disp_path, THEME_ACCENT_CYAN, 1);
+
+        if (vf->found) {
+            char bbuf[20], szline[64];
+            u64_to_str(vf->bytes, bbuf, sizeof(bbuf));
+            s_copy(szline, bbuf, sizeof(szline));
+            s_cat(szline, " B  |  CRC32: ", sizeof(szline));
+            s_cat(szline, vf->crc_hex, sizeof(szline));
+            dui_text(px + 52, fy + 30, szline, THEME_TEXT_SECONDARY, 1);
+
+            char shaline[80];
+            s_copy(shaline, "SHA256: ", sizeof(shaline));
+            s_cat(shaline, vf->sha_hex, sizeof(shaline));
+            dui_text_ellipsis(px + 290, fy + 30, pw - 304, shaline, THEME_ACCENT_TEAL, 1);
+        } else if (vf->checked) {
+            dui_text(px + 52, fy + 30, "File not found on mounted UEFI volumes", THEME_ACCENT_ROSE, 1);
+        } else {
+            dui_text(px + 52, fy + 30, "Queued for verification...", THEME_TEXT_MUTED, 1);
+        }
+    }
+
+    // Optional HTTP Manifest Update Check Card + Reboot Button
+    int http_y = list_y + 3 * (card_h + 7) + 2;
+    int http_h = ch - (http_y - cy) - 10;
+    if (http_h < 92) http_h = 92;
+
+    dui_glass_card(px, http_y, pw, http_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 220, false);
+    dui_text(px + 14, http_y + 10, "OPTIONAL HTTP UPDATE MANIFEST CHECK", THEME_ACCENT_GREEN, 1);
+
+    int inp_x = px + 14;
+    int inp_y = http_y + 32;
+    int inp_w = pw - 266;
+    if (inp_w < 160) inp_w = 160;
+    int inp_h = 30;
+
+    if (in->left_pressed) {
+        s_url_focused = pt_in(in->mx, in->my, inp_x, inp_y, inp_w, inp_h);
+    }
+    dui_rect_rounded(inp_x, inp_y, inp_w, inp_h, THEME_RADIUS_SM, THEME_SURFACE_INPUT, 240);
+    dui_rect_rounded_outline(inp_x, inp_y, inp_w, inp_h, THEME_RADIUS_SM,
+                             s_url_focused ? THEME_BORDER_FOCUS : THEME_BORDER_SUBTLE, 220);
+    dui_text_ellipsis(inp_x + 8, inp_y + 7, inp_w - 16,
+                      s_url_len > 0 ? s_update_url : "http://...",
+                      s_url_len > 0 ? THEME_TEXT_PRIMARY : THEME_TEXT_MUTED, 1);
+
+    if (s_url_focused && in->has_key) {
+        if (in->key_char == '\b') {
+            if (s_url_len > 0) s_update_url[--s_url_len] = '\0';
+        } else if (in->key_char == '\n') {
+            start_http_manifest_check();
+        } else if (in->key_char >= 32 && in->key_char < 127 && s_url_len < 240) {
+            s_update_url[s_url_len++] = in->key_char;
+            s_update_url[s_url_len] = '\0';
+        }
+    }
+
+    if (dui_button(inp_x + inp_w + 8, inp_y, 122, inp_h, "Check Updates", THEME_ACCENT_GREEN, true,
+                   in->mx, in->my, in->left_pressed)) {
+        start_http_manifest_check();
+    }
+    if (dui_button(px + pw - 114, inp_y, 100, inp_h, "Restart OS", THEME_SURFACE_ELEVATED, false,
+                   in->mx, in->my, in->left_pressed)) {
+        play_system_sound((char*)"click");
+        os_restart();
+    }
+
+    // Poll active HTTP manifest transfer non-blockingly
+    if (s_xfer_id >= 0) {
+        const HttpTransfer* tr = net_http_get(s_xfer_id);
+        if (tr) {
+            s_http_spin += 0.04f;
+            if (s_http_spin > 1.0f) s_http_spin = 0.0f;
+            dui_progress_ring(px + 26, http_y + 76, 10, 3, s_http_spin, THEME_SURFACE_INPUT, THEME_ACCENT_CYAN);
+
+            if (tr->state == HTTP_DONE) {
+                char code_b[12], len_b[16];
+                u64_to_str((uint64_t)tr->status_code, code_b, sizeof(code_b));
+                u64_to_str((uint64_t)tr->bytes_received, len_b, sizeof(len_b));
+                s_copy(s_http_result, "HTTP ", sizeof(s_http_result));
+                s_cat(s_http_result, code_b, sizeof(s_http_result));
+                s_cat(s_http_result, " (", sizeof(s_http_result));
+                s_cat(s_http_result, len_b, sizeof(s_http_result));
+                s_cat(s_http_result, " B): ", sizeof(s_http_result));
+                if (tr->body_buf && tr->bytes_received > 0) {
+                    char snippet[64];
+                    int sp = 0;
+                    for (int k = 0; k < tr->bytes_received && sp < 60; k++) {
+                        char c = tr->body_buf[k];
+                        if (c >= 32 && c < 127) snippet[sp++] = c;
+                        else if (c == '\n' || c == '\r') snippet[sp++] = ' ';
+                    }
+                    snippet[sp] = '\0';
+                    s_cat(s_http_result, snippet, sizeof(s_http_result));
+                }
+                s_http_color = THEME_ACCENT_GREEN;
+                play_system_sound((char*)"notify");
+                net_http_close(s_xfer_id);
+                s_xfer_id = -1;
+            } else if (tr->state == HTTP_ERROR) {
+                s_copy(s_http_result, tr->error_msg[0] ? tr->error_msg : "HTTP manifest check failed", sizeof(s_http_result));
+                s_http_color = THEME_ACCENT_ROSE;
+                play_system_sound((char*)"error");
+                net_http_close(s_xfer_id);
+                s_xfer_id = -1;
+            }
+            dui_text_ellipsis(px + 44, http_y + 68, pw - 58, s_http_result, s_http_color, 1);
+        } else {
+            s_xfer_id = -1;
+        }
+    } else {
+        dui_text_ellipsis(px + 14, http_y + 68, pw - 28, s_http_result, s_http_color, 1);
+    }
+}
+
+static void updater_on_close(BlankWindow* win) {
+    (void)win;
+    s_url_focused = false;
+    if (s_xfer_id >= 0) {
+        net_http_close(s_xfer_id);
+        s_xfer_id = -1;
+    }
+}
+
+} // namespace
+
+extern "C" {
+
+void updater_register(void) {
+    if (s_registered) return;
+    s_registered = true;
+    wm_register_app(APP_UPDATER, "System Updater", 680, 480, THEME_ACCENT_GREEN,
+                    updater_on_frame, updater_on_close);
+}
+
+void launch_updater(EFI_SYSTEM_TABLE* st) {
+    if (st && !gSystemTable) gSystemTable = st;
+    updater_register();
+    wm_open_app(APP_UPDATER);
+}
+
+} // extern "C"

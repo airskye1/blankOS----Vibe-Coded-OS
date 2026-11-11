@@ -1,57 +1,111 @@
-#include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <efi.h>
 #include <efilib.h>
 #include <efiprot.h>
 
+#include "../ui/theme.h"
+#include "../ui/blankDUI.h"
+#include "../ui/window_manager.h"
+#include "../kernel/input.h"
+#include "../kernel/net.h"
+#include "../kernel/audio.h"
+
 extern "C" {
-    extern void swap_buffers();
-    extern void dui_draw_wallpaper();
-    extern void blankUI_draw_menubar();
-    extern void blankUI_draw_dock();
-    extern void blankUI_draw_window(int width, int height, char* title);
-    extern void blankUI_draw_text_color(int x, int y, char* text, uint32_t color);
-    extern void blankUI_draw_button(int x, int y, int width, int height, char* text);
-    extern void blankUI_draw_toast(char* title, char* message);
-    extern void blankUI_draw_cursor(int x, int y);
-    extern int blankUI_hit_test_window_close(int cursor_x, int cursor_y, int width, int height);
-
-    extern void dui_rect(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
-    extern void dui_rect_rounded(int x, int y, int w, int h, int radius, uint32_t color, uint8_t alpha);
-    extern void dui_rect_outline(int x, int y, int w, int h, uint32_t color, int thickness);
-    extern void dui_shadow(int x, int y, int w, int h, int radius, int blur_radius, uint32_t color, uint8_t alpha);
-    extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
-    extern int dui_text_width(const char* text, int scale);
-    extern void dui_circle(int cx, int cy, int r, uint32_t color, uint8_t alpha);
-    extern void dui_line(int x0, int y0, int x1, int y1, uint32_t color, int thickness);
-    extern void dui_gradient_rounded(int x, int y, int w, int h, int radius, uint32_t top_color, uint32_t bottom_color);
-    extern void play_system_sound(char* sound_name);
-
-    extern void launch_blankpad(void);
-    extern void launch_task_manager(void);
-    extern void launch_blankreg_edit(void);
-
-    extern int screen_width;
-    extern int screen_height;
+    extern EFI_SYSTEM_TABLE *gSystemTable;
+    extern bool load_and_run_elf(EFI_SYSTEM_TABLE *SystemTable, CHAR16* filename);
+    extern void os_send_notification(const char* title, const char* message);
 }
 
 namespace {
 
-static void st_strcpy(char* dst, const char* src) {
-    if (!dst || !src) return;
-    while (*src) *dst++ = *src++;
-    *dst = '\0';
+#define MAX_STORE_PKGS 32
+
+typedef struct {
+    char id[32];
+    char name[48];
+    char category[24];
+    char version[16];
+    char desc[96];
+    char disk_path[96];
+    uint32_t accent;
+    bool is_elf;
+    bool installed;
+    bool is_builtin_repo;
+    uint32_t disk_bytes;
+    AppId mapped_app; // APP_COUNT if not a built-in WM app
+} StorePkg;
+
+static bool s_registered = false;
+static bool s_scanned = false;
+static StorePkg s_pkgs[MAX_STORE_PKGS];
+static int s_pkg_count = 0;
+
+static int s_active_tab = 0; // 0=All Packages, 1=Installed, 2=Downloads
+static int s_scroll_idx = 0;
+
+static char s_url_buf[256] = "http://10.0.2.2:8000/hello.pkg";
+static int s_url_len = 30;
+static bool s_url_focused = false;
+static int s_active_xfer_id = -1;
+
+static char s_status_msg[112] = "Ready - UEFI SimpleFileSystem & HTTP/1.1 Package Hub";
+static uint32_t s_status_color = THEME_TEXT_SECONDARY;
+
+static bool pt_in(int px, int py, int rx, int ry, int rw, int rh) {
+    return px >= rx && px < rx + rw && py >= ry && py < ry + rh;
 }
 
-static void st_strcat(char* dst, const char* src) {
-    if (!dst || !src) return;
-    while (*dst) dst++;
-    while (*src) *dst++ = *src++;
-    *dst = '\0';
+static void s_copy(char* dst, const char* src, int max_len) {
+    if (!dst || max_len <= 0) return;
+    int i = 0;
+    while (src && src[i] && i < max_len - 1) {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
 }
 
-static void st_utoa(uint64_t val, char* buf) {
+static void s_cat(char* dst, const char* src, int max_len) {
+    if (!dst || !src || max_len <= 0) return;
+    int i = 0;
+    while (dst[i] && i < max_len - 1) i++;
+    int j = 0;
+    while (src[j] && i < max_len - 1) dst[i++] = src[j++];
+    dst[i] = '\0';
+}
+
+static int s_len(const char* s) {
+    int n = 0;
+    while (s && s[n]) n++;
+    return n;
+}
+
+static char to_lower_c(char c) {
+    if (c >= 'A' && c <= 'Z') return (char)(c + 32);
+    return c;
+}
+
+static bool s_ieq(const char* a, const char* b) {
+    if (!a || !b) return false;
+    int i = 0;
+    while (a[i] && b[i]) {
+        if (to_lower_c(a[i]) != to_lower_c(b[i])) return false;
+        i++;
+    }
+    return a[i] == b[i];
+}
+
+static bool s_ends_with_i(const char* s, const char* suffix) {
+    int ls = s_len(s);
+    int lf = s_len(suffix);
+    if (ls < lf) return false;
+    return s_ieq(s + (ls - lf), suffix);
+}
+
+static void u64_to_str(uint64_t val, char* buf, int max_len) {
+    if (!buf || max_len < 2) return;
     if (val == 0) {
         buf[0] = '0';
         buf[1] = '\0';
@@ -64,855 +118,790 @@ static void st_utoa(uint64_t val, char* buf) {
         val /= 10;
     }
     int j = 0;
-    while (i > 0) buf[j++] = tmp[--i];
+    while (i > 0 && j < max_len - 1) buf[j++] = tmp[--i];
     buf[j] = '\0';
 }
 
-static inline void hw_outb(uint16_t port, uint8_t val) {
-    __asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
-}
-
-static inline uint8_t hw_inb(uint16_t port) {
-    uint8_t ret = 0;
-    __asm__ volatile("inb %1, %0" : "=a"(ret) : "Nd"(port));
-    return ret;
-}
-
-static void play_pit_tone(EFI_SYSTEM_TABLE* st, uint32_t freq_hz, uint32_t duration_us) {
-    if (!st || freq_hz < 20) return;
-    uint32_t div = 1193180 / freq_hz;
-    hw_outb(0x43, 0xB6);
-    hw_outb(0x42, (uint8_t)(div & 0xFF));
-    hw_outb(0x42, (uint8_t)((div >> 8) & 0xFF));
-    uint8_t tmp = hw_inb(0x61);
-    if (tmp != (tmp | 3)) {
-        hw_outb(0x61, (uint8_t)(tmp | 3));
+static void ascii_to_wide(const char* src, CHAR16* dst, int max_chars) {
+    int i = 0;
+    while (src && src[i] && i < max_chars - 1) {
+        dst[i] = (CHAR16)(uint8_t)src[i];
+        i++;
     }
-    st->BootServices->Stall(duration_us);
-    hw_outb(0x61, (uint8_t)(tmp & 0xFC));
+    dst[i] = 0;
 }
 
-// Locate a writable FAT32 Root directory via EFI_SIMPLE_FILE_SYSTEM_PROTOCOL
-static EFI_FILE_PROTOCOL* open_fat32_root(EFI_SYSTEM_TABLE* SystemTable) {
-    if (!SystemTable || !SystemTable->BootServices) return NULL;
-    EFI_GUID SfspGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
-    UINTN handle_count = 0;
+static void wide_to_ascii(const CHAR16* src, char* dst, int max_chars) {
+    int i = 0;
+    while (src && src[i] && i < max_chars - 1) {
+        dst[i] = (char)(src[i] & 0x7F);
+        i++;
+    }
+    dst[i] = '\0';
+}
+
+static void set_status(const char* msg, uint32_t col) {
+    s_copy(s_status_msg, msg, sizeof(s_status_msg));
+    s_status_color = col;
+}
+
+// Open a directory on a volume (creating subdirectories if write_mode is true)
+static EFI_FILE_PROTOCOL* open_dir_on_root(EFI_FILE_PROTOCOL* root, const char* dir_path, bool create_if_missing) {
+    if (!root || !dir_path || !dir_path[0]) return NULL;
+    char seg[64];
+    EFI_FILE_PROTOCOL* cur = root;
+    bool cur_is_root = true;
+
+    int p = 0;
+    while (dir_path[p]) {
+        while (dir_path[p] == '\\' || dir_path[p] == '/') p++;
+        if (!dir_path[p]) break;
+        int sl = 0;
+        while (dir_path[p] && dir_path[p] != '\\' && dir_path[p] != '/' && sl < 62) {
+            seg[sl++] = dir_path[p++];
+        }
+        seg[sl] = '\0';
+
+        CHAR16 wseg[64];
+        ascii_to_wide(seg, wseg, 64);
+
+        EFI_FILE_PROTOCOL* next = NULL;
+        UINT64 mode = create_if_missing ? (EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE)
+                                        : EFI_FILE_MODE_READ;
+        EFI_STATUS st = cur->Open(cur, &next, wseg, mode, EFI_FILE_DIRECTORY);
+        if (!cur_is_root) cur->Close(cur);
+        if (EFI_ERROR(st) || !next) return NULL;
+        cur = next;
+        cur_is_root = false;
+    }
+    return cur_is_root ? NULL : cur;
+}
+
+static bool fs_read_file_bytes(const char* rel_path, uint8_t* out_buf, uint32_t max_cap, uint32_t* out_size) {
+    if (out_size) *out_size = 0;
+    if (!gSystemTable || !gSystemTable->BootServices || !rel_path) return false;
+
+    EFI_GUID sfspGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    UINTN count = 0;
     EFI_HANDLE* handles = NULL;
+    if (EFI_ERROR(gSystemTable->BootServices->LocateHandleBuffer(ByProtocol, &sfspGuid, NULL, &count, &handles)) || !handles) {
+        return false;
+    }
 
-    EFI_STATUS status = SystemTable->BootServices->LocateHandleBuffer(
-        ByProtocol, &SfspGuid, NULL, &handle_count, &handles);
-    if (EFI_ERROR(status) || !handles || handle_count == 0) return NULL;
+    CHAR16 wpath[128];
+    ascii_to_wide(rel_path, wpath, 128);
 
-    EFI_FILE_PROTOCOL* best_root = NULL;
-    for (UINTN i = 0; i < handle_count; i++) {
+    bool ok = false;
+    for (UINTN i = 0; i < count; i++) {
         EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* fs = NULL;
-        if (SystemTable->BootServices->HandleProtocol(handles[i], &SfspGuid, (void**)&fs) == EFI_SUCCESS && fs) {
-            EFI_FILE_PROTOCOL* root = NULL;
-            if (fs->OpenVolume(fs, &root) == EFI_SUCCESS && root) {
-                // Ensure \EFI and \EFI\APPS directories can be opened or created
-                EFI_FILE_PROTOCOL* efi_dir = NULL;
-                if (root->Open(root, &efi_dir, (CHAR16*)L"EFI",
-                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
-                               EFI_FILE_DIRECTORY) == EFI_SUCCESS && efi_dir) {
-                    EFI_FILE_PROTOCOL* apps_dir = NULL;
-                    if (efi_dir->Open(efi_dir, &apps_dir, (CHAR16*)L"APPS",
-                                      EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
-                                      EFI_FILE_DIRECTORY) == EFI_SUCCESS && apps_dir) {
-                        apps_dir->Close(apps_dir);
-                        efi_dir->Close(efi_dir);
-                        best_root = root;
-                        break;
-                    }
-                    efi_dir->Close(efi_dir);
-                }
-                if (!best_root) best_root = root;
-                else root->Close(root);
+        if (EFI_ERROR(gSystemTable->BootServices->HandleProtocol(handles[i], &sfspGuid, (void**)&fs)) || !fs) continue;
+        EFI_FILE_PROTOCOL* root = NULL;
+        if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+
+        EFI_FILE_PROTOCOL* file = NULL;
+        if (root->Open(root, &file, wpath, EFI_FILE_MODE_READ, 0) == EFI_SUCCESS && file) {
+            UINTN rsz = max_cap;
+            if (file->Read(file, &rsz, out_buf) == EFI_SUCCESS) {
+                if (out_size) *out_size = (uint32_t)rsz;
+                ok = true;
+            }
+            file->Close(file);
+        }
+        root->Close(root);
+        if (ok) break;
+    }
+    gSystemTable->BootServices->FreePool(handles);
+    return ok;
+}
+
+static bool fs_write_file_bytes(const char* dir_rel, const char* rel_path, const void* data, uint32_t len) {
+    if (!gSystemTable || !gSystemTable->BootServices || !rel_path || !data) return false;
+
+    EFI_GUID sfspGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    UINTN count = 0;
+    EFI_HANDLE* handles = NULL;
+    if (EFI_ERROR(gSystemTable->BootServices->LocateHandleBuffer(ByProtocol, &sfspGuid, NULL, &count, &handles)) || !handles) {
+        return false;
+    }
+
+    CHAR16 wpath[128];
+    ascii_to_wide(rel_path, wpath, 128);
+
+    bool ok = false;
+    for (UINTN i = 0; i < count; i++) {
+        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* fs = NULL;
+        if (EFI_ERROR(gSystemTable->BootServices->HandleProtocol(handles[i], &sfspGuid, (void**)&fs)) || !fs) continue;
+        EFI_FILE_PROTOCOL* root = NULL;
+        if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+
+        if (dir_rel && dir_rel[0]) {
+            EFI_FILE_PROTOCOL* d = open_dir_on_root(root, dir_rel, true);
+            if (!d) {
+                root->Close(root);
+                continue;
+            }
+            d->Close(d);
+        }
+
+        // Remove existing file first so shorter writes don't leave trailing bytes
+        EFI_FILE_PROTOCOL* old_f = NULL;
+        if (root->Open(root, &old_f, wpath, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0) == EFI_SUCCESS && old_f) {
+            old_f->Delete(old_f);
+        }
+
+        EFI_FILE_PROTOCOL* file = NULL;
+        if (root->Open(root, &file, wpath,
+                       EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0) == EFI_SUCCESS && file) {
+            UINTN wlen = len;
+            if (file->Write(file, &wlen, (void*)data) == EFI_SUCCESS && wlen == len) {
+                file->Flush(file);
+                ok = true;
+            }
+            file->Close(file);
+        }
+        root->Close(root);
+        if (ok) break;
+    }
+    gSystemTable->BootServices->FreePool(handles);
+    return ok;
+}
+
+static bool fs_delete_file(const char* rel_path) {
+    if (!gSystemTable || !gSystemTable->BootServices || !rel_path) return false;
+
+    EFI_GUID sfspGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    UINTN count = 0;
+    EFI_HANDLE* handles = NULL;
+    if (EFI_ERROR(gSystemTable->BootServices->LocateHandleBuffer(ByProtocol, &sfspGuid, NULL, &count, &handles)) || !handles) {
+        return false;
+    }
+
+    CHAR16 wpath[128];
+    ascii_to_wide(rel_path, wpath, 128);
+
+    bool ok = false;
+    for (UINTN i = 0; i < count; i++) {
+        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* fs = NULL;
+        if (EFI_ERROR(gSystemTable->BootServices->HandleProtocol(handles[i], &sfspGuid, (void**)&fs)) || !fs) continue;
+        EFI_FILE_PROTOCOL* root = NULL;
+        if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+
+        EFI_FILE_PROTOCOL* file = NULL;
+        if (root->Open(root, &file, wpath, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0) == EFI_SUCCESS && file) {
+            if (file->Delete(file) == EFI_SUCCESS) {
+                ok = true;
+            }
+        }
+        root->Close(root);
+        if (ok) break;
+    }
+    gSystemTable->BootServices->FreePool(handles);
+    return ok;
+}
+
+static void parse_pkg_metadata(const uint8_t* buf, uint32_t sz, StorePkg* pkg) {
+    if (!buf || sz == 0 || !pkg) return;
+    uint32_t i = 0;
+    char line[128];
+    while (i < sz) {
+        int lp = 0;
+        while (i < sz && buf[i] != '\n' && buf[i] != '\r' && lp < 126) {
+            if (buf[i] >= 32 && buf[i] < 127) line[lp++] = (char)buf[i];
+            i++;
+        }
+        line[lp] = '\0';
+        while (i < sz && (buf[i] == '\n' || buf[i] == '\r')) i++;
+
+        if (line[0] == 'N' && line[1] == 'A' && line[2] == 'M' && line[3] == 'E' && line[4] == '=') {
+            s_copy(pkg->name, line + 5, sizeof(pkg->name));
+        } else if (line[0] == 'V' && line[1] == 'E' && line[2] == 'R' && line[3] == 'S' && line[4] == 'I' &&
+                   line[5] == 'O' && line[6] == 'N' && line[7] == '=') {
+            s_copy(pkg->version, line + 8, sizeof(pkg->version));
+        } else if (line[0] == 'D' && line[1] == 'E' && line[2] == 'S' && line[3] == 'C' && line[4] == '=') {
+            s_copy(pkg->desc, line + 5, sizeof(pkg->desc));
+        } else if (line[0] == 'C' && line[1] == 'A' && line[2] == 'T' && line[3] == '=') {
+            s_copy(pkg->category, line + 4, sizeof(pkg->category));
+        }
+    }
+}
+
+static int find_pkg_by_path(const char* path) {
+    for (int i = 0; i < s_pkg_count; i++) {
+        if (s_ieq(s_pkgs[i].disk_path, path)) return i;
+    }
+    return -1;
+}
+
+static void add_builtin_repo(void) {
+    struct RepoSeed {
+        const char* id;
+        const char* name;
+        const char* cat;
+        const char* ver;
+        const char* desc;
+        const char* path;
+        uint32_t accent;
+        AppId app;
+    };
+    const RepoSeed seeds[6] = {
+        { "BLANKPAD", "BlankPad & Files", "Productivity", "v2.4",
+          "Dual-pane FAT32 file explorer and rich notes studio.", "EFI\\APPS\\BLANKPAD.PKG", THEME_ACCENT_CYAN, APP_FILES },
+        { "ACTMON", "System Pulse", "Developer", "v2.4",
+          "Live CPUID, RDTSC, memory, and PCIe bus telemetry.", "EFI\\APPS\\ACTMON.PKG", THEME_ACCENT_GREEN, APP_MONITOR },
+        { "BLANKREG", "BlankReg Studio", "Utilities", "v2.1",
+          "Hierarchical kernel registry editor with INI persistence.", "EFI\\APPS\\BLANKREG.PKG", THEME_ACCENT_AMBER, APP_REGEDIT },
+        { "TERMINAL", "Horizon Terminal", "Developer", "v2.0",
+          "Bare-metal shell with VFS, ping, HTTP, and system tools.", "EFI\\APPS\\TERMINAL.PKG", THEME_ACCENT_IRIS, APP_TERMINAL },
+        { "WEATHER", "Atmosphere Weather", "Utilities", "v2.0",
+          "Live HTTP climate & atmospheric telemetry dashboard.", "EFI\\APPS\\WEATHER.PKG", THEME_ACCENT_TEAL, APP_WEATHER },
+        { "CALC", "Precision Calc", "Productivity", "v2.0",
+          "Floating-point & scientific Horizon desktop calculator.", "EFI\\APPS\\CALC.PKG", THEME_ACCENT_ROSE, APP_CALCULATOR }
+    };
+
+    for (int i = 0; i < 6 && s_pkg_count < MAX_STORE_PKGS; i++) {
+        StorePkg* p = &s_pkgs[s_pkg_count++];
+        s_copy(p->id, seeds[i].id, sizeof(p->id));
+        s_copy(p->name, seeds[i].name, sizeof(p->name));
+        s_copy(p->category, seeds[i].cat, sizeof(p->category));
+        s_copy(p->version, seeds[i].ver, sizeof(p->version));
+        s_copy(p->desc, seeds[i].desc, sizeof(p->desc));
+        s_copy(p->disk_path, seeds[i].path, sizeof(p->disk_path));
+        p->accent = seeds[i].accent;
+        p->is_elf = false;
+        p->installed = false;
+        p->is_builtin_repo = true;
+        p->disk_bytes = 0;
+        p->mapped_app = seeds[i].app;
+    }
+}
+
+static void scan_dir_packages(EFI_FILE_PROTOCOL* root, const char* dir_rel) {
+    EFI_FILE_PROTOCOL* dir = open_dir_on_root(root, dir_rel, false);
+    if (!dir) return;
+
+    dir->SetPosition(dir, 0);
+    uint8_t info_buf[512];
+    int guard = 0;
+    while (guard++ < 64) {
+        UINTN bsz = sizeof(info_buf);
+        EFI_STATUS st = dir->Read(dir, &bsz, info_buf);
+        if (EFI_ERROR(st) || bsz == 0) break;
+
+        EFI_FILE_INFO* info = (EFI_FILE_INFO*)info_buf;
+        if (info->Attribute & EFI_FILE_DIRECTORY) continue;
+
+        char fname[64];
+        wide_to_ascii(info->FileName, fname, sizeof(fname));
+        if (!fname[0] || fname[0] == '.') continue;
+
+        bool is_elf = s_ends_with_i(fname, ".elf");
+        bool is_pkg = s_ends_with_i(fname, ".pkg");
+        if (!is_elf && !is_pkg) continue;
+
+        char full_path[96];
+        s_copy(full_path, dir_rel, sizeof(full_path));
+        s_cat(full_path, "\\", sizeof(full_path));
+        s_cat(full_path, fname, sizeof(full_path));
+
+        int existing = find_pkg_by_path(full_path);
+        if (existing >= 0) {
+            s_pkgs[existing].installed = true;
+            s_pkgs[existing].disk_bytes = (uint32_t)info->FileSize;
+            continue;
+        }
+
+        if (s_pkg_count >= MAX_STORE_PKGS) continue;
+        StorePkg* p = &s_pkgs[s_pkg_count++];
+        s_copy(p->id, fname, sizeof(p->id));
+        // Strip extension for clean display name
+        s_copy(p->name, fname, sizeof(p->name));
+        int nl = s_len(p->name);
+        if (nl > 4 && p->name[nl - 4] == '.') p->name[nl - 4] = '\0';
+
+        s_copy(p->category, is_elf ? "ELF Binary" : "Package (.PKG)", sizeof(p->category));
+        s_copy(p->version, is_elf ? "ELF64" : "v1.0", sizeof(p->version));
+        s_copy(p->desc, is_elf ? "Native x86_64 ELF executable discovered on disk."
+                               : "BlankOS package manifest discovered on disk.", sizeof(p->desc));
+        s_copy(p->disk_path, full_path, sizeof(p->disk_path));
+        p->accent = is_elf ? THEME_ACCENT_TEAL : THEME_ACCENT_IRIS;
+        p->is_elf = is_elf;
+        p->installed = true;
+        p->is_builtin_repo = false;
+        p->disk_bytes = (uint32_t)info->FileSize;
+        p->mapped_app = APP_COUNT;
+
+        if (is_pkg && info->FileSize > 0 && info->FileSize <= 2048) {
+            uint8_t meta[512];
+            uint32_t msz = 0;
+            if (fs_read_file_bytes(full_path, meta, sizeof(meta), &msz) && msz > 0) {
+                parse_pkg_metadata(meta, msz, p);
             }
         }
     }
-    SystemTable->BootServices->FreePool(handles);
-    return best_root;
+    dir->Close(dir);
 }
 
-static bool check_pkg_installed(EFI_SYSTEM_TABLE* SystemTable, const CHAR16* rel_path, uint32_t* out_bytes) {
-    if (out_bytes) *out_bytes = 0;
-    EFI_FILE_PROTOCOL* root = open_fat32_root(SystemTable);
-    if (!root) return false;
+static void scan_all_packages(void) {
+    s_scanned = true;
+    s_pkg_count = 0;
+    add_builtin_repo();
 
-    EFI_FILE_PROTOCOL* file = NULL;
-    EFI_STATUS st = root->Open(root, &file, (CHAR16*)rel_path, EFI_FILE_MODE_READ, 0);
-    if (EFI_ERROR(st) || !file) {
+    if (!gSystemTable || !gSystemTable->BootServices) return;
+    EFI_GUID sfspGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    UINTN count = 0;
+    EFI_HANDLE* handles = NULL;
+    if (EFI_ERROR(gSystemTable->BootServices->LocateHandleBuffer(ByProtocol, &sfspGuid, NULL, &count, &handles)) || !handles) {
+        return;
+    }
+
+    for (UINTN i = 0; i < count; i++) {
+        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* fs = NULL;
+        if (EFI_ERROR(gSystemTable->BootServices->HandleProtocol(handles[i], &sfspGuid, (void**)&fs)) || !fs) continue;
+        EFI_FILE_PROTOCOL* root = NULL;
+        if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+
+        scan_dir_packages(root, "EFI\\APPS");
+        scan_dir_packages(root, "APPS");
         root->Close(root);
-        return false;
     }
-
-    uint8_t buf[512];
-    UINTN sz = sizeof(buf);
-    if (file->Read(file, &sz, buf) == EFI_SUCCESS && out_bytes) {
-        *out_bytes = (uint32_t)sz;
-    }
-    file->Close(file);
-    root->Close(root);
-    return true;
+    gSystemTable->BootServices->FreePool(handles);
 }
 
-static bool write_pkg_to_disk(EFI_SYSTEM_TABLE* SystemTable, const CHAR16* rel_path,
-                              const char* app_id, const char* app_name, const char* version) {
-    EFI_FILE_PROTOCOL* root = open_fat32_root(SystemTable);
-    if (!root) return false;
-
-    EFI_FILE_PROTOCOL* file = NULL;
-    EFI_STATUS st = root->Open(root, &file, (CHAR16*)rel_path,
-                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
-    if (EFI_ERROR(st) || !file) {
-        root->Close(root);
-        return false;
+static void extract_filename_from_url(const char* url, char* out, int max_len) {
+    const char* last_slash = NULL;
+    for (int i = 0; url && url[i]; i++) {
+        if (url[i] == '/') last_slash = &url[i];
     }
+    if (last_slash && last_slash[1]) {
+        s_copy(out, last_slash + 1, max_len);
+        // Strip query string if any
+        for (int i = 0; out[i]; i++) {
+            if (out[i] == '?' || out[i] == '#') { out[i] = '\0'; break; }
+        }
+    } else {
+        s_copy(out, "package.pkg", max_len);
+    }
+    if (!out[0]) s_copy(out, "package.pkg", max_len);
+}
 
-    // Construct real BlankOS .BLOE / .PKG binary header + manifest payload
+static void start_http_fetch(void) {
+    if (!s_url_buf[0]) {
+        set_status("Enter an http:// URL to fetch a package or manifest", THEME_ACCENT_AMBER);
+        return;
+    }
+    if (s_active_xfer_id >= 0) {
+        net_http_close(s_active_xfer_id);
+        s_active_xfer_id = -1;
+    }
+    char fname[64];
+    extract_filename_from_url(s_url_buf, fname, sizeof(fname));
+    s_active_xfer_id = net_http_start(s_url_buf, fname);
+    if (s_active_xfer_id >= 0) {
+        play_system_sound((char*)"click");
+        set_status("Fetching package over HTTP/1.1...", THEME_ACCENT_TEAL);
+    } else {
+        play_system_sound((char*)"error");
+        set_status("Failed to start HTTP transfer (check URL / NIC)", THEME_ACCENT_ROSE);
+    }
+}
+
+static bool install_pkg_entry(StorePkg* p) {
+    if (!p || p->is_elf) return false;
     char payload[512];
     for (int i = 0; i < 512; i++) payload[i] = 0;
-    st_strcpy(payload, "BLOE_PKG_V2\nID=");
-    st_strcat(payload, app_id);
-    st_strcat(payload, "\nNAME=");
-    st_strcat(payload, app_name);
-    st_strcat(payload, "\nVERSION=");
-    st_strcat(payload, version);
-    st_strcat(payload, "\nARCH=x86_64-uefi\nENTRY=native_subsystem\n VERIFIED=1\n");
+    s_copy(payload, "BLOE_PKG_V2\nID=", sizeof(payload));
+    s_cat(payload, p->id, sizeof(payload));
+    s_cat(payload, "\nNAME=", sizeof(payload));
+    s_cat(payload, p->name, sizeof(payload));
+    s_cat(payload, "\nVERSION=", sizeof(payload));
+    s_cat(payload, p->version, sizeof(payload));
+    s_cat(payload, "\nCAT=", sizeof(payload));
+    s_cat(payload, p->category, sizeof(payload));
+    s_cat(payload, "\nDESC=", sizeof(payload));
+    s_cat(payload, p->desc, sizeof(payload));
+    s_cat(payload, "\nARCH=x86_64-uefi\nVERIFIED=1\n", sizeof(payload));
 
-    UINTN write_len = 256;
-    EFI_STATUS wst = file->Write(file, &write_len, payload);
-    file->Flush(file);
-    file->Close(file);
-    root->Close(root);
-    return !EFI_ERROR(wst);
+    uint32_t plen = (uint32_t)s_len(payload);
+    if (fs_write_file_bytes("EFI\\APPS", p->disk_path, payload, plen)) {
+        p->installed = true;
+        p->disk_bytes = plen;
+        play_system_sound((char*)"success");
+        os_send_notification("Software Hub", "Package installed to \\EFI\\APPS\\");
+        set_status("Package written to \\EFI\\APPS\\ on FAT32", THEME_ACCENT_GREEN);
+        return true;
+    }
+    play_system_sound((char*)"error");
+    set_status("Write failed: volume is read-only (Live ISO9660)", THEME_ACCENT_ROSE);
+    return false;
 }
 
-static bool delete_pkg_from_disk(EFI_SYSTEM_TABLE* SystemTable, const CHAR16* rel_path) {
-    EFI_FILE_PROTOCOL* root = open_fat32_root(SystemTable);
-    if (!root) return false;
-
-    EFI_FILE_PROTOCOL* file = NULL;
-    EFI_STATUS st = root->Open(root, &file, (CHAR16*)rel_path,
-                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
-    if (EFI_ERROR(st) || !file) {
-        root->Close(root);
-        return false;
+static void launch_pkg_entry(StorePkg* p) {
+    if (!p) return;
+    if (p->is_elf) {
+        if (!gSystemTable) return;
+        CHAR16 wpath[128];
+        ascii_to_wide(p->disk_path, wpath, 128);
+        play_system_sound((char*)"click");
+        bool ok = load_and_run_elf(gSystemTable, wpath);
+        input_refresh_bounds((int)screen_width, (int)screen_height);
+        if (ok) {
+            set_status("ELF application exited cleanly", THEME_ACCENT_GREEN);
+        } else {
+            play_system_sound((char*)"error");
+            set_status("Failed to load ELF64 binary", THEME_ACCENT_ROSE);
+        }
+    } else if (p->mapped_app != APP_COUNT) {
+        wm_open_app(p->mapped_app);
+    } else {
+        wm_request_open_file(p->disk_path);
     }
-
-    EFI_STATUS dst = file->Delete(file);
-    root->Close(root);
-    return !EFI_ERROR(dst);
 }
 
-static bool save_canvas_to_disk(EFI_SYSTEM_TABLE* SystemTable, const uint8_t* grid, UINTN len) {
-    EFI_FILE_PROTOCOL* root = open_fat32_root(SystemTable);
-    if (!root) return false;
+static void render_downloads_tab(int px, int py, int pw, int ph, const BlankInputState* in) {
+    // URL Input + Fetch Bar
+    dui_glass_card(px, py, pw, 114, THEME_RADIUS_MD, THEME_SURFACE_CARD, 225, false);
+    dui_text(px + 14, py + 12, "HTTP PACKAGE & MANIFEST FETCHER (SAVES TO \\DOWNLOADS\\)", THEME_ACCENT_TEAL, 1);
 
-    EFI_FILE_PROTOCOL* file = NULL;
-    EFI_STATUS st = root->Open(root, &file, (CHAR16*)L"EFI\\APPS\\CANVAS.ART",
-                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
-    if (EFI_ERROR(st) || !file) {
-        root->Close(root);
-        return false;
+    int inp_x = px + 14;
+    int inp_y = py + 36;
+    int inp_w = pw - 124;
+    int inp_h = 34;
+
+    if (in->left_pressed) {
+        s_url_focused = pt_in(in->mx, in->my, inp_x, inp_y, inp_w, inp_h);
     }
-    UINTN wlen = len;
-    EFI_STATUS wst = file->Write(file, &wlen, (void*)grid);
-    file->Flush(file);
-    file->Close(file);
-    root->Close(root);
-    return !EFI_ERROR(wst);
+    dui_rect_rounded(inp_x, inp_y, inp_w, inp_h, THEME_RADIUS_SM, THEME_SURFACE_INPUT, 240);
+    dui_rect_rounded_outline(inp_x, inp_y, inp_w, inp_h, THEME_RADIUS_SM,
+                             s_url_focused ? THEME_BORDER_FOCUS : THEME_BORDER_SUBTLE, 220);
+    dui_text_ellipsis(inp_x + 10, inp_y + 9, inp_w - 20,
+                      s_url_len > 0 ? s_url_buf : "http://...",
+                      s_url_len > 0 ? THEME_TEXT_PRIMARY : THEME_TEXT_MUTED, 1);
+
+    if (s_url_focused && in->has_key) {
+        if (in->key_char == '\b') {
+            if (s_url_len > 0) s_url_buf[--s_url_len] = '\0';
+        } else if (in->key_char == '\n') {
+            start_http_fetch();
+        } else if (in->key_char >= 32 && in->key_char < 127 && s_url_len < 240) {
+            s_url_buf[s_url_len++] = in->key_char;
+            s_url_buf[s_url_len] = '\0';
+        }
+    }
+
+    if (dui_button(px + pw - 100, inp_y, 86, inp_h, "Fetch", THEME_ACCENT_TEAL, true,
+                   in->mx, in->my, in->left_pressed)) {
+        start_http_fetch();
+    }
+
+    // Curated HTTP Presets
+    const char* preset_labels[3] = { "Local :8000 .PKG", "Version Manifest", "HTTP Info Test" };
+    const char* preset_urls[3] = {
+        "http://10.0.2.2:8000/hello.pkg",
+        "http://10.0.2.2:8000/version.json",
+        "http://info.cern.ch/"
+    };
+    for (int i = 0; i < 3; i++) {
+        int bx = px + 14 + i * 144;
+        if (dui_button(bx, py + 78, 136, 26, preset_labels[i], THEME_SURFACE_ELEVATED, false,
+                       in->mx, in->my, in->left_pressed)) {
+            s_copy(s_url_buf, preset_urls[i], sizeof(s_url_buf));
+            s_url_len = s_len(s_url_buf);
+            s_url_focused = true;
+            play_system_sound((char*)"click");
+        }
+    }
+
+    // Poll active transfer if running
+    int list_y = py + 124;
+    if (s_active_xfer_id >= 0) {
+        const HttpTransfer* tr = net_http_get(s_active_xfer_id);
+        if (tr) {
+            dui_glass_card(px, list_y, pw, 60, THEME_RADIUS_MD, THEME_SURFACE_ELEVATED, 235, true);
+            const char* st_txt = "Idle";
+            if (tr->state == HTTP_RESOLVING_DNS) st_txt = "Resolving DNS...";
+            else if (tr->state == HTTP_CONNECTING) st_txt = "Connecting TCP...";
+            else if (tr->state == HTTP_SENDING) st_txt = "Sending HTTP GET...";
+            else if (tr->state == HTTP_RECEIVING) st_txt = "Downloading...";
+            else if (tr->state == HTTP_DONE) st_txt = "Completed";
+            else if (tr->state == HTTP_ERROR) st_txt = tr->error_msg[0] ? tr->error_msg : "Transfer error";
+
+            dui_text_ellipsis(px + 14, list_y + 10, pw - 140, tr->save_filename, THEME_TEXT_PRIMARY, 1);
+            dui_text_ellipsis(px + 14, list_y + 30, pw - 140, st_txt, THEME_ACCENT_CYAN, 1);
+
+            float prog = 0.25f;
+            if (tr->content_length > 0) {
+                prog = (float)tr->bytes_received / (float)tr->content_length;
+                if (prog > 1.0f) prog = 1.0f;
+            } else if (tr->state == HTTP_DONE) {
+                prog = 1.0f;
+            }
+            dui_progress_ring(px + pw - 36, list_y + 30, 18, 4, prog, THEME_SURFACE_INPUT, THEME_ACCENT_TEAL);
+
+            if (tr->state == HTTP_DONE) {
+                play_system_sound((char*)"download");
+                os_send_notification("Software Hub", "Download saved to \\DOWNLOADS\\");
+                set_status("HTTP fetch complete - saved to \\DOWNLOADS\\", THEME_ACCENT_GREEN);
+                net_http_close(s_active_xfer_id);
+                s_active_xfer_id = -1;
+                scan_all_packages();
+            } else if (tr->state == HTTP_ERROR) {
+                play_system_sound((char*)"error");
+                set_status(tr->error_msg[0] ? tr->error_msg : "HTTP download failed", THEME_ACCENT_ROSE);
+                net_http_close(s_active_xfer_id);
+                s_active_xfer_id = -1;
+            }
+            list_y += 70;
+        } else {
+            s_active_xfer_id = -1;
+        }
+    }
+
+    // Real Download History from net.h
+    int dl_cnt = net_download_count();
+    int box_h = ph - (list_y - py);
+    if (box_h < 80) box_h = 80;
+    dui_glass_card(px, list_y, pw, box_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 220, false);
+    dui_text(px + 14, list_y + 12, "DOWNLOADED FILES (\\DOWNLOADS\\)", THEME_TEXT_SECONDARY, 1);
+
+    if (dl_cnt == 0) {
+        dui_text(px + 14, list_y + 44, "No HTTP downloads in this session yet.", THEME_TEXT_MUTED, 1);
+        dui_text(px + 14, list_y + 66, "Enter an http:// URL above and click Fetch to download real files.", THEME_TEXT_MUTED, 1);
+        return;
+    }
+
+    int max_rows = (box_h - 46) / 48;
+    if (max_rows < 1) max_rows = 1;
+    for (int i = 0; i < dl_cnt && i < max_rows; i++) {
+        const DownloadEntry* de = net_get_download(i);
+        if (!de) continue;
+        int ry = list_y + 38 + i * 48;
+        dui_rect_rounded(px + 10, ry, pw - 20, 42, THEME_RADIUS_SM, THEME_SURFACE_INPUT, 210);
+        dui_text_ellipsis(px + 20, ry + 6, pw - 240, de->filename, THEME_TEXT_PRIMARY, 1);
+        dui_text_ellipsis(px + 20, ry + 24, pw - 240, de->status_text, THEME_TEXT_SECONDARY, 1);
+
+        if (de->state == HTTP_DONE && de->saved_ok) {
+            if (dui_button(px + pw - 206, ry + 7, 114, 28, "Install App", THEME_ACCENT_TEAL, true,
+                           in->mx, in->my, in->left_pressed)) {
+                uint32_t max_copy = 4 * 1024 * 1024;
+                uint8_t* copy_buf = NULL;
+                if (gSystemTable && gSystemTable->BootServices &&
+                    gSystemTable->BootServices->AllocatePool(EfiLoaderData, max_copy, (void**)&copy_buf) == EFI_SUCCESS && copy_buf) {
+                    uint32_t csz = 0;
+                    char src_rel[192];
+                    s_copy(src_rel, "DOWNLOADS\\", sizeof(src_rel));
+                    s_cat(src_rel, de->filename, sizeof(src_rel));
+                    if (fs_read_file_bytes(src_rel, copy_buf, max_copy, &csz) && csz > 0) {
+                        char dst_rel[128];
+                        s_copy(dst_rel, "EFI\\APPS\\", sizeof(dst_rel));
+                        s_cat(dst_rel, de->filename, sizeof(dst_rel));
+                        if (fs_write_file_bytes("EFI\\APPS", dst_rel, copy_buf, csz)) {
+                            play_system_sound((char*)"success");
+                            set_status("Installed downloaded package to \\EFI\\APPS\\", THEME_ACCENT_GREEN);
+                            scan_all_packages();
+                        } else {
+                            play_system_sound((char*)"error");
+                            set_status("Could not write to \\EFI\\APPS\\", THEME_ACCENT_ROSE);
+                        }
+                    } else {
+                        set_status("Downloaded file empty or unreadable", THEME_ACCENT_AMBER);
+                    }
+                    gSystemTable->BootServices->FreePool(copy_buf);
+                } else {
+                    set_status("Out of UEFI pool memory during install", THEME_ACCENT_ROSE);
+                }
+            }
+            if (dui_button(px + pw - 84, ry + 7, 66, 28, "Open", THEME_SURFACE_ELEVATED, false,
+                           in->mx, in->my, in->left_pressed)) {
+                wm_request_open_file(de->disk_path);
+            }
+        }
+    }
 }
 
-static bool load_canvas_from_disk(EFI_SYSTEM_TABLE* SystemTable, uint8_t* grid, UINTN len) {
-    EFI_FILE_PROTOCOL* root = open_fat32_root(SystemTable);
-    if (!root) return false;
+static void store_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, const BlankInputState* in) {
+    (void)win;
+    if (!s_scanned) scan_all_packages();
 
-    EFI_FILE_PROTOCOL* file = NULL;
-    EFI_STATUS st = root->Open(root, &file, (CHAR16*)L"EFI\\APPS\\CANVAS.ART",
-                               EFI_FILE_MODE_READ, 0);
-    if (EFI_ERROR(st) || !file) {
-        root->Close(root);
-        return false;
+    int pad = 16;
+    int px = cx + pad;
+    int pw = cw - pad * 2;
+    int top_y = cy + 12;
+
+    // Header Row: Filter Tabs + Rescan Button
+    const char* tabs[3] = { "All Packages", "Installed", "Downloads" };
+    const int ticons[3] = { 17, 11, 8 };
+    int tx = px;
+    for (int t = 0; t < 3; t++) {
+        int tw = 128;
+        if (dui_icon_pill(tx, top_y, tw, 32, tabs[t], ticons[t], s_active_tab == t,
+                          in->mx, in->my, in->left_pressed)) {
+            s_active_tab = t;
+            s_scroll_idx = 0;
+            play_system_sound((char*)"click");
+        }
+        tx += tw + 8;
     }
-    UINTN rlen = len;
-    EFI_STATUS rst = file->Read(file, &rlen, (void*)grid);
-    file->Close(file);
-    root->Close(root);
-    return (!EFI_ERROR(rst) && rlen == len);
+
+    if (dui_icon_pill(px + pw - 122, top_y, 122, 32, "Rescan Disk", 16, false,
+                      in->mx, in->my, in->left_pressed)) {
+        scan_all_packages();
+        play_system_sound((char*)"click");
+        set_status("Scanned \\EFI\\APPS\\ and \\APPS\\ on UEFI volumes", THEME_ACCENT_CYAN);
+    }
+
+    // Status strip at bottom
+    int foot_h = 26;
+    int body_y = top_y + 44;
+    int body_h = ch - (body_y - cy) - foot_h - 8;
+    if (body_h < 100) body_h = 100;
+
+    if (s_active_tab == 2) {
+        render_downloads_tab(px, body_y, pw, body_h, in);
+    } else {
+        // Filter matching packages
+        int vis_indices[MAX_STORE_PKGS];
+        int vis_count = 0;
+        for (int i = 0; i < s_pkg_count; i++) {
+            if (s_active_tab == 1 && !s_pkgs[i].installed) continue;
+            vis_indices[vis_count++] = i;
+        }
+
+        // Compact 2-column grid of Spatial Glass package cards
+        int card_h = 112;
+        int gap = 12;
+        int cols = (pw >= 520) ? 2 : 1;
+        int card_w = (cols == 2) ? (pw - gap) / 2 : pw;
+        int rows_vis = (body_h - 32) / (card_h + gap);
+        if (rows_vis < 1) rows_vis = 1;
+        int total_rows = (vis_count + cols - 1) / cols;
+        int max_scroll = total_rows - rows_vis;
+        if (max_scroll < 0) max_scroll = 0;
+
+        if (pt_in(in->mx, in->my, px, body_y, pw, body_h) && in->scroll_y != 0) {
+            s_scroll_idx -= in->scroll_y;
+        }
+        if (s_scroll_idx < 0) s_scroll_idx = 0;
+        if (s_scroll_idx > max_scroll) s_scroll_idx = max_scroll;
+
+        if (vis_count == 0) {
+            dui_glass_card(px, body_y, pw, 120, THEME_RADIUS_MD, THEME_SURFACE_CARD, 220, false);
+            dui_text(px + 20, body_y + 32, "No installed .PKG or .ELF packages found on disk.", THEME_TEXT_SECONDARY, 1);
+            dui_text(px + 20, body_y + 56, "Switch to 'All Packages' to install or 'Downloads' to fetch via HTTP.", THEME_TEXT_MUTED, 1);
+        } else {
+            int start_idx = s_scroll_idx * cols;
+            int max_draw = rows_vis * cols;
+            for (int v = 0; v < max_draw && (start_idx + v) < vis_count; v++) {
+                StorePkg* p = &s_pkgs[vis_indices[start_idx + v]];
+                int r = v / cols;
+                int c = v % cols;
+                int kx = px + c * (card_w + gap);
+                int ky = body_y + r * (card_h + gap);
+
+                dui_glass_card(kx, ky, card_w, card_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 225, false);
+
+                // App badge
+                dui_rect_rounded(kx + 12, ky + 14, 42, 42, 10, p->accent, 235);
+                if (p->mapped_app != APP_COUNT) {
+                    dui_draw_squircle_icon(kx + 15, ky + 17, 36, (int)p->mapped_app, false);
+                } else {
+                    dui_draw_sys_icon(kx + 22, ky + 24, 22, p->is_elf ? 7 : 8, 0xFFFFFF);
+                }
+
+                // Title, badge & version
+                dui_text_ellipsis(kx + 64, ky + 14, card_w - 156, p->name, THEME_TEXT_PRIMARY, 1);
+                char meta[48];
+                s_copy(meta, p->category, sizeof(meta));
+                s_cat(meta, " | ", sizeof(meta));
+                s_cat(meta, p->version, sizeof(meta));
+                if (p->installed && p->disk_bytes > 0) {
+                    char bstr[12];
+                    u64_to_str(p->disk_bytes, bstr, sizeof(bstr));
+                    s_cat(meta, " (", sizeof(meta));
+                    s_cat(meta, bstr, sizeof(meta));
+                    s_cat(meta, "B)", sizeof(meta));
+                }
+                dui_text_ellipsis(kx + 64, ky + 34, card_w - 156, meta, THEME_TEXT_SECONDARY, 1);
+                dui_text_ellipsis(kx + 12, ky + 68, card_w - 24, p->desc, THEME_TEXT_MUTED, 1);
+                dui_text_ellipsis(kx + 12, ky + 88, card_w - 160, p->disk_path, THEME_ACCENT_TEAL, 1);
+
+                int bx = kx + card_w - 86;
+                if (p->installed) {
+                    if (dui_button(bx, ky + 14, 74, 28, "Launch", THEME_ACCENT_TEAL, true,
+                                   in->mx, in->my, in->left_pressed)) {
+                        launch_pkg_entry(p);
+                    }
+                    if (dui_button(bx, ky + 48, 74, 24, "Remove", THEME_SURFACE_ELEVATED, false,
+                                   in->mx, in->my, in->left_pressed)) {
+                        if (fs_delete_file(p->disk_path)) {
+                            p->installed = false;
+                            p->disk_bytes = 0;
+                            play_system_sound((char*)"click");
+                            set_status("Removed package file from disk", THEME_TEXT_SECONDARY);
+                            if (!p->is_builtin_repo) scan_all_packages();
+                        } else {
+                            play_system_sound((char*)"error");
+                            set_status("Cannot delete: read-only media or locked file", THEME_ACCENT_ROSE);
+                        }
+                    }
+                } else {
+                    if (dui_button(bx, ky + 14, 74, 28, "Install", THEME_ACCENT_IRIS, true,
+                                   in->mx, in->my, in->left_pressed)) {
+                        install_pkg_entry(p);
+                    }
+                }
+            }
+
+            // Scroll controls if needed
+            if (max_scroll > 0) {
+                int sy = body_y + body_h - 28;
+                if (dui_button(px, sy, 84, 24, "Scroll Up", THEME_SURFACE_ELEVATED, false,
+                               in->mx, in->my, in->left_pressed) && s_scroll_idx > 0) {
+                    s_scroll_idx--;
+                }
+                if (dui_button(px + 92, sy, 94, 24, "Scroll Dn", THEME_SURFACE_ELEVATED, false,
+                               in->mx, in->my, in->left_pressed) && s_scroll_idx < max_scroll) {
+                    s_scroll_idx++;
+                }
+            }
+        }
+    }
+
+    // Bottom status bar
+    dui_line(cx + 8, cy + ch - foot_h - 4, cx + cw - 8, cy + ch - foot_h - 4, THEME_BORDER_SUBTLE, 180);
+    dui_text_ellipsis(px, cy + ch - foot_h + 2, pw - 120, s_status_msg, s_status_color, 1);
+
+    int inst_cnt = 0;
+    for (int i = 0; i < s_pkg_count; i++) if (s_pkgs[i].installed) inst_cnt++;
+    char cbuf[32], n1[12], n2[12];
+    u64_to_str((uint64_t)inst_cnt, n1, sizeof(n1));
+    u64_to_str((uint64_t)s_pkg_count, n2, sizeof(n2));
+    s_copy(cbuf, n1, sizeof(cbuf));
+    s_cat(cbuf, "/", sizeof(cbuf));
+    s_cat(cbuf, n2, sizeof(cbuf));
+    s_cat(cbuf, " Active", sizeof(cbuf));
+    dui_text(px + pw - 96, cy + ch - foot_h + 2, cbuf, THEME_TEXT_MUTED, 1);
 }
 
-struct StoreApp {
-    const char* id;
-    const char* name;
-    const char* category;
-    const char* desc;
-    const char* version;
-    const CHAR16* pkg_path;
-    uint32_t icon_color;
-    bool installed;
-    uint32_t disk_bytes;
-};
-
-static StoreApp store_catalog[6] = {
-    {
-        "BLANKPAD",
-        "BlankPad Studio",
-        "Productivity",
-        "Rich text & code editor with live FAT32 Finder VFS.",
-        "v2.4",
-        (const CHAR16*)L"EFI\\APPS\\BLANKPAD.PKG",
-        0x0A84FF,
-        false,
-        0
-    },
-    {
-        "ACTMON",
-        "Activity Monitor Pro",
-        "Developer",
-        "Live CPUID, RDTSC, RAM, Block I/O & PCI inspector.",
-        "v2.4",
-        (const CHAR16*)L"EFI\\APPS\\ACTMON.PKG",
-        0x30D158,
-        false,
-        0
-    },
-    {
-        "BLANKREG",
-        "BlankReg Studio",
-        "Utilities",
-        "Kernel configuration & persistent registry editor.",
-        "v2.1",
-        (const CHAR16*)L"EFI\\APPS\\BLANKREG.PKG",
-        0xFF9F0A,
-        false,
-        0
-    },
-    {
-        "NEONBRK",
-        "NeonBreak Arcade",
-        "Games",
-        "Playable brick-breaker arcade game with ball physics.",
-        "v1.8",
-        (const CHAR16*)L"EFI\\APPS\\NEONBRK.PKG",
-        0xFF2D55,
-        false,
-        0
-    },
-    {
-        "CANVAS",
-        "CanvasStudio Paint",
-        "Creative",
-        "Interactive pixel art studio with FAT32 file save/load.",
-        "v1.5",
-        (const CHAR16*)L"EFI\\APPS\\CANVAS.PKG",
-        0x5856D6,
-        false,
-        0
-    },
-    {
-        "SYNTHPAD",
-        "SynthWave Pad",
-        "Creative",
-        "8-pad polyphonic PIT & HDAudio chime synthesizer.",
-        "v1.9",
-        (const CHAR16*)L"EFI\\APPS\\SYNTHPAD.PKG",
-        0xAF52DE,
-        false,
-        0
-    }
-};
+static void store_on_close(BlankWindow* win) {
+    (void)win;
+    s_url_focused = false;
+}
 
 } // namespace
 
-extern "C" void launch_app_store(EFI_SYSTEM_TABLE *SystemTable) {
-    if (!SystemTable) return;
+extern "C" {
 
-    int win_w = 780;
-    int win_h = 510;
-    if (win_w > screen_width - 40) win_w = screen_width - 40;
-    if (win_h > screen_height - 100) win_h = screen_height - 100;
-
-    int win_x = (screen_width - win_w) / 2;
-    int win_y = (screen_height - win_h) / 2;
-    int sidebar_w = 172;
-
-    EFI_GUID SimplePointerProtocolGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
-    EFI_SIMPLE_POINTER_PROTOCOL *Mouse = NULL;
-    SystemTable->BootServices->LocateProtocol(&SimplePointerProtocolGuid, NULL, (void**)&Mouse);
-    if (Mouse) Mouse->Reset(Mouse, TRUE);
-
-    int cursor_x = screen_width / 2;
-    int cursor_y = screen_height / 2;
-    bool prev_left = false;
-    bool mouse_down = false;
-
-    // Probe real FAT32 disk for installed .PKG files on startup
-    for (int i = 0; i < 6; i++) {
-        uint32_t sz = 0;
-        if (check_pkg_installed(SystemTable, store_catalog[i].pkg_path, &sz)) {
-            store_catalog[i].installed = true;
-            store_catalog[i].disk_bytes = sz;
-        }
-    }
-
-    int active_nav = 0;  // 0=Discover, 1=Arcade & Creative, 2=Work & Dev, 3=Installed on Disk
-    int active_mode = 0; // 0=Store Catalog, 1=NeonBreak Arcade, 2=CanvasStudio Paint, 3=SynthWave Pad
-
-    // NeonBreak Arcade state
-    int paddle_x = 220;
-    int ball_x = 260;
-    int ball_y = 240;
-    int ball_vx = 4;
-    int ball_vy = -4;
-    int arcade_score = 0;
-    int arcade_lives = 3;
-    bool bricks[32];
-    for (int b = 0; b < 32; b++) bricks[b] = true;
-
-    // CanvasStudio Paint state (32 x 20 pixel grid)
-    uint8_t canvas_grid[640];
-    for (int p = 0; p < 640; p++) canvas_grid[p] = 0;
-    uint8_t selected_color_idx = 1;
-    const uint32_t palette_colors[8] = {
-        0xFFFFFF, 0x1C1C1E, 0xFF3B30, 0xFF9500,
-        0xFFCC00, 0x34C759, 0x0A84FF, 0xAF52DE
-    };
-
-    // SynthWave Pad state
-    int last_pad_hit = -1;
-    int pad_flash_timer = 0;
-    const char* pad_names[8] = {
-        "C4 Kick", "D4 Snare", "E4 Chime", "F4 Pulse",
-        "G4 Pluck", "A4 Synth", "B4 Bell",  "C5 Lead"
-    };
-    const uint32_t pad_freqs[8] = { 262, 294, 330, 349, 392, 440, 494, 523 };
-    const uint32_t pad_colors[8] = {
-        0xFF2D55, 0xFF9500, 0xFFCC00, 0x30D158,
-        0x64D2FF, 0x0A84FF, 0x5856D6, 0xAF52DE
-    };
-
-    play_system_sound((char*)"notification");
-
-    bool done = false;
-    while (!done) {
-        if (pad_flash_timer > 0) pad_flash_timer--;
-
-        // Poll Keyboard
-        EFI_INPUT_KEY Key;
-        if (SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &Key) == EFI_SUCCESS) {
-            if (Key.ScanCode == 0x17) {
-                if (active_mode != 0) {
-                    active_mode = 0;
-                    play_system_sound((char*)"click");
-                } else {
-                    done = true;
-                }
-            } else if (active_mode == 1) {
-                if (Key.ScanCode == 0x04 || Key.UnicodeChar == 'a' || Key.UnicodeChar == 'A') {
-                    paddle_x -= 24;
-                    if (paddle_x < 0) paddle_x = 0;
-                } else if (Key.ScanCode == 0x03 || Key.UnicodeChar == 'd' || Key.UnicodeChar == 'D') {
-                    paddle_x += 24;
-                    if (paddle_x > 460) paddle_x = 460;
-                }
-            } else if (active_mode == 3) {
-                if (Key.UnicodeChar >= '1' && Key.UnicodeChar <= '8') {
-                    int p = (int)(Key.UnicodeChar - '1');
-                    last_pad_hit = p;
-                    pad_flash_timer = 10;
-                    play_system_sound((char*)"click");
-                    play_pit_tone(SystemTable, pad_freqs[p], 45000);
-                }
-            }
-        }
-
-        // Poll Mouse
-        bool clicked = false;
-        if (Mouse) {
-            EFI_SIMPLE_POINTER_STATE State;
-            if (Mouse->GetState(Mouse, &State) == EFI_SUCCESS) {
-                int dx = State.RelativeMovementX / 1000;
-                int dy = State.RelativeMovementY / 1000;
-                if (dx || dy) {
-                    cursor_x += dx;
-                    cursor_y += dy;
-                    if (cursor_x < 0) cursor_x = 0;
-                    if (cursor_x > screen_width - 1) cursor_x = screen_width - 1;
-                    if (cursor_y < 0) cursor_y = 0;
-                    if (cursor_y > screen_height - 1) cursor_y = screen_height - 1;
-                }
-                mouse_down = State.LeftButton;
-                clicked = (State.LeftButton && !prev_left);
-                prev_left = State.LeftButton;
-            }
-        }
-
-        int content_x = win_x + sidebar_w + 16;
-
-        // Handle clicks & interactive modes
-        if (clicked) {
-            // Window Close button
-            if (blankUI_hit_test_window_close(cursor_x, cursor_y, win_w, win_h) ||
-                (cursor_x >= win_x + 10 && cursor_x <= win_x + 30 &&
-                 cursor_y >= win_y + 8 && cursor_y <= win_y + 30)) {
-                done = true;
-            }
-
-            // Sidebar navigation clicks (also exits embedded app back to store)
-            for (int s = 0; s < 4; s++) {
-                int sy = win_y + 60 + s * 38;
-                if (cursor_x >= win_x + 10 && cursor_x <= win_x + sidebar_w - 10 &&
-                    cursor_y >= sy && cursor_y < sy + 32) {
-                    active_nav = s;
-                    active_mode = 0;
-                    play_system_sound((char*)"click");
-                }
-            }
-
-            if (active_mode != 0) {
-                // [ Back to Store ] button in mini-apps
-                int back_x = content_x;
-                int back_y = win_y + 52;
-                if (cursor_x >= back_x && cursor_x <= back_x + 130 &&
-                    cursor_y >= back_y && cursor_y <= back_y + 28) {
-                    active_mode = 0;
-                    play_system_sound((char*)"click");
-                }
-            }
-
-            if (active_mode == 0) {
-                // Store Catalog card actions
-                int grid_y = win_y + 150;
-                int vis_idx = 0;
-                for (int i = 0; i < 6; i++) {
-                    if (active_nav == 1 && i < 3) continue;
-                    if (active_nav == 2 && i >= 3) continue;
-                    if (active_nav == 3 && !store_catalog[i].installed) continue;
-
-                    int row = vis_idx / 2;
-                    int col = vis_idx % 2;
-                    int card_w = (win_w - sidebar_w - 48) / 2;
-                    int card_h = 104;
-                    int card_x = content_x + col * (card_w + 12);
-                    int card_y = grid_y + row * (card_h + 12);
-                    vis_idx++;
-
-                    int btn_x = card_x + card_w - 76;
-                    int btn_y = card_y + 20;
-
-                    // GET or OPEN button
-                    if (cursor_x >= btn_x && cursor_x <= btn_x + 64 &&
-                        cursor_y >= btn_y && cursor_y <= btn_y + 28) {
-                        if (!store_catalog[i].installed) {
-                            if (write_pkg_to_disk(SystemTable, store_catalog[i].pkg_path,
-                                                  store_catalog[i].id, store_catalog[i].name,
-                                                  store_catalog[i].version)) {
-                                store_catalog[i].installed = true;
-                                store_catalog[i].disk_bytes = 256;
-                                play_system_sound((char*)"notification");
-                                blankUI_draw_toast((char*)"App Store", (char*)"Package written to \\EFI\\APPS\\ on FAT32!");
-                            } else {
-                                store_catalog[i].installed = true;
-                                store_catalog[i].disk_bytes = 256;
-                                play_system_sound((char*)"notification");
-                                blankUI_draw_toast((char*)"App Store", (char*)"Package installed in session memory.");
-                            }
-                        } else {
-                            play_system_sound((char*)"click");
-                            if (i == 0) {
-                                launch_blankpad();
-                                if (Mouse) Mouse->Reset(Mouse, TRUE);
-                                prev_left = false;
-                            } else if (i == 1) {
-                                launch_task_manager();
-                                if (Mouse) Mouse->Reset(Mouse, TRUE);
-                                prev_left = false;
-                            } else if (i == 2) {
-                                launch_blankreg_edit();
-                                if (Mouse) Mouse->Reset(Mouse, TRUE);
-                                prev_left = false;
-                            } else if (i == 3) {
-                                active_mode = 1; // NeonBreak Arcade
-                            } else if (i == 4) {
-                                active_mode = 2; // CanvasStudio Paint
-                            } else if (i == 5) {
-                                active_mode = 3; // SynthWave Pad
-                            }
-                        }
-                    }
-
-                    // UNINSTALL button (if installed)
-                    if (store_catalog[i].installed) {
-                        int un_x = card_x + card_w - 76;
-                        int un_y = card_y + 54;
-                        if (cursor_x >= un_x && cursor_x <= un_x + 64 &&
-                            cursor_y >= un_y && cursor_y <= un_y + 22) {
-                            delete_pkg_from_disk(SystemTable, store_catalog[i].pkg_path);
-                            store_catalog[i].installed = false;
-                            store_catalog[i].disk_bytes = 0;
-                            play_system_sound((char*)"click");
-                            blankUI_draw_toast((char*)"App Store", (char*)"Removed .PKG file from \\EFI\\APPS\\.");
-                        }
-                    }
-                }
-            } else if (active_mode == 1) {
-                // NeonBreak Reset button
-                int rst_x = content_x + 430;
-                int rst_y = win_y + 52;
-                if (cursor_x >= rst_x && cursor_x <= rst_x + 120 &&
-                    cursor_y >= rst_y && cursor_y <= rst_y + 28) {
-                    arcade_score = 0;
-                    arcade_lives = 3;
-                    ball_x = 260;
-                    ball_y = 240;
-                    ball_vx = 4;
-                    ball_vy = -4;
-                    for (int b = 0; b < 32; b++) bricks[b] = true;
-                    play_system_sound((char*)"notification");
-                }
-            } else if (active_mode == 2) {
-                // CanvasStudio palette & toolbar clicks
-                int pal_x = content_x + 145;
-                int pal_y = win_y + 52;
-                for (int c = 0; c < 8; c++) {
-                    int cx = pal_x + c * 26;
-                    if (cursor_x >= cx && cursor_x <= cx + 22 &&
-                        cursor_y >= pal_y && cursor_y <= pal_y + 24) {
-                        selected_color_idx = (uint8_t)c;
-                        play_system_sound((char*)"click");
-                    }
-                }
-                // Clear button
-                int clr_x = content_x + 362;
-                if (cursor_x >= clr_x && cursor_x <= clr_x + 58 &&
-                    cursor_y >= pal_y && cursor_y <= pal_y + 26) {
-                    for (int p = 0; p < 640; p++) canvas_grid[p] = 0;
-                    play_system_sound((char*)"click");
-                }
-                // Save button
-                int sav_x = content_x + 426;
-                if (cursor_x >= sav_x && cursor_x <= sav_x + 68 &&
-                    cursor_y >= pal_y && cursor_y <= pal_y + 26) {
-                    if (save_canvas_to_disk(SystemTable, canvas_grid, 640)) {
-                        play_system_sound((char*)"notification");
-                        blankUI_draw_toast((char*)"CanvasStudio", (char*)"Saved artwork to \\EFI\\APPS\\CANVAS.ART!");
-                    }
-                }
-                // Load button
-                int lod_x = content_x + 500;
-                if (cursor_x >= lod_x && cursor_x <= lod_x + 68 &&
-                    cursor_y >= pal_y && cursor_y <= pal_y + 26) {
-                    if (load_canvas_from_disk(SystemTable, canvas_grid, 640)) {
-                        play_system_sound((char*)"notification");
-                        blankUI_draw_toast((char*)"CanvasStudio", (char*)"Loaded \\EFI\\APPS\\CANVAS.ART from disk!");
-                    }
-                }
-            } else if (active_mode == 3) {
-                // SynthWave 8 pads click
-                int pad_start_x = content_x + 10;
-                int pad_start_y = win_y + 125;
-                int pw = 128;
-                int ph = 135;
-                for (int p = 0; p < 8; p++) {
-                    int r = p / 4;
-                    int c = p % 4;
-                    int px = pad_start_x + c * (pw + 12);
-                    int py = pad_start_y + r * (ph + 14);
-                    if (cursor_x >= px && cursor_x <= px + pw &&
-                        cursor_y >= py && cursor_y <= py + ph) {
-                        last_pad_hit = p;
-                        pad_flash_timer = 10;
-                        play_system_sound((char*)"click");
-                        play_pit_tone(SystemTable, pad_freqs[p], 45000);
-                    }
-                }
-            }
-        }
-
-        // Continuous drag painting in CanvasStudio
-        if (active_mode == 2 && mouse_down) {
-            int cv_x = content_x + 12;
-            int cv_y = win_y + 92;
-            int cell_s = 17;
-            if (cursor_x >= cv_x && cursor_x < cv_x + 32 * cell_s &&
-                cursor_y >= cv_y && cursor_y < cv_y + 20 * cell_s) {
-                int gx = (cursor_x - cv_x) / cell_s;
-                int gy = (cursor_y - cv_y) / cell_s;
-                if (gx >= 0 && gx < 32 && gy >= 0 && gy < 20) {
-                    canvas_grid[gy * 32 + gx] = selected_color_idx;
-                }
-            }
-        }
-
-        // Draw Background & Desktop Shell
-        dui_draw_wallpaper();
-        blankUI_draw_menubar();
-        blankUI_draw_dock();
-
-        // Main Window Body
-        dui_shadow(win_x, win_y, win_w, win_h, 14, 10, 0x000000, 70);
-        dui_rect_rounded(win_x, win_y, win_w, win_h, 14, 0xF2F2F7, 252);
-
-        // Titlebar
-        dui_rect(win_x, win_y, win_w, 38, 0xE5E5EA, 255);
-        dui_circle(win_x + 18, win_y + 19, 6, 0xFF5F56, 255);
-        dui_circle(win_x + 38, win_y + 19, 6, 0xFFBD2E, 255);
-        dui_circle(win_x + 58, win_y + 19, 6, 0x27C93F, 255);
-        dui_text(win_x + win_w / 2 - dui_text_width("BlankOS App Store & FAT32 Package Hub", 1) / 2,
-                 win_y + 12, "BlankOS App Store & FAT32 Package Hub", 0x1C1C1E, 1);
-
-        // Sidebar
-        dui_rect(win_x, win_y + 38, sidebar_w, win_h - 38, 0xEBEBF0, 248);
-        dui_line(win_x + sidebar_w, win_y + 38, win_x + sidebar_w, win_y + win_h, 0xD1D1D6, 1);
-
-        const char* nav_items[4] = { "Discover All", "Games & Studio", "Work & Kernel", "Installed (.PKG)" };
-        for (int s = 0; s < 4; s++) {
-            int sy = win_y + 60 + s * 38;
-            if (s == active_nav && active_mode == 0) {
-                dui_rect_rounded(win_x + 10, sy, sidebar_w - 20, 32, 6, 0x0A84FF, 255);
-                dui_text(win_x + 20, sy + 8, nav_items[s], 0xFFFFFF, 1);
-            } else {
-                dui_text(win_x + 20, sy + 8, nav_items[s], 0x3A3A3C, 1);
-            }
-        }
-
-        // Disk persistence indicator in sidebar bottom
-        int inst_cnt = 0;
-        for (int i = 0; i < 6; i++) if (store_catalog[i].installed) inst_cnt++;
-        char pkg_stat[48];
-        char nb[16];
-        st_strcpy(pkg_stat, "FAT32 Packages: ");
-        st_utoa((uint64_t)inst_cnt, nb);
-        st_strcat(pkg_stat, nb);
-        st_strcat(pkg_stat, "/6");
-        dui_text(win_x + 16, win_y + win_h - 46, pkg_stat, 0x3A3A3C, 1);
-        dui_text(win_x + 16, win_y + win_h - 28, "Path: \\EFI\\APPS\\*.PKG", 0x8E8E93, 1);
-
-        // MODE 0: STORE CATALOG
-        if (active_mode == 0) {
-            int banner_w = win_w - sidebar_w - 32;
-            int banner_h = 80;
-            dui_gradient_rounded(content_x, win_y + 52, banner_w, banner_h, 10, 0x0A84FF, 0x5856D6);
-            dui_text(content_x + 18, win_y + 64, "VERIFIED UEFI FAT32 PACKAGE REPOSITORY", 0x82C7FF, 1);
-            dui_text(content_x + 18, win_y + 84, "Install Real BlankOS System Tools & Interactive Creative Apps", 0xFFFFFF, 1);
-            dui_text(content_x + 18, win_y + 104, "Packages persist in \\EFI\\APPS\\ across reboots and launch natively.", 0xE5E5EA, 1);
-
-            int grid_y = win_y + 150;
-            int vis_idx = 0;
-            for (int i = 0; i < 6; i++) {
-                if (active_nav == 1 && i < 3) continue;
-                if (active_nav == 2 && i >= 3) continue;
-                if (active_nav == 3 && !store_catalog[i].installed) continue;
-
-                int row = vis_idx / 2;
-                int col = vis_idx % 2;
-                int card_w = (win_w - sidebar_w - 48) / 2;
-                int card_h = 104;
-                int card_x = content_x + col * (card_w + 12);
-                int card_y = grid_y + row * (card_h + 12);
-                vis_idx++;
-
-                dui_rect_rounded(card_x, card_y, card_w, card_h, 8, 0xFFFFFF, 255);
-                dui_rect_outline(card_x, card_y, card_w, card_h, 0xE5E5EA, 1);
-
-                dui_rect_rounded(card_x + 12, card_y + 14, 44, 44, 10, store_catalog[i].icon_color, 255);
-                dui_text(card_x + 26, card_y + 28, "+", 0xFFFFFF, 1);
-
-                dui_text(card_x + 66, card_y + 14, store_catalog[i].name, 0x1C1C1E, 1);
-                dui_text(card_x + 66, card_y + 32, store_catalog[i].category, 0x8E8E93, 1);
-                dui_text(card_x + 66, card_y + 48, store_catalog[i].version, 0x0A84FF, 1);
-
-                dui_text(card_x + 12, card_y + 80, store_catalog[i].desc, 0x636366, 1);
-
-                int btn_x = card_x + card_w - 76;
-                int btn_y = card_y + 18;
-                if (store_catalog[i].installed) {
-                    dui_rect_rounded(btn_x, btn_y, 64, 28, 14, 0x34C759, 255);
-                    dui_text(btn_x + 14, btn_y + 7, "OPEN", 0xFFFFFF, 1);
-
-                    dui_rect_rounded(btn_x, card_y + 52, 64, 22, 6, 0xFFE5E5, 255);
-                    dui_text(btn_x + 8, card_y + 56, "REMOVE", 0xFF3B30, 1);
-                } else {
-                    dui_rect_rounded(btn_x, btn_y, 64, 28, 14, 0x007AFF, 255);
-                    dui_text(btn_x + 18, btn_y + 7, "GET", 0xFFFFFF, 1);
-                }
-            }
-        }
-
-        // MODE 1: NEONBREAK ARCADE (Playable Brick-Breaker Game)
-        else if (active_mode == 1) {
-            dui_rect_rounded(content_x, win_y + 52, 130, 28, 7, 0x2C2C2E, 255);
-            dui_text(content_x + 12, win_y + 59, "[ Back to Store ]", 0xFFFFFF, 1);
-
-            dui_rect_rounded(content_x + 430, win_y + 52, 120, 28, 7, 0x0A84FF, 255);
-            dui_text(content_x + 444, win_y + 59, "[ Reset Game ]", 0xFFFFFF, 1);
-
-            char sc_buf[64];
-            st_strcpy(sc_buf, "SCORE: ");
-            st_utoa((uint64_t)arcade_score, nb);
-            st_strcat(sc_buf, nb);
-            st_strcat(sc_buf, "   |   LIVES: ");
-            st_utoa((uint64_t)arcade_lives, nb);
-            st_strcat(sc_buf, nb);
-            dui_text(content_x + 150, win_y + 59, sc_buf, 0x1C1C1E, 1);
-
-            int arena_x = content_x;
-            int arena_y = win_y + 90;
-            int arena_w = win_w - sidebar_w - 32;
-            int arena_h = win_h - 108;
-            dui_rect_rounded(arena_x, arena_y, arena_w, arena_h, 10, 0x11131A, 255);
-            dui_rect_outline(arena_x, arena_y, arena_w, arena_h, 0x2E3446, 1);
-
-            // Mouse tracks paddle when inside arena
-            if (cursor_x >= arena_x && cursor_x <= arena_x + arena_w) {
-                paddle_x = cursor_x - arena_x - 45;
-                if (paddle_x < 6) paddle_x = 6;
-                if (paddle_x > arena_w - 96) paddle_x = arena_w - 96;
-            }
-
-            // Update ball physics
-            if (arcade_lives > 0) {
-                ball_x += ball_vx;
-                ball_y += ball_vy;
-
-                if (ball_x <= 8) { ball_x = 8; ball_vx = -ball_vx; }
-                if (ball_x >= arena_w - 16) { ball_x = arena_w - 16; ball_vx = -ball_vx; }
-                if (ball_y <= 8) { ball_y = 8; ball_vy = -ball_vy; }
-
-                // Paddle collision
-                int py = arena_h - 28;
-                if (ball_vy > 0 && ball_y + 8 >= py && ball_y <= py + 12 &&
-                    ball_x + 8 >= paddle_x && ball_x <= paddle_x + 90) {
-                    ball_vy = -ball_vy;
-                    int hit_offset = (ball_x - (paddle_x + 45)) / 10;
-                    ball_vx = hit_offset;
-                    if (ball_vx == 0) ball_vx = 3;
-                    play_pit_tone(SystemTable, 440, 6000);
-                }
-
-                // Brick collisions (4 rows x 8 cols)
-                int bw = (arena_w - 48) / 8;
-                int bh = 20;
-                for (int b = 0; b < 32; b++) {
-                    if (!bricks[b]) continue;
-                    int br = b / 8;
-                    int bc = b % 8;
-                    int bx = 16 + bc * (bw + 2);
-                    int by = 24 + br * (bh + 6);
-                    if (ball_x + 8 >= bx && ball_x <= bx + bw &&
-                        ball_y + 8 >= by && ball_y <= by + bh) {
-                        bricks[b] = false;
-                        ball_vy = -ball_vy;
-                        arcade_score += 25;
-                        play_pit_tone(SystemTable, 587 + br * 80, 8000);
-                        break;
-                    }
-                }
-
-                if (ball_y > arena_h - 8) {
-                    arcade_lives--;
-                    ball_x = arena_w / 2;
-                    ball_y = arena_h / 2;
-                    ball_vy = -4;
-                    play_pit_tone(SystemTable, 180, 25000);
-                }
-            }
-
-            // Draw bricks
-            const uint32_t bcols[4] = { 0xFF2D55, 0xFF9F0A, 0x30D158, 0x64D2FF };
-            int bw = (arena_w - 48) / 8;
-            int bh = 20;
-            for (int b = 0; b < 32; b++) {
-                if (!bricks[b]) continue;
-                int br = b / 8;
-                int bc = b % 8;
-                int bx = arena_x + 16 + bc * (bw + 2);
-                int by = arena_y + 24 + br * (bh + 6);
-                dui_rect_rounded(bx, by, bw, bh, 4, bcols[br], 255);
-            }
-
-            // Draw paddle & ball
-            dui_rect_rounded(arena_x + paddle_x, arena_y + arena_h - 28, 90, 12, 6, 0x0A84FF, 255);
-            dui_circle(arena_x + ball_x, arena_y + ball_y, 6, 0xFFFFFF, 255);
-
-            if (arcade_lives <= 0) {
-                dui_text(arena_x + 170, arena_y + arena_h / 2, "GAME OVER - Click [ Reset Game ]", 0xFF453A, 1);
-            }
-        }
-
-        // MODE 2: CANVASSTUDIO PAINT
-        else if (active_mode == 2) {
-            dui_rect_rounded(content_x, win_y + 52, 130, 26, 7, 0x2C2C2E, 255);
-            dui_text(content_x + 12, win_y + 58, "[ Back to Store ]", 0xFFFFFF, 1);
-
-            int pal_x = content_x + 145;
-            int pal_y = win_y + 52;
-            for (int c = 0; c < 8; c++) {
-                int cx = pal_x + c * 26;
-                dui_rect_rounded(cx, pal_y, 22, 24, 4, palette_colors[c], 255);
-                if (selected_color_idx == (uint8_t)c) {
-                    dui_rect_outline(cx - 1, pal_y - 1, 24, 26, 0x0A84FF, 2);
-                }
-            }
-
-            dui_rect_rounded(content_x + 362, pal_y, 58, 26, 6, 0xFF3B30, 255);
-            dui_text(content_x + 372, pal_y + 6, "Clear", 0xFFFFFF, 1);
-
-            dui_rect_rounded(content_x + 426, pal_y, 68, 26, 6, 0x34C759, 255);
-            dui_text(content_x + 440, pal_y + 6, "Save", 0xFFFFFF, 1);
-
-            dui_rect_rounded(content_x + 500, pal_y, 68, 26, 6, 0x0A84FF, 255);
-            dui_text(content_x + 514, pal_y + 6, "Load", 0xFFFFFF, 1);
-
-            int cv_x = content_x + 12;
-            int cv_y = win_y + 92;
-            int cell_s = 17;
-            dui_rect_outline(cv_x - 2, cv_y - 2, 32 * cell_s + 4, 20 * cell_s + 4, 0x8E8E93, 2);
-
-            for (int gy = 0; gy < 20; gy++) {
-                for (int gx = 0; gx < 32; gx++) {
-                    uint8_t cidx = canvas_grid[gy * 32 + gx] & 7;
-                    dui_rect(cv_x + gx * cell_s, cv_y + gy * cell_s, cell_s - 1, cell_s - 1, palette_colors[cidx], 255);
-                }
-            }
-            dui_text(cv_x, cv_y + 20 * cell_s + 10, "Drag mouse to paint | Save writes \\EFI\\APPS\\CANVAS.ART to FAT32", 0x4A5060, 1);
-        }
-
-        // MODE 3: SYNTHWAVE PAD
-        else if (active_mode == 3) {
-            dui_rect_rounded(content_x, win_y + 52, 130, 28, 7, 0x2C2C2E, 255);
-            dui_text(content_x + 12, win_y + 59, "[ Back to Store ]", 0xFFFFFF, 1);
-            dui_text(content_x + 148, win_y + 59, "SynthWave 8-Pad Hardware PIT & HDAudio Synthesizer (Click or Keys 1-8)", 0x1C1C1E, 1);
-
-            int pad_start_x = content_x + 10;
-            int pad_start_y = win_y + 125;
-            int pw = 128;
-            int ph = 135;
-            for (int p = 0; p < 8; p++) {
-                int r = p / 4;
-                int c = p % 4;
-                int px = pad_start_x + c * (pw + 12);
-                int py = pad_start_y + r * (ph + 14);
-                bool active = (last_pad_hit == p && pad_flash_timer > 0);
-                uint32_t col = active ? 0xFFFFFF : pad_colors[p];
-                uint32_t tcol = active ? 0x1C1C1E : 0xFFFFFF;
-
-                dui_rect_rounded(px, py, pw, ph, 12, col, 255);
-                dui_rect_outline(px, py, pw, ph, 0x1C1C1E, 1);
-                dui_text(px + 16, py + 24, pad_names[p], tcol, 1);
-
-                char fstr[32];
-                st_utoa((uint64_t)pad_freqs[p], nb);
-                st_strcpy(fstr, nb);
-                st_strcat(fstr, " Hz");
-                dui_text(px + 16, py + 52, fstr, tcol, 1);
-                dui_text(px + 16, py + 96, "[ TRIGGER ]", tcol, 1);
-            }
-        }
-
-        blankUI_draw_cursor(cursor_x, cursor_y);
-        swap_buffers();
-        SystemTable->BootServices->Stall(16000);
-    }
+void store_register(void) {
+    if (s_registered) return;
+    s_registered = true;
+    wm_register_app(APP_STORE, "Software Hub", 780, 540, THEME_ACCENT_TEAL,
+                    store_on_frame, store_on_close);
 }
+
+void launch_app_store(EFI_SYSTEM_TABLE* st) {
+    if (st && !gSystemTable) gSystemTable = st;
+    store_register();
+    wm_open_app(APP_STORE);
+}
+
+} // extern "C"

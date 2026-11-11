@@ -1,148 +1,150 @@
-// BlankOS Terminal Emulator - Catppuccin Mocha themed graphical shell (blanksh)
-// Freestanding C++ for UEFI. 100% Real Hardware, VFS, Crypto, and PCIe Integration.
-
-#include <efi.h>
-#include <efilib.h>
-#include <efiprot.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <efi.h>
+#include <efilib.h>
+#include <efiprot.h>
+
+#include "../ui/theme.h"
+#include "../ui/blankDUI.h"
+#include "../ui/window_manager.h"
+#include "../kernel/input.h"
+#include "../kernel/net.h"
+#include "../kernel/audio.h"
 
 extern "C" {
+    extern EFI_SYSTEM_TABLE *gSystemTable;
+    extern int g_wallpaper_theme;
 
-// External drawing primitives
-extern void swap_buffers();
-extern void dui_draw_wallpaper();
-extern void dui_rect(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
-extern void dui_rect_rounded(int x, int y, int w, int h, int radius, uint32_t color, uint8_t alpha);
-extern void dui_rect_outline(int x, int y, int w, int h, uint32_t color, int thickness);
-extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
-extern int  dui_text_width(const char* text, int scale);
-extern void dui_shadow(int x, int y, int w, int h, int radius, int blur_radius, uint32_t color, uint8_t alpha);
-extern void dui_circle(int cx, int cy, int r, uint32_t color, uint8_t alpha);
-extern void blankUI_draw_menubar();
-extern void blankUI_draw_dock();
-extern void blankUI_draw_cursor(int x, int y);
-extern int  screen_width;
-extern int  screen_height;
-extern int  g_wallpaper_theme;
-extern bool set_screen_resolution(uint32_t target_w, uint32_t target_h);
-extern void play_system_sound(char* sound_name);
-extern void set_master_volume(float volume);
-extern float get_master_volume(void);
-extern void launch_updater(EFI_SYSTEM_TABLE *SystemTable);
-extern void launch_blankpad(void);
-extern void launch_task_manager(void);
-extern void launch_blankreg_edit(void);
-extern bool g_is_live_cd;
+    extern const char* kernel_get_boot_log(void);
+    extern void os_restart(void);
+    extern void os_shutdown(void);
 
-// Real Kernel & Driver Hooks
-extern int pci_get_device_count(void);
-extern bool pci_get_device_info(int index, uint8_t* bus, uint8_t* dev, uint8_t* func, uint16_t* vendor, uint16_t* device, uint8_t* class_code, uint8_t* subclass, uint32_t* bar0, const char** vendor_str, const char** dev_str, const char** drv_str);
-extern const char* pci_get_cpu_vendor(void);
-extern const char* pci_get_cpu_brand(void);
+    extern int pci_get_device_count(void);
+    extern bool pci_get_device_info(int index, uint8_t* bus, uint8_t* dev, uint8_t* func,
+                                    uint16_t* vendor, uint16_t* device, uint8_t* class_code,
+                                    uint8_t* subclass, uint32_t* bar0, const char** vendor_str,
+                                    const char** dev_str, const char** drv_str);
+    extern const char* pci_get_cpu_vendor(void);
+    extern const char* pci_get_cpu_brand(void);
 
-extern uint64_t memory_get_total_mb(void);
-extern uint64_t memory_get_used_mb(void);
-extern uint64_t memory_get_free_mb(void);
-extern uint32_t memory_get_alloc_count(void);
+    extern uint64_t memory_get_total_mb(void);
+    extern uint64_t memory_get_used_mb(void);
+    extern uint64_t memory_get_free_mb(void);
+    extern uint32_t memory_get_alloc_count(void);
 
-extern void vfs_init(EFI_SYSTEM_TABLE *st);
-extern int vfs_get_file_count(void);
-extern const char* vfs_get_file_name(int idx);
-extern int vfs_get_file_size(int idx);
-extern bool vfs_read_file(const char* name, char* out_buf, int max_len);
-extern bool vfs_write_file(const char* name, const char* content);
-extern bool vfs_delete_file(const char* name);
+    extern void vfs_init(EFI_SYSTEM_TABLE *st);
+    extern int vfs_get_file_count(void);
+    extern const char* vfs_get_file_name(int idx);
+    extern int vfs_get_file_size(int idx);
+    extern bool vfs_read_file(const char* name, char* out_buf, int max_len);
+    extern bool vfs_write_file(const char* name, const char* content);
+    extern bool vfs_delete_file(const char* name);
 
-extern void sha256_hash(char* input_string, uint8_t* output_hash);
-extern const char* net_get_adapter_name(void);
-extern const char* net_get_mac_str(void);
-extern const char* net_get_ipv4_str(void);
-extern uint32_t net_get_tx_packets(void);
-extern uint32_t net_get_rx_packets(void);
+    extern void blankReg_set_int(const char* key, int val);
 
-extern int blankReg_get_count(void);
-extern bool blankReg_get_entry(int index, char* key_out, int* type_out, int* int_out, char* str_out);
-extern void os_restart(void);
-extern void os_shutdown(void);
-
-struct RTC_Time {
-    uint8_t second;
-    uint8_t minute;
-    uint8_t hour;
-    uint8_t day;
-    uint8_t month;
-    uint32_t year;
-};
-extern void get_rtc_time(RTC_Time *time);
-
-// Catppuccin Mocha palette
-static const uint32_t COL_BASE      = 0x1E1E2E;
-static const uint32_t COL_MANTLE    = 0x181825;
-static const uint32_t COL_SURFACE0  = 0x313244;
-static const uint32_t COL_TEXT      = 0xCDD6F4;
-static const uint32_t COL_SUBTEXT   = 0xA6ADC8;
-static const uint32_t COL_GREEN     = 0xA6E3A1;
-static const uint32_t COL_RED       = 0xF38BA8;
-static const uint32_t COL_YELLOW    = 0xF9E2AF;
-static const uint32_t COL_BLUE      = 0x89B4FA;
-static const uint32_t COL_LAVENDER  = 0xB4BEFE;
-
-static const uint32_t COL_TL_CLOSE    = 0xFF5F57;
-static const uint32_t COL_TL_MINIMIZE = 0xFEBC2E;
-static const uint32_t COL_TL_MAXIMIZE = 0x28C840;
-
-static int str_eq(const char* a, const char* b) {
-    if (!a || !b) return 0;
-    while (*a && *b) {
-        if (*a != *b) return 0;
-        a++; b++;
-    }
-    return (*a == *b);
+    typedef struct {
+        uint8_t second;
+        uint8_t minute;
+        uint8_t hour;
+        uint8_t day;
+        uint8_t month;
+        uint32_t year;
+    } RTC_Time;
+    extern void get_rtc_time(RTC_Time *time);
 }
 
-static int str_starts_with(const char* str, const char* prefix) {
-    if (!str || !prefix) return 0;
-    while (*prefix) {
-        if (*str != *prefix) return 0;
-        str++; prefix++;
-    }
-    return 1;
+#define TERM_MAX_LINES   256
+#define TERM_LINE_LEN    112
+#define TERM_HIST_MAX    24
+#define TERM_INPUT_MAX   160
+
+typedef struct {
+    char text[TERM_LINE_LEN];
+    uint32_t color;
+} TermLine;
+
+static TermLine g_term_lines[TERM_MAX_LINES];
+static int      g_term_count = 0;
+static int      g_term_scroll = 0;
+static char     g_term_input[TERM_INPUT_MAX] = "";
+static int      g_term_input_len = 0;
+static char     g_term_hist[TERM_HIST_MAX][TERM_INPUT_MAX];
+static int      g_term_hist_count = 0;
+static int      g_term_hist_pos = -1;
+static int      g_term_http_id = -1;
+static bool     g_term_bootstrapped = false;
+
+static int tm_len(const char* s) {
+    int n = 0;
+    while (s && s[n]) n++;
+    return n;
 }
 
-static void str_copy(char* dst, const char* src) {
-    if (!dst || !src) return;
-    while (*src) *dst++ = *src++;
-    *dst = '\0';
-}
-
-static void str_cat(char* dst, const char* src) {
-    if (!dst || !src) return;
-    while (*dst) dst++;
-    while (*src) *dst++ = *src++;
-    *dst = '\0';
-}
-
-static void int_to_str(int val, char* buf) {
-    if (val == 0) {
-        buf[0] = '0'; buf[1] = '\0'; return;
-    }
-    int neg = 0;
-    if (val < 0) { neg = 1; val = -val; }
-    char tmp[16];
+static void tm_copy(char* dst, const char* src, int max_len) {
+    if (!dst || max_len <= 0) return;
     int i = 0;
-    while (val > 0) {
-        tmp[i++] = '0' + (val % 10);
+    while (src && src[i] && i < max_len - 1) {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+
+static void tm_cat(char* dst, const char* src, int max_len) {
+    if (!dst || !src || max_len <= 0) return;
+    int dl = tm_len(dst);
+    int i = 0;
+    while (src[i] && (dl + i) < max_len - 1) {
+        dst[dl + i] = src[i];
+        i++;
+    }
+    dst[dl + i] = '\0';
+}
+
+static bool tm_eq(const char* a, const char* b) {
+    if (!a || !b) return false;
+    int i = 0;
+    while (a[i] && b[i]) {
+        if (a[i] != b[i]) return false;
+        i++;
+    }
+    return a[i] == b[i];
+}
+
+static bool tm_starts(const char* s, const char* pfx) {
+    if (!s || !pfx) return false;
+    for (int i = 0; pfx[i]; i++) {
+        if (s[i] != pfx[i]) return false;
+    }
+    return true;
+}
+
+static void tm_u64_str(uint64_t val, char* out, int max_len) {
+    if (!out || max_len < 2) return;
+    if (val == 0) { out[0] = '0'; out[1] = '\0'; return; }
+    char tmp[24];
+    int p = 0;
+    while (val > 0 && p < 22) {
+        tmp[p++] = (char)('0' + (val % 10));
         val /= 10;
     }
     int j = 0;
-    if (neg) buf[j++] = '-';
-    for (int k = i - 1; k >= 0; k--) buf[j++] = tmp[k];
-    buf[j] = '\0';
+    while (p > 0 && j < max_len - 1) out[j++] = tmp[--p];
+    out[j] = '\0';
 }
 
-static void u16_to_hex4(uint16_t val, char* out) {
+static void tm_i64_str(int64_t val, char* out, int max_len) {
+    if (!out || max_len < 2) return;
+    if (val < 0) {
+        out[0] = '-';
+        tm_u64_str((uint64_t)(-val), out + 1, max_len - 1);
+    } else {
+        tm_u64_str((uint64_t)val, out, max_len);
+    }
+}
+
+static void tm_hex4(uint16_t val, char* out) {
     const char* hex = "0123456789ABCDEF";
     out[0] = hex[(val >> 12) & 0xF];
     out[1] = hex[(val >> 8) & 0xF];
@@ -151,589 +153,624 @@ static void u16_to_hex4(uint16_t val, char* out) {
     out[4] = '\0';
 }
 
-#define TERM_MAX_LINES     40
-#define TERM_LINE_LEN      120
-#define TERM_INPUT_LEN     120
-#define TERM_TITLE_BAR_H   32
-#define TERM_PADDING       12
-
-typedef struct {
-    char     text[TERM_LINE_LEN];
-    uint32_t color;
-} TermLine;
-
-static TermLine g_lines[TERM_MAX_LINES];
-static int      g_line_count = 0;
+static void tm_hex2(uint8_t val, char* out) {
+    const char* hex = "0123456789ABCDEF";
+    out[0] = hex[(val >> 4) & 0xF];
+    out[1] = hex[val & 0xF];
+    out[2] = '\0';
+}
 
 static void term_push_line(const char* text, uint32_t color) {
-    if (g_line_count >= TERM_MAX_LINES) {
-        for (int i = 0; i < TERM_MAX_LINES - 1; i++) {
-            g_lines[i] = g_lines[i + 1];
+    if (!text) return;
+    int len = tm_len(text);
+    if (len == 0) {
+        if (g_term_count >= TERM_MAX_LINES) {
+            for (int i = 0; i < TERM_MAX_LINES - 1; i++) g_term_lines[i] = g_term_lines[i + 1];
+            g_term_count = TERM_MAX_LINES - 1;
         }
-        g_line_count = TERM_MAX_LINES - 1;
+        g_term_lines[g_term_count].text[0] = '\0';
+        g_term_lines[g_term_count].color = color;
+        g_term_count++;
+        return;
     }
+
+    int pos = 0;
+    while (pos < len) {
+        if (g_term_count >= TERM_MAX_LINES) {
+            for (int i = 0; i < TERM_MAX_LINES - 1; i++) g_term_lines[i] = g_term_lines[i + 1];
+            g_term_count = TERM_MAX_LINES - 1;
+        }
+        int chunk = len - pos;
+        if (chunk > TERM_LINE_LEN - 1) chunk = TERM_LINE_LEN - 1;
+        for (int k = 0; k < chunk; k++) {
+            char c = text[pos + k];
+            g_term_lines[g_term_count].text[k] = (c >= 32 && c <= 126) ? c : ' ';
+        }
+        g_term_lines[g_term_count].text[chunk] = '\0';
+        g_term_lines[g_term_count].color = color;
+        g_term_count++;
+        pos += chunk;
+    }
+    g_term_scroll = g_term_count;
+}
+
+static void term_push_multiline(const char* text, uint32_t color, int max_lines) {
+    if (!text) return;
+    char line[TERM_LINE_LEN];
+    int lp = 0;
+    int emitted = 0;
+    for (int i = 0; text[i]; i++) {
+        char c = text[i];
+        if (c == '\r') continue;
+        if (c == '\n' || lp >= TERM_LINE_LEN - 1) {
+            line[lp] = '\0';
+            term_push_line(line, color);
+            lp = 0;
+            emitted++;
+            if (max_lines > 0 && emitted >= max_lines) return;
+            if (c != '\n') line[lp++] = (c >= 32 && c <= 126) ? c : '.';
+        } else {
+            line[lp++] = (c >= 32 && c <= 126) ? c : '.';
+        }
+    }
+    if (lp > 0) {
+        line[lp] = '\0';
+        term_push_line(line, color);
+    }
+}
+
+static const char* skip_ws(const char* s) {
+    while (s && (*s == ' ' || *s == '\t')) s++;
+    return s;
+}
+
+static int next_token(const char* s, char* out, int max_len, const char** rest) {
+    s = skip_ws(s);
     int i = 0;
-    while (text && text[i] && i < TERM_LINE_LEN - 1) {
-        g_lines[g_line_count].text[i] = text[i];
-        i++;
+    while (s && *s && *s != ' ' && *s != '\t') {
+        if (i < max_len - 1) out[i++] = *s;
+        s++;
     }
-    g_lines[g_line_count].text[i] = '\0';
-    g_lines[g_line_count].color = color;
-    g_line_count++;
+    out[i] = '\0';
+    if (rest) *rest = skip_ws(s);
+    return i;
 }
 
-static void term_clear(void) {
-    g_line_count = 0;
+static void term_bootstrap(void) {
+    if (g_term_bootstrapped) return;
+    g_term_bootstrapped = true;
+    g_term_count = 0;
+    term_push_line("BlankOS Horizon Shell (blanksh v2.4)", THEME_ACCENT_GREEN);
+    term_push_line("Type 'help' for filesystem, hardware, and network commands.", THEME_TEXT_SECONDARY);
+    term_push_line("", THEME_TEXT_PRIMARY);
 }
 
-static void term_execute_cmd(EFI_SYSTEM_TABLE* SystemTable, const char* input, int* win_x, int* win_y, int win_w, int win_h) {
-    while (*input == ' ') input++;
-    if (*input == '\0') return;
+static void term_exec(const char* raw_cmd) {
+    const char* cmd = skip_ws(raw_cmd);
+    char prompt_echo[TERM_INPUT_MAX + 24];
+    tm_copy(prompt_echo, "horizon$ ", sizeof(prompt_echo));
+    tm_cat(prompt_echo, raw_cmd, sizeof(prompt_echo));
+    term_push_line(prompt_echo, THEME_ACCENT_CYAN);
 
-    char prompt_echo[TERM_INPUT_LEN + 16];
-    str_copy(prompt_echo, "blankOS $ ");
-    str_cat(prompt_echo, input);
-    term_push_line(prompt_echo, COL_SUBTEXT);
+    if (!cmd || !cmd[0]) return;
 
-    if (str_eq(input, "help")) {
-        term_push_line("BlankOS Sequoia Shell (blanksh) — Real Hardware & VFS Commands:", COL_YELLOW);
-        term_push_line("  ls                  - List real files in VFS & FAT32 volume", COL_TEXT);
-        term_push_line("  cat <file>          - Print contents of a file (e.g. cat README.md)", COL_TEXT);
-        term_push_line("  write <file> <text> - Write text to file on VFS & FAT32 disk", COL_TEXT);
-        term_push_line("  rm <file>           - Delete file from VFS & FAT32 disk", COL_TEXT);
-        term_push_line("  lspci               - Enumerate real PCIe hardware bus & drivers", COL_TEXT);
-        term_push_line("  mem / free          - Show real UEFI physical RAM & heap usage", COL_TEXT);
-        term_push_line("  cpu                 - Read hardware CPUID vendor & brand string", COL_TEXT);
-        term_push_line("  ifconfig / net      - Show PCIe NIC, MAC address, IPv4 & packets", COL_TEXT);
-        term_push_line("  disks               - Probe physical UEFI BlockIO storage drives", COL_TEXT);
-        term_push_line("  sha256 <text>       - Compute real FIPS 180-4 SHA-256 hex digest", COL_TEXT);
-        term_push_line("  reg                 - Dump active blankReg system registry keys", COL_TEXT);
-        term_push_line("  res <wxh>           - Switch GOP mode (1024x768, 1280x720, 1920x1080)", COL_TEXT);
-        term_push_line("  theme <0-3>         - Switch desktop wallpaper theme", COL_TEXT);
-        term_push_line("  files / top / regedit - Launch BlankPad, Activity Monitor, RegEdit", COL_TEXT);
-        term_push_line("  date / reboot / shutdown / clear / exit", COL_TEXT);
-        return;
+    // Save history
+    if (g_term_hist_count == 0 || !tm_eq(g_term_hist[g_term_hist_count - 1], cmd)) {
+        if (g_term_hist_count < TERM_HIST_MAX) {
+            tm_copy(g_term_hist[g_term_hist_count++], cmd, TERM_INPUT_MAX);
+        } else {
+            for (int i = 0; i < TERM_HIST_MAX - 1; i++) {
+                tm_copy(g_term_hist[i], g_term_hist[i + 1], TERM_INPUT_MAX);
+            }
+            tm_copy(g_term_hist[TERM_HIST_MAX - 1], cmd, TERM_INPUT_MAX);
+        }
     }
+    g_term_hist_pos = -1;
 
-    if (str_eq(input, "clear")) {
-        term_clear();
-        return;
-    }
+    char verb[32];
+    const char* args = NULL;
+    next_token(cmd, verb, sizeof(verb), &args);
 
-    if (str_starts_with(input, "echo ")) {
-        term_push_line(input + 5, COL_TEXT);
-        return;
-    }
-
-    if (str_eq(input, "ls")) {
-        vfs_init(SystemTable);
+    if (tm_eq(verb, "help")) {
+        term_push_line("Available Commands:", THEME_ACCENT_GREEN);
+        term_push_line("  ls                        List VFS & FAT32 files", THEME_TEXT_PRIMARY);
+        term_push_line("  cat <file>                Display file contents", THEME_TEXT_PRIMARY);
+        term_push_line("  write <file> <text>       Write text to FAT32 / VFS", THEME_TEXT_PRIMARY);
+        term_push_line("  rm <file>                 Delete a file", THEME_TEXT_PRIMARY);
+        term_push_line("  mem | pci | sysinfo       Hardware, RAM, & PCIe telemetry", THEME_TEXT_PRIMARY);
+        term_push_line("  netstat | dhcp            UEFI SNP NIC status & DHCP lease", THEME_TEXT_PRIMARY);
+        term_push_line("  ping <host>               ICMP Echo Request (RTT ms)", THEME_TEXT_PRIMARY);
+        term_push_line("  httpget <url> [save_as]   Live HTTP/1.1 GET transfer", THEME_TEXT_PRIMARY);
+        term_push_line("  downloads                 List \\DOWNLOADS\\ transfers", THEME_TEXT_PRIMARY);
+        term_push_line("  theme <0-4>               Switch Horizon Aurora wallpaper", THEME_TEXT_PRIMARY);
+        term_push_line("  dmesg | clear             Kernel boot log / clear terminal", THEME_TEXT_PRIMARY);
+        term_push_line("  reboot | shutdown         ACPI / UEFI power control", THEME_TEXT_PRIMARY);
+    } else if (tm_eq(verb, "clear")) {
+        g_term_count = 0;
+        g_term_scroll = 0;
+    } else if (tm_eq(verb, "ls")) {
+        vfs_init(gSystemTable);
         int cnt = vfs_get_file_count();
-        term_push_line("FILENAME                 SIZE (BYTES)   STORAGE", COL_LAVENDER);
+        char hdr[64], nbuf[16];
+        tm_u64_str((uint64_t)cnt, nbuf, sizeof(nbuf));
+        tm_copy(hdr, "VFS / FAT32 Entries (", sizeof(hdr));
+        tm_cat(hdr, nbuf, sizeof(hdr));
+        tm_cat(hdr, "):", sizeof(hdr));
+        term_push_line(hdr, THEME_ACCENT_CYAN);
         for (int i = 0; i < cnt; i++) {
             const char* fn = vfs_get_file_name(i);
             int sz = vfs_get_file_size(i);
-            char row[100];
-            str_copy(row, "  ");
-            str_cat(row, fn);
-            int cur = 0; while (row[cur]) cur++;
-            while (cur < 25) row[cur++] = ' ';
-            row[cur] = '\0';
-            char sz_s[16];
-            int_to_str(sz, sz_s);
-            str_cat(row, sz_s);
-            str_cat(row, " B          FAT32 / VFS");
-            term_push_line(row, COL_BLUE);
+            char szb[16], line[112];
+            tm_u64_str((uint64_t)sz, szb, sizeof(szb));
+            tm_copy(line, "  ", sizeof(line));
+            tm_cat(line, fn, sizeof(line));
+            tm_cat(line, "  (", sizeof(line));
+            tm_cat(line, szb, sizeof(line));
+            tm_cat(line, " bytes)", sizeof(line));
+            term_push_line(line, THEME_TEXT_PRIMARY);
         }
-        return;
-    }
-
-    if (str_starts_with(input, "cat ")) {
-        const char* fname = input + 4;
-        while (*fname == ' ') fname++;
-        static char file_buf[2048];
-        if (vfs_read_file(fname, file_buf, 2047)) {
-            char line[TERM_LINE_LEN];
-            int lp = 0;
-            for (int i = 0; file_buf[i]; i++) {
-                if (file_buf[i] == '\r') continue;
-                if (file_buf[i] == '\n' || lp >= TERM_LINE_LEN - 2) {
-                    line[lp] = '\0';
-                    term_push_line(line, COL_TEXT);
-                    lp = 0;
-                } else {
-                    line[lp++] = file_buf[i];
-                }
-            }
-            if (lp > 0) {
-                line[lp] = '\0';
-                term_push_line(line, COL_TEXT);
-            }
+    } else if (tm_eq(verb, "cat")) {
+        char fname[64];
+        if (next_token(args, fname, sizeof(fname), NULL) == 0) {
+            term_push_line("Usage: cat <filename>", THEME_ACCENT_AMBER);
         } else {
-            term_push_line("cat: file not found in VFS or FAT32 volume.", COL_RED);
-        }
-        return;
-    }
-
-    if (str_starts_with(input, "write ")) {
-        const char* p = input + 6;
-        while (*p == ' ') p++;
-        char fname[48];
-        int fi = 0;
-        while (*p && *p != ' ' && fi < 46) fname[fi++] = *p++;
-        fname[fi] = '\0';
-        while (*p == ' ') p++;
-        if (fname[0] && *p) {
-            if (vfs_write_file(fname, p)) {
-                term_push_line("[OK] Wrote file to VFS & flushed to FAT32 volume.", COL_GREEN);
+            static char fbuf[4096];
+            if (vfs_read_file(fname, fbuf, sizeof(fbuf))) {
+                term_push_multiline(fbuf, THEME_TEXT_PRIMARY, 80);
             } else {
-                term_push_line("[ERR] Failed to write file.", COL_RED);
+                term_push_line("cat: file not found", THEME_ACCENT_ROSE);
             }
+        }
+    } else if (tm_eq(verb, "write")) {
+        char fname[64];
+        const char* body = NULL;
+        if (next_token(args, fname, sizeof(fname), &body) == 0 || !body || !body[0]) {
+            term_push_line("Usage: write <filename> <text>", THEME_ACCENT_AMBER);
+        } else if (vfs_write_file(fname, body)) {
+            term_push_line("Written to VFS & FAT32.", THEME_ACCENT_GREEN);
         } else {
-            term_push_line("Usage: write <filename> <text content>", COL_YELLOW);
+            term_push_line("write: failed", THEME_ACCENT_ROSE);
         }
-        return;
-    }
-
-    if (str_starts_with(input, "rm ")) {
-        const char* fname = input + 3;
-        while (*fname == ' ') fname++;
-        if (vfs_delete_file(fname)) {
-            term_push_line("[OK] Deleted file from VFS & FAT32 volume.", COL_GREEN);
+    } else if (tm_eq(verb, "rm")) {
+        char fname[64];
+        if (next_token(args, fname, sizeof(fname), NULL) == 0) {
+            term_push_line("Usage: rm <filename>", THEME_ACCENT_AMBER);
+        } else if (vfs_delete_file(fname)) {
+            term_push_line("File removed.", THEME_ACCENT_GREEN);
         } else {
-            term_push_line("rm: file not found.", COL_RED);
+            term_push_line("rm: file not found", THEME_ACCENT_ROSE);
         }
-        return;
-    }
+    } else if (tm_eq(verb, "mem")) {
+        uint64_t tot = memory_get_total_mb();
+        uint64_t used = memory_get_used_mb();
+        uint64_t free_mb = memory_get_free_mb();
+        uint32_t allocs = memory_get_alloc_count();
+        char b1[20], b2[20], b3[20], b4[20], line[112];
+        tm_u64_str(tot, b1, sizeof(b1));
+        tm_u64_str(used, b2, sizeof(b2));
+        tm_u64_str(free_mb, b3, sizeof(b3));
+        tm_u64_str(allocs, b4, sizeof(b4));
+        tm_copy(line, "Physical RAM: Total ", sizeof(line));
+        tm_cat(line, b1, sizeof(line));
+        tm_cat(line, " MB | Used ", sizeof(line));
+        tm_cat(line, b2, sizeof(line));
+        tm_cat(line, " MB | Free ", sizeof(line));
+        tm_cat(line, b3, sizeof(line));
+        tm_cat(line, " MB", sizeof(line));
+        term_push_line(line, THEME_ACCENT_GREEN);
 
-    if (str_eq(input, "lspci")) {
-        int count = pci_get_device_count();
-        char hdr[64];
-        str_copy(hdr, "Enumerated PCIe Hardware Functions: ");
-        char nbuf[12];
-        int_to_str(count, nbuf);
-        str_cat(hdr, nbuf);
-        term_push_line(hdr, COL_LAVENDER);
-        for (int i = 0; i < count && i < 16; i++) {
-            uint8_t bus, dev, func, cls, sub;
-            uint16_t ven, did;
-            uint32_t bar0;
-            const char *vstr, *dstr, *drv;
-            if (pci_get_device_info(i, &bus, &dev, &func, &ven, &did, &cls, &sub, &bar0, &vstr, &dstr, &drv)) {
-                char line[116];
-                str_copy(line, "PCI ");
-                char b_s[8];
-                int_to_str(bus, b_s); str_cat(line, b_s); str_cat(line, ":");
-                int_to_str(dev, b_s); str_cat(line, b_s); str_cat(line, ".");
-                int_to_str(func, b_s); str_cat(line, b_s); str_cat(line, " [");
-                char h4[6];
-                u16_to_hex4(ven, h4); str_cat(line, h4); str_cat(line, ":");
-                u16_to_hex4(did, h4); str_cat(line, h4); str_cat(line, "] ");
-                str_cat(line, dstr);
-                str_cat(line, " ("); str_cat(line, drv); str_cat(line, ")");
-                term_push_line(line, COL_TEXT);
+        tm_copy(line, "Kernel Heap Allocations: ", sizeof(line));
+        tm_cat(line, b4, sizeof(line));
+        term_push_line(line, THEME_TEXT_SECONDARY);
+    } else if (tm_eq(verb, "pci")) {
+        int cnt = pci_get_device_count();
+        char nb[12], hdr[64];
+        tm_u64_str((uint64_t)cnt, nb, sizeof(nb));
+        tm_copy(hdr, "PCIe Devices (", sizeof(hdr));
+        tm_cat(hdr, nb, sizeof(hdr));
+        tm_cat(hdr, "):", sizeof(hdr));
+        term_push_line(hdr, THEME_ACCENT_CYAN);
+
+        for (int i = 0; i < cnt; i++) {
+            uint8_t bus = 0, dev = 0, fn = 0, cc = 0, sc = 0;
+            uint16_t vid = 0, did = 0;
+            uint32_t bar0 = 0;
+            const char* vstr = NULL;
+            const char* dstr = NULL;
+            const char* drv = NULL;
+            if (pci_get_device_info(i, &bus, &dev, &fn, &vid, &did, &cc, &sc, &bar0, &vstr, &dstr, &drv)) {
+                char hb[4], hd[4], hv[6], hdid[6], line[112];
+                tm_hex2(bus, hb); tm_hex2(dev, hd);
+                tm_hex4(vid, hv); tm_hex4(did, hdid);
+                tm_copy(line, "  ", sizeof(line));
+                tm_cat(line, hb, sizeof(line));
+                tm_cat(line, ":", sizeof(line));
+                tm_cat(line, hd, sizeof(line));
+                tm_cat(line, ".", sizeof(line));
+                char fch[2] = { (char)('0' + (fn & 7)), '\0' };
+                tm_cat(line, fch, sizeof(line));
+                tm_cat(line, " [", sizeof(line));
+                tm_cat(line, hv, sizeof(line));
+                tm_cat(line, ":", sizeof(line));
+                tm_cat(line, hdid, sizeof(line));
+                tm_cat(line, "] ", sizeof(line));
+                tm_cat(line, dstr ? dstr : "Device", sizeof(line));
+                term_push_line(line, THEME_TEXT_PRIMARY);
             }
         }
-        return;
-    }
+    } else if (tm_eq(verb, "sysinfo")) {
+        char line[112], b1[16], b2[16];
+        term_push_line("BlankOS Horizon x86_64 UEFI", THEME_ACCENT_GREEN);
+        tm_copy(line, "  CPU    : ", sizeof(line));
+        tm_cat(line, pci_get_cpu_brand(), sizeof(line));
+        tm_cat(line, " (", sizeof(line));
+        tm_cat(line, pci_get_cpu_vendor(), sizeof(line));
+        tm_cat(line, ")", sizeof(line));
+        term_push_line(line, THEME_TEXT_PRIMARY);
 
-    if (str_eq(input, "mem") || str_eq(input, "free")) {
-        char line[96];
-        char nbuf[16];
-        str_copy(line, "Total Physical RAM (UEFI Memory Map): ");
-        int_to_str((int)memory_get_total_mb(), nbuf);
-        str_cat(line, nbuf); str_cat(line, " MB");
-        term_push_line(line, COL_LAVENDER);
+        tm_u64_str(screen_width, b1, sizeof(b1));
+        tm_u64_str(screen_height, b2, sizeof(b2));
+        tm_copy(line, "  Display: ", sizeof(line));
+        tm_cat(line, b1, sizeof(line));
+        tm_cat(line, " x ", sizeof(line));
+        tm_cat(line, b2, sizeof(line));
+        term_push_line(line, THEME_TEXT_PRIMARY);
 
-        str_copy(line, "Used RAM: ");
-        int_to_str((int)memory_get_used_mb(), nbuf);
-        str_cat(line, nbuf);
-        str_cat(line, " MB  |  Free RAM: ");
-        int_to_str((int)memory_get_free_mb(), nbuf);
-        str_cat(line, nbuf);
-        str_cat(line, " MB  |  Heap Allocs: ");
-        int_to_str((int)memory_get_alloc_count(), nbuf);
-        str_cat(line, nbuf);
-        term_push_line(line, COL_GREEN);
-        return;
-    }
+        tm_u64_str(memory_get_used_mb(), b1, sizeof(b1));
+        tm_u64_str(memory_get_total_mb(), b2, sizeof(b2));
+        tm_copy(line, "  Memory : ", sizeof(line));
+        tm_cat(line, b1, sizeof(line));
+        tm_cat(line, " / ", sizeof(line));
+        tm_cat(line, b2, sizeof(line));
+        tm_cat(line, " MB", sizeof(line));
+        term_push_line(line, THEME_TEXT_PRIMARY);
 
-    if (str_eq(input, "cpu") || str_eq(input, "cpuid") || str_eq(input, "sysinfo")) {
-        char line[108];
-        str_copy(line, "CPU Vendor: ");
-        str_cat(line, pci_get_cpu_vendor());
-        term_push_line(line, COL_LAVENDER);
-        str_copy(line, "CPU Brand:  ");
-        str_cat(line, pci_get_cpu_brand());
-        term_push_line(line, COL_GREEN);
-        str_copy(line, "Display:    ");
-        char num[12];
-        int_to_str(screen_width, num); str_cat(line, num); str_cat(line, "x");
-        int_to_str(screen_height, num); str_cat(line, num);
-        str_cat(line, " @ 32-bit BGRA (BDRM + SVGA II)");
-        term_push_line(line, COL_TEXT);
-        return;
-    }
+        RTC_Time rtc;
+        get_rtc_time(&rtc);
+        char y[8], m[8], d[8], hh[8], mm[8];
+        tm_u64_str(rtc.year, y, sizeof(y));
+        tm_u64_str(rtc.month, m, sizeof(m));
+        tm_u64_str(rtc.day, d, sizeof(d));
+        tm_u64_str(rtc.hour, hh, sizeof(hh));
+        tm_u64_str(rtc.minute, mm, sizeof(mm));
+        tm_copy(line, "  RTC    : ", sizeof(line));
+        tm_cat(line, y, sizeof(line)); tm_cat(line, "-", sizeof(line));
+        tm_cat(line, m, sizeof(line)); tm_cat(line, "-", sizeof(line));
+        tm_cat(line, d, sizeof(line)); tm_cat(line, " ", sizeof(line));
+        tm_cat(line, hh, sizeof(line)); tm_cat(line, ":", sizeof(line));
+        if (rtc.minute < 10) tm_cat(line, "0", sizeof(line));
+        tm_cat(line, mm, sizeof(line));
+        term_push_line(line, THEME_TEXT_SECONDARY);
+    } else if (tm_eq(verb, "netstat")) {
+        NetStatus ns;
+        net_get_status(&ns);
+        char line[112], b1[20], b2[20];
+        if (!ns.nic_present) {
+            term_push_line("NIC: No UEFI SNP adapter present.", THEME_ACCENT_ROSE);
+        } else {
+            tm_copy(line, "Adapter : ", sizeof(line));
+            tm_cat(line, ns.adapter_name, sizeof(line));
+            tm_cat(line, ns.link_up ? " [LINK UP]" : " [LINK DOWN]", sizeof(line));
+            term_push_line(line, ns.link_up ? THEME_ACCENT_GREEN : THEME_ACCENT_AMBER);
 
-    if (str_eq(input, "ifconfig") || str_eq(input, "net")) {
-        char line[108];
-        str_copy(line, "eth0: ");
-        str_cat(line, net_get_adapter_name());
-        term_push_line(line, COL_LAVENDER);
-        str_copy(line, "  ether ");
-        str_cat(line, net_get_mac_str());
-        str_cat(line, "  inet ");
-        str_cat(line, net_get_ipv4_str());
-        str_cat(line, "  netmask 255.255.255.0");
-        term_push_line(line, COL_GREEN);
-        char nbuf[16];
-        str_copy(line, "  RX packets: ");
-        int_to_str((int)net_get_rx_packets(), nbuf); str_cat(line, nbuf);
-        str_cat(line, "  TX packets: ");
-        int_to_str((int)net_get_tx_packets(), nbuf); str_cat(line, nbuf);
-        term_push_line(line, COL_TEXT);
-        return;
-    }
+            tm_copy(line, "MAC     : ", sizeof(line)); tm_cat(line, ns.mac_str, sizeof(line));
+            term_push_line(line, THEME_TEXT_PRIMARY);
 
-    if (str_starts_with(input, "sha256 ")) {
-        const char* arg = input + 7;
-        uint8_t digest[32];
-        sha256_hash((char*)arg, digest);
-        const char* hex = "0123456789abcdef";
-        char hex_out[80];
-        str_copy(hex_out, "SHA256: ");
-        int pos = 8;
-        for (int i = 0; i < 32; i++) {
-            hex_out[pos++] = hex[(digest[i] >> 4) & 0xF];
-            hex_out[pos++] = hex[digest[i] & 0xF];
+            tm_copy(line, "IPv4    : ", sizeof(line));
+            tm_cat(line, ns.dhcp_bound ? ns.ip_str : "Unbound (DHCP needed)", sizeof(line));
+            tm_cat(line, " | GW ", sizeof(line)); tm_cat(line, ns.gw_str, sizeof(line));
+            tm_cat(line, " | DNS ", sizeof(line)); tm_cat(line, ns.dns_str, sizeof(line));
+            term_push_line(line, THEME_TEXT_PRIMARY);
+
+            tm_u64_str(ns.rx_packets, b1, sizeof(b1));
+            tm_u64_str(ns.tx_packets, b2, sizeof(b2));
+            tm_copy(line, "Traffic : RX ", sizeof(line)); tm_cat(line, b1, sizeof(line));
+            tm_cat(line, " pkts (", sizeof(line));
+            tm_u64_str(ns.rx_bytes, b1, sizeof(b1)); tm_cat(line, b1, sizeof(line));
+            tm_cat(line, " B) | TX ", sizeof(line)); tm_cat(line, b2, sizeof(line));
+            tm_cat(line, " pkts (", sizeof(line));
+            tm_u64_str(ns.tx_bytes, b2, sizeof(b2)); tm_cat(line, b2, sizeof(line));
+            tm_cat(line, " B)", sizeof(line));
+            term_push_line(line, THEME_TEXT_SECONDARY);
         }
-        hex_out[pos] = '\0';
-        term_push_line(hex_out, COL_GREEN);
-        return;
-    }
-
-    if (str_eq(input, "reg")) {
-        int cnt = blankReg_get_count();
-        term_push_line("blankReg Kernel Configuration Database:", COL_LAVENDER);
-        for (int i = 0; i < cnt && i < 14; i++) {
-            char k[64], s[128];
-            int t = 0, iv = 0;
-            if (blankReg_get_entry(i, k, &t, &iv, s)) {
-                char line[110];
-                str_copy(line, "  ");
-                str_cat(line, k);
-                str_cat(line, " = ");
-                if (t == 0) {
-                    char nb[16]; int_to_str(iv, nb); str_cat(line, nb);
-                } else {
-                    str_cat(line, s);
-                }
-                term_push_line(line, COL_TEXT);
-            }
+    } else if (tm_eq(verb, "dhcp")) {
+        term_push_line("Requesting DHCPv4 lease...", THEME_TEXT_SECONDARY);
+        if (net_dhcp_renew()) {
+            NetStatus ns;
+            net_get_status(&ns);
+            char line[96];
+            tm_copy(line, "DHCP Bound: IP ", sizeof(line));
+            tm_cat(line, ns.ip_str, sizeof(line));
+            tm_cat(line, " | GW ", sizeof(line));
+            tm_cat(line, ns.gw_str, sizeof(line));
+            term_push_line(line, THEME_ACCENT_GREEN);
+        } else {
+            term_push_line("DHCP failed or link down.", THEME_ACCENT_ROSE);
         }
-        return;
-    }
-
-    if (str_starts_with(input, "res ")) {
-        const char* arg = input + 4;
-        while (*arg == ' ') arg++;
-        uint32_t tw = 0, th = 0;
-        if (str_eq(arg, "1024x768")) { tw = 1024; th = 768; }
-        else if (str_eq(arg, "1280x720")) { tw = 1280; th = 720; }
-        else if (str_eq(arg, "1440x900")) { tw = 1440; th = 900; }
-        else if (str_eq(arg, "1920x1080")) { tw = 1920; th = 1080; }
-
-        if (tw != 0 && th != 0) {
-            if (set_screen_resolution(tw, th)) {
-                *win_x = (screen_width - win_w) / 2;
-                *win_y = (screen_height - win_h) / 2;
-                term_push_line("[OK] Screen resolution updated live.", COL_GREEN);
+    } else if (tm_eq(verb, "ping")) {
+        char host[96];
+        if (next_token(args, host, sizeof(host), NULL) == 0) {
+            term_push_line("Usage: ping <host_or_ipv4>", THEME_ACCENT_AMBER);
+        } else {
+            int rtt = net_ping(host, 800);
+            if (rtt >= 0) {
+                char rb[16], line[96];
+                tm_i64_str(rtt, rb, sizeof(rb));
+                tm_copy(line, "Reply from ", sizeof(line));
+                tm_cat(line, host, sizeof(line));
+                tm_cat(line, ": time=", sizeof(line));
+                tm_cat(line, rb, sizeof(line));
+                tm_cat(line, " ms", sizeof(line));
+                term_push_line(line, THEME_ACCENT_GREEN);
             } else {
-                term_push_line("[ERROR] Mode not supported by UEFI GOP firmware.", COL_RED);
+                term_push_line("Ping timed out or unreachable.", THEME_ACCENT_ROSE);
             }
-        } else {
-            term_push_line("Usage: res 1024x768 | 1280x720 | 1440x900 | 1920x1080", COL_YELLOW);
         }
-        return;
-    }
-
-    if (str_starts_with(input, "theme ")) {
-        const char* arg = input + 6;
-        while (*arg == ' ') arg++;
-        if (*arg >= '0' && *arg <= '3') {
-            g_wallpaper_theme = *arg - '0';
-            play_system_sound((char*)"click");
-            term_push_line("[OK] Wallpaper theme applied.", COL_GREEN);
+    } else if (tm_eq(verb, "httpget")) {
+        if (g_term_http_id >= 0) {
+            term_push_line("An HTTP transfer is already active (Ctrl+C to abort).", THEME_ACCENT_AMBER);
         } else {
-            term_push_line("Usage: theme 0 (Sequoia) | 1 (Sunset) | 2 (Neon) | 3 (Slate)", COL_YELLOW);
-        }
-        return;
-    }
-
-    if (str_starts_with(input, "volume ")) {
-        const char* arg = input + 7;
-        while (*arg == ' ') arg++;
-        int val = 0;
-        while (*arg >= '0' && *arg <= '9') {
-            val = val * 10 + (*arg - '0');
-            arg++;
-        }
-        if (val > 100) val = 100;
-        set_master_volume((float)val / 100.0f);
-        play_system_sound((char*)"click");
-        term_push_line("[OK] Master volume updated.", COL_GREEN);
-        return;
-    }
-
-    if (str_starts_with(input, "play ")) {
-        const char* sound = input + 5;
-        while (*sound == ' ') sound++;
-        play_system_sound((char*)sound);
-        term_push_line("[OK] Synthesized audio waveform played.", COL_GREEN);
-        return;
-    }
-
-    if (str_eq(input, "disks")) {
-        EFI_GUID blockIoGuid = EFI_BLOCK_IO_PROTOCOL_GUID;
-        UINTN numBlockIo = 0;
-        EFI_HANDLE *blockIoHandles = NULL;
-        SystemTable->BootServices->LocateHandleBuffer(ByProtocol, &blockIoGuid, NULL, &numBlockIo, &blockIoHandles);
-        if (numBlockIo == 0 || !blockIoHandles) {
-            term_push_line("No Block I/O handles located.", COL_YELLOW);
-        } else {
-            term_push_line("Detected Physical Storage Drives:", COL_LAVENDER);
-            int disk_num = 0;
-            for (UINTN i = 0; i < numBlockIo; i++) {
-                EFI_BLOCK_IO_PROTOCOL *blk = NULL;
-                SystemTable->BootServices->HandleProtocol(blockIoHandles[i], &blockIoGuid, (void**)&blk);
-                if (blk && blk->Media && !blk->Media->LogicalPartition) {
-                    char dinfo[80];
-                    str_copy(dinfo, "  Drive ");
-                    char num[16];
-                    int_to_str(disk_num++, num);
-                    str_cat(dinfo, num);
-                    str_cat(dinfo, ": ");
-                    uint64_t mb = ((blk->Media->LastBlock + 1) * blk->Media->BlockSize) / (1024 * 1024);
-                    int_to_str((int)mb, num);
-                    str_cat(dinfo, num);
-                    str_cat(dinfo, " MB | BlockSize: ");
-                    int_to_str((int)blk->Media->BlockSize, num);
-                    str_cat(dinfo, num);
-                    str_cat(dinfo, " B");
-                    term_push_line(dinfo, COL_TEXT);
+            char url_tok[128], save_tok[96];
+            const char* rest = NULL;
+            if (next_token(args, url_tok, sizeof(url_tok), &rest) == 0) {
+                term_push_line("Usage: httpget <url> [save_as]", THEME_ACCENT_AMBER);
+            } else {
+                char full_url[144];
+                if (tm_starts(url_tok, "http://") || tm_starts(url_tok, "https://")) {
+                    tm_copy(full_url, url_tok, sizeof(full_url));
+                } else {
+                    tm_copy(full_url, "http://", sizeof(full_url));
+                    tm_cat(full_url, url_tok, sizeof(full_url));
+                }
+                const char* save_ptr = (next_token(rest, save_tok, sizeof(save_tok), NULL) > 0) ? save_tok : NULL;
+                int id = net_http_start(full_url, save_ptr);
+                if (id < 0) {
+                    term_push_line("httpget: unable to initiate request (check link/DHCP).", THEME_ACCENT_ROSE);
+                } else {
+                    g_term_http_id = id;
+                    char msg[128];
+                    tm_copy(msg, "Fetching ", sizeof(msg));
+                    tm_cat(msg, full_url, sizeof(msg));
+                    term_push_line(msg, THEME_TEXT_SECONDARY);
                 }
             }
-            SystemTable->BootServices->FreePool(blockIoHandles);
         }
-        return;
-    }
-
-    if (str_eq(input, "update")) {
-        launch_updater(SystemTable);
-        return;
-    }
-    if (str_eq(input, "files") || str_eq(input, "blankpad")) {
-        launch_blankpad();
-        return;
-    }
-    if (str_eq(input, "top") || str_eq(input, "monitor")) {
-        launch_task_manager();
-        return;
-    }
-    if (str_eq(input, "regedit")) {
-        launch_blankreg_edit();
-        return;
-    }
-    if (str_eq(input, "reboot")) {
+    } else if (tm_eq(verb, "downloads")) {
+        int cnt = net_download_count();
+        if (cnt == 0) {
+            term_push_line("No downloads recorded.", THEME_TEXT_MUTED);
+        } else {
+            for (int i = 0; i < cnt; i++) {
+                const DownloadEntry* de = net_get_download(i);
+                if (!de) continue;
+                char sz[16], line[112];
+                tm_i64_str(de->downloaded_bytes, sz, sizeof(sz));
+                tm_copy(line, "  ", sizeof(line));
+                tm_cat(line, de->filename, sizeof(line));
+                tm_cat(line, " | ", sizeof(line));
+                tm_cat(line, sz, sizeof(line));
+                tm_cat(line, " B | ", sizeof(line));
+                tm_cat(line, de->status_text, sizeof(line));
+                term_push_line(line, (de->state == HTTP_DONE) ? THEME_ACCENT_GREEN : THEME_TEXT_SECONDARY);
+            }
+        }
+    } else if (tm_eq(verb, "theme")) {
+        char arg[16];
+        if (next_token(args, arg, sizeof(arg), NULL) == 0 || arg[0] < '0' || arg[0] > '4' || arg[1] != '\0') {
+            term_push_line("Usage: theme <0-4>", THEME_ACCENT_AMBER);
+        } else {
+            int tid = arg[0] - '0';
+            dui_set_wallpaper_id(tid);
+            g_wallpaper_theme = tid;
+            blankReg_set_int("UI/WallpaperTheme", tid);
+            term_push_line("Wallpaper theme updated.", THEME_ACCENT_GREEN);
+        }
+    } else if (tm_eq(verb, "dmesg")) {
+        const char* log = kernel_get_boot_log();
+        if (log && log[0]) term_push_multiline(log, THEME_TEXT_SECONDARY, 120);
+        else term_push_line("(boot log empty)", THEME_TEXT_MUTED);
+    } else if (tm_eq(verb, "reboot")) {
         os_restart();
-        return;
-    }
-    if (str_eq(input, "shutdown")) {
+    } else if (tm_eq(verb, "shutdown")) {
         os_shutdown();
-        return;
+    } else {
+        char msg[96];
+        tm_copy(msg, "Unknown command: ", sizeof(msg));
+        tm_cat(msg, verb, sizeof(msg));
+        tm_cat(msg, " (try 'help')", sizeof(msg));
+        term_push_line(msg, THEME_ACCENT_ROSE);
     }
-
-    if (str_eq(input, "whoami")) {
-        term_push_line("admin (Ring-0 UEFI Kernel Administrator)", COL_GREEN);
-        return;
-    }
-
-    if (str_eq(input, "uname")) {
-        term_push_line("BlankOS Sequoia 2.4.0-x86_64 UEFI Bare-Metal Monolithic", COL_TEXT);
-        return;
-    }
-
-    if (str_eq(input, "date")) {
-        RTC_Time rt;
-        get_rtc_time(&rt);
-        char dt[64];
-        int p = 0;
-        uint32_t yr = rt.year ? rt.year : 2026;
-        dt[p++] = '0' + ((yr / 1000) % 10);
-        dt[p++] = '0' + ((yr / 100) % 10);
-        dt[p++] = '0' + ((yr / 10) % 10);
-        dt[p++] = '0' + (yr % 10);
-        dt[p++] = '-';
-        dt[p++] = '0' + (rt.month / 10);
-        dt[p++] = '0' + (rt.month % 10);
-        dt[p++] = '-';
-        dt[p++] = '0' + (rt.day / 10);
-        dt[p++] = '0' + (rt.day % 10);
-        dt[p++] = ' ';
-        dt[p++] = '0' + (rt.hour / 10);
-        dt[p++] = '0' + (rt.hour % 10);
-        dt[p++] = ':';
-        dt[p++] = '0' + (rt.minute / 10);
-        dt[p++] = '0' + (rt.minute % 10);
-        dt[p++] = ':';
-        dt[p++] = '0' + (rt.second / 10);
-        dt[p++] = '0' + (rt.second % 10);
-        dt[p] = '\0';
-        str_cat(dt, " UTC (Hardware RTC)");
-        term_push_line(dt, COL_GREEN);
-        return;
-    }
-
-    char err[TERM_INPUT_LEN + 32];
-    str_copy(err, "blanksh: command not found: ");
-    str_cat(err, input);
-    term_push_line(err, COL_RED);
 }
 
-void launch_terminal(EFI_SYSTEM_TABLE* SystemTable) {
-    if (!SystemTable) return;
+static bool term_pt_in(int px, int py, int rx, int ry, int rw, int rh) {
+    return px >= rx && px < rx + rw && py >= ry && py < ry + rh;
+}
 
-    EFI_GUID ptrGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
-    EFI_SIMPLE_POINTER_PROTOCOL *Mouse = NULL;
-    SystemTable->BootServices->LocateProtocol(&ptrGuid, NULL, (void**)&Mouse);
-    if (Mouse) Mouse->Reset(Mouse, TRUE);
+static void terminal_render(BlankWindow* win, int cx, int cy, int cw, int ch, const BlankInputState* in) {
+    (void)win;
+    term_bootstrap();
 
-    int ww = 720;
-    int wh = 440;
-    int wx = (screen_width  - ww) / 2;
-    int wy = (screen_height - wh) / 2;
-
-    int cursor_x = screen_width / 2;
-    int cursor_y = screen_height / 2;
-
-    char input_buf[TERM_INPUT_LEN];
-    int  input_len = 0;
-    input_buf[0] = '\0';
-
-    bool running = true;
-    int  blink_counter = 0;
-    bool cursor_visible = true;
-
-    if (g_line_count == 0) {
-        term_push_line("BlankOS Sequoia Terminal (blanksh v2.4.0 — Real Hardware & VFS)", COL_LAVENDER);
-        term_push_line("Type 'help', 'lspci', 'mem', 'cpu', 'ls', 'cat README.md', or 'ifconfig'.", COL_SUBTEXT);
-        term_push_line("", COL_TEXT);
+    // Advance non-blocking HTTP transfer if one was started by `httpget`
+    if (g_term_http_id >= 0) {
+        const HttpTransfer* tr = net_http_get(g_term_http_id);
+        if (!tr) {
+            g_term_http_id = -1;
+        } else if (tr->state == HTTP_DONE) {
+            char line[112], sc[12], bytes[16];
+            tm_i64_str(tr->status_code, sc, sizeof(sc));
+            tm_i64_str(tr->bytes_received, bytes, sizeof(bytes));
+            tm_copy(line, "HTTP ", sizeof(line));
+            tm_cat(line, sc, sizeof(line));
+            tm_cat(line, " | ", sizeof(line));
+            tm_cat(line, bytes, sizeof(line));
+            tm_cat(line, " bytes", sizeof(line));
+            if (tr->content_type[0]) {
+                tm_cat(line, " | ", sizeof(line));
+                tm_cat(line, tr->content_type, sizeof(line));
+            }
+            term_push_line(line, THEME_ACCENT_GREEN);
+            if (tr->save_to_disk) {
+                tm_copy(line, "Saved to \\DOWNLOADS\\", sizeof(line));
+                tm_cat(line, tr->save_filename, sizeof(line));
+                term_push_line(line, THEME_ACCENT_CYAN);
+            } else if (tr->body_buf && tr->bytes_received > 0) {
+                term_push_multiline(tr->body_buf, THEME_TEXT_PRIMARY, 18);
+            }
+            net_http_close(g_term_http_id);
+            g_term_http_id = -1;
+            play_system_sound((const char*)"success");
+        } else if (tr->state == HTTP_ERROR) {
+            term_push_line(tr->error_msg[0] ? tr->error_msg : "HTTP transfer error", THEME_ACCENT_ROSE);
+            net_http_close(g_term_http_id);
+            g_term_http_id = -1;
+            play_system_sound((const char*)"error");
+        }
     }
 
-    while (running) {
-        EFI_INPUT_KEY Key;
-        if (SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &Key) == EFI_SUCCESS) {
-            if (Key.ScanCode == 0x17) {
-                running = false;
-                break;
+    dui_rect(cx, cy, cw, ch, THEME_BG_VOID, 215);
+
+    // Subtle console header strip
+    int hdr_h = 34;
+    dui_rect(cx, cy, cw, hdr_h, THEME_SURFACE_BASE, 190);
+    dui_rect(cx, cy + hdr_h, cw, 1, THEME_BORDER_SUBTLE, 180);
+
+    NetStatus ns;
+    net_get_status(&ns);
+    char hdr[80];
+    tm_copy(hdr, "blanksh  |  ", sizeof(hdr));
+    tm_cat(hdr, ns.dhcp_bound ? ns.ip_str : (ns.link_up ? "Link Up" : "Offline"), sizeof(hdr));
+    dui_text(cx + 12, cy + 9, hdr, THEME_ACCENT_GREEN, 1);
+
+    bool click_avail = (in && in->left_pressed);
+    int mx = in ? in->mx : -1;
+    int my = in ? in->my : -1;
+    if (dui_button(cx + cw - 72, cy + 5, 62, 24, "Clear", THEME_SURFACE_ELEVATED, false, mx, my, click_avail)) {
+        click_avail = false;
+        g_term_count = 0;
+        g_term_scroll = 0;
+        play_system_sound((const char*)"click");
+    }
+
+    // Console body geometry
+    int pad_x = 12;
+    int body_y = cy + hdr_h + 6;
+    int body_h = ch - hdr_h - 14;
+    int line_h = 19;
+    int vis_rows = (body_h - 8) / line_h;
+    if (vis_rows < 2) vis_rows = 2;
+
+    // Reserve bottom row for prompt or HTTP progress
+    int scroll_rows = vis_rows - 1;
+    int max_scroll = g_term_count - scroll_rows;
+    if (max_scroll < 0) max_scroll = 0;
+
+    if (in && in->scroll_y != 0 && term_pt_in(mx, my, cx, body_y, cw, body_h)) {
+        g_term_scroll -= in->scroll_y * 2;
+    }
+
+    // Keyboard input
+    if (in && in->has_key) {
+        if (in->ctrl_held && (in->key_char == 'c' || in->key_char == 'C')) {
+            if (g_term_http_id >= 0) {
+                net_http_close(g_term_http_id);
+                g_term_http_id = -1;
+                term_push_line("^C (HTTP transfer cancelled)", THEME_ACCENT_AMBER);
+            } else {
+                g_term_input_len = 0;
+                g_term_input[0] = '\0';
+                term_push_line("^C", THEME_ACCENT_AMBER);
             }
-
-            if (Key.UnicodeChar == '\r' || Key.UnicodeChar == '\n') {
-                if (str_eq(input_buf, "exit")) {
-                    running = false;
-                    break;
+        } else if (in->ctrl_held && (in->key_char == 'l' || in->key_char == 'L')) {
+            g_term_count = 0;
+            g_term_scroll = 0;
+        } else if (in->scan_code == BLANK_SCAN_PGUP) {
+            g_term_scroll -= scroll_rows;
+        } else if (in->scan_code == BLANK_SCAN_PGDN) {
+            g_term_scroll += scroll_rows;
+        } else if (g_term_http_id < 0) {
+            if (in->scan_code == BLANK_SCAN_UP) {
+                if (g_term_hist_count > 0) {
+                    if (g_term_hist_pos < 0) g_term_hist_pos = g_term_hist_count - 1;
+                    else if (g_term_hist_pos > 0) g_term_hist_pos--;
+                    tm_copy(g_term_input, g_term_hist[g_term_hist_pos], sizeof(g_term_input));
+                    g_term_input_len = tm_len(g_term_input);
                 }
-                term_execute_cmd(SystemTable, input_buf, &wx, &wy, ww, wh);
-                input_len = 0;
-                input_buf[0] = '\0';
-            } else if (Key.UnicodeChar == 0x08 || Key.ScanCode == 0x08) {
-                if (input_len > 0) {
-                    input_len--;
-                    input_buf[input_len] = '\0';
-                }
-            } else if (Key.UnicodeChar >= 32 && Key.UnicodeChar <= 126) {
-                if (input_len < TERM_INPUT_LEN - 2) {
-                    input_buf[input_len++] = (char)Key.UnicodeChar;
-                    input_buf[input_len] = '\0';
-                }
-            }
-        }
-
-        if (Mouse) {
-            EFI_SIMPLE_POINTER_STATE State;
-            if (Mouse->GetState(Mouse, &State) == EFI_SUCCESS) {
-                int dx = State.RelativeMovementX / 1000;
-                int dy = State.RelativeMovementY / 1000;
-                if (dx || dy) {
-                    cursor_x += dx;
-                    cursor_y += dy;
-                    if (cursor_x < 0) cursor_x = 0;
-                    if (cursor_x > screen_width  - 1) cursor_x = screen_width  - 1;
-                    if (cursor_y < 0) cursor_y = 0;
-                    if (cursor_y > screen_height - 1) cursor_y = screen_height - 1;
-                }
-
-                if (State.LeftButton) {
-                    int btn_cx = wx + 16;
-                    int btn_cy = wy + TERM_TITLE_BAR_H / 2;
-                    int dx2 = cursor_x - btn_cx;
-                    int dy2 = cursor_y - btn_cy;
-                    if (dx2 * dx2 + dy2 * dy2 <= 8 * 8) {
-                        running = false;
-                        break;
+            } else if (in->scan_code == BLANK_SCAN_DOWN) {
+                if (g_term_hist_pos >= 0) {
+                    if (g_term_hist_pos + 1 < g_term_hist_count) {
+                        g_term_hist_pos++;
+                        tm_copy(g_term_input, g_term_hist[g_term_hist_pos], sizeof(g_term_input));
+                        g_term_input_len = tm_len(g_term_input);
+                    } else {
+                        g_term_hist_pos = -1;
+                        g_term_input[0] = '\0';
+                        g_term_input_len = 0;
                     }
                 }
+            } else if (in->key_char == '\b') {
+                if (g_term_input_len > 0) g_term_input[--g_term_input_len] = '\0';
+            } else if (in->key_char == '\n') {
+                char run_buf[TERM_INPUT_MAX];
+                tm_copy(run_buf, g_term_input, sizeof(run_buf));
+                g_term_input[0] = '\0';
+                g_term_input_len = 0;
+                term_exec(run_buf);
+                max_scroll = g_term_count - scroll_rows;
+                if (max_scroll < 0) max_scroll = 0;
+                g_term_scroll = max_scroll;
+            } else if (in->key_char >= 32 && in->key_char <= 126 && g_term_input_len < TERM_INPUT_MAX - 2) {
+                g_term_input[g_term_input_len++] = in->key_char;
+                g_term_input[g_term_input_len] = '\0';
             }
         }
-
-        blink_counter++;
-        if (blink_counter >= 30) {
-            cursor_visible = !cursor_visible;
-            blink_counter = 0;
-        }
-
-        dui_draw_wallpaper();
-        blankUI_draw_menubar();
-        blankUI_draw_dock();
-
-        dui_shadow(wx, wy, ww, wh, 10, 8, 0x000000, 70);
-        dui_rect_rounded(wx, wy, ww, wh, 10, COL_BASE, 250);
-        dui_rect_outline(wx, wy, ww, wh, COL_SURFACE0, 1);
-
-        dui_rect(wx, wy, ww, TERM_TITLE_BAR_H, COL_MANTLE, 255);
-        dui_circle(wx + 16, wy + TERM_TITLE_BAR_H / 2, 5, COL_TL_CLOSE, 255);
-        dui_circle(wx + 34, wy + TERM_TITLE_BAR_H / 2, 5, COL_TL_MINIMIZE, 255);
-        dui_circle(wx + 52, wy + TERM_TITLE_BAR_H / 2, 5, COL_TL_MAXIMIZE, 255);
-
-        const char* title = "Terminal — blanksh (Ring-0 UEFI Shell)";
-        dui_text(wx + (ww - dui_text_width(title, 1)) / 2, wy + 10, title, COL_SUBTEXT, 1);
-
-        int text_x = wx + TERM_PADDING;
-        int text_y = wy + TERM_TITLE_BAR_H + 10;
-        int line_h = 16;
-
-        int max_visible_lines = (wh - TERM_TITLE_BAR_H - 40) / line_h;
-        int start_line = 0;
-        if (g_line_count > max_visible_lines) {
-            start_line = g_line_count - max_visible_lines;
-        }
-
-        for (int i = start_line; i < g_line_count; i++) {
-            dui_text(text_x, text_y, g_lines[i].text, g_lines[i].color, 1);
-            text_y += line_h;
-        }
-
-        dui_text(text_x, text_y, "blankOS $ ", COL_GREEN, 1);
-        int prompt_w = dui_text_width("blankOS $ ", 1);
-        dui_text(text_x + prompt_w, text_y, input_buf, COL_TEXT, 1);
-
-        if (cursor_visible) {
-            int cur_x = text_x + prompt_w + dui_text_width(input_buf, 1);
-            dui_rect(cur_x, text_y, 7, 12, COL_TEXT, 255);
-        }
-
-        blankUI_draw_cursor(cursor_x, cursor_y);
-        swap_buffers();
     }
+
+    if (g_term_scroll > max_scroll) g_term_scroll = max_scroll;
+    if (g_term_scroll < 0) g_term_scroll = 0;
+
+    dui_push_clip(cx + 4, body_y, cw - 8, body_h);
+    int drawn_rows = 0;
+    for (int i = 0; i < scroll_rows && (g_term_scroll + i) < g_term_count; i++) {
+        TermLine* tl = &g_term_lines[g_term_scroll + i];
+        int ly = body_y + i * line_h;
+        dui_text(cx + pad_x, ly, tl->text, tl->color, 1);
+        drawn_rows++;
+    }
+
+    int py = body_y + drawn_rows * line_h;
+    if (g_term_http_id >= 0) {
+        const HttpTransfer* tr = net_http_get(g_term_http_id);
+        char prog[80], nb[16];
+        tm_i64_str(tr ? tr->bytes_received : 0, nb, sizeof(nb));
+        tm_copy(prog, "[HTTP] Transferring... ", sizeof(prog));
+        tm_cat(prog, nb, sizeof(prog));
+        tm_cat(prog, " B (Ctrl+C to abort)", sizeof(prog));
+        dui_text(cx + pad_x, py, prog, THEME_ACCENT_AMBER, 1);
+    } else {
+        const char* pfx = "horizon$ ";
+        dui_text(cx + pad_x, py, pfx, THEME_ACCENT_GREEN, 1);
+        int px_start = cx + pad_x + dui_text_width(pfx, 1);
+        dui_text(px_start, py, g_term_input, THEME_TEXT_PRIMARY, 1);
+
+        bool blink = !in || (((in->frame_ms / 450) % 2) == 0);
+        if (blink) {
+            int cx_cur = px_start + dui_text_width(g_term_input, 1) + 1;
+            dui_rect(cx_cur, py + 1, 8, 15, THEME_ACCENT_GREEN, 235);
+        }
+    }
+    dui_pop_clip();
+}
+
+extern "C" {
+
+void terminal_register(void) {
+    wm_register_app(APP_TERMINAL, "Horizon Terminal", 720, 460, THEME_ACCENT_GREEN, terminal_render, NULL);
+}
+
+void launch_terminal(EFI_SYSTEM_TABLE* st) {
+    (void)st;
+    term_bootstrap();
+    wm_open_app(APP_TERMINAL);
 }
 
 } // extern "C"

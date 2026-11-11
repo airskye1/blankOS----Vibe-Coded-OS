@@ -1,205 +1,202 @@
 #include <stdint.h>
 #include <stdbool.h>
+#include "audio.h"
 #include <stddef.h>
-#include <efi.h>
 
 extern "C" {
-
-static float master_volume = 0.85f;
-static bool audio_muted = false;
-static bool hda_detected = false;
-static uintptr_t hda_base_addr = 0;
+    extern uint32_t pci_read_dword(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset);
+}
 
 static inline void outb(uint16_t port, uint8_t val) {
-    asm volatile ( "outb %0, %1" : : "a"(val), "Nd"(port) );
+    asm volatile("outb %0, %1" : : "a"(val), "Nd"(port));
 }
 
 static inline uint8_t inb(uint16_t port) {
     uint8_t ret;
-    asm volatile ( "inb %1, %0" : "=a"(ret) : "Nd"(port) );
+    asm volatile("inb %1, %0" : "=a"(ret) : "Nd"(port));
     return ret;
 }
 
-static void pc_speaker_play(uint32_t nFrequence) {
-    if (nFrequence == 0) return;
-    uint32_t Div = 1193180 / nFrequence;
-    outb(0x43, 0xb6);
-    outb(0x42, (uint8_t)(Div & 0xFF));
-    outb(0x42, (uint8_t)((Div >> 8) & 0xFF));
-    uint8_t tmp = inb(0x61);
-    if (tmp != (tmp | 3)) {
-        outb(0x61, tmp | 3);
-    }
-}
+static int master_volume = 75;
+static bool audio_muted = false;
+static char audio_dev_name[64] = "PIT Precision Chime Synth";
+static uint64_t hda_mmio_base = 0;
 
-static void pc_speaker_stop() {
-    uint8_t tmp = inb(0x61) & 0xFC;
-    outb(0x61, tmp);
-}
-
-void pc_speaker_beep(int ms, uint32_t freq) {
-    if (audio_muted || master_volume <= 0.0f || freq == 0) return;
-    pc_speaker_play(freq);
-    for (volatile int i = 0; i < ms * 12000; i++) {
-        asm volatile("pause");
-    }
-    pc_speaker_stop();
-}
-
-// -------------------------------------------------------------
-// WAV / PCM Audio Engine
-// -------------------------------------------------------------
-#pragma pack(push, 1)
+// Non-blocking multi-note sequencer state (~16ms per audio_tick)
+#define MAX_SEQ_NOTES 8
 typedef struct {
-    char     riff[4];        // "RIFF"
-    uint32_t overall_size;
-    char     wave[4];        // "WAVE"
-    char     fmt_chunk_marker[4]; // "fmt "
-    uint32_t length_of_fmt;
-    uint16_t format_type;    // 1 = PCM
-    uint16_t channels;
-    uint32_t sample_rate;
-    uint32_t byterate;
-    uint16_t block_align;
-    uint16_t bits_per_sample;
-    char     data_chunk_header[4]; // "data"
-    uint32_t data_size;
-} WavHeader;
-#pragma pack(pop)
+    uint32_t freq;
+    int ticks_left; // 1 tick ~= 16ms
+} SeqNote;
 
-// Fast integer sine approximation (input angle 0..1023 -> returns -256..256)
-static int isin(int angle) {
-    angle = angle & 1023;
-    int sign = 1;
-    if (angle > 512) {
-        angle -= 512;
-        sign = -1;
+static SeqNote g_seq[MAX_SEQ_NOTES];
+static int g_seq_count = 0;
+static int g_seq_idx = 0;
+static uint32_t g_active_freq = 0;
+
+static void speaker_set_freq(uint32_t freq) {
+    if (audio_muted || master_volume <= 0 || freq == 0) {
+        uint8_t tmp = inb(0x61);
+        outb(0x61, tmp & 0xFC);
+        g_active_freq = 0;
+        return;
     }
-    if (angle > 256) {
-        angle = 512 - angle;
+    if (freq == g_active_freq) return;
+    uint32_t div = 1193180 / freq;
+    outb(0x43, 0xB6);
+    outb(0x42, (uint8_t)(div & 0xFF));
+    outb(0x42, (uint8_t)((div >> 8) & 0xFF));
+    uint8_t tmp = inb(0x61);
+    if ((tmp & 3) != 3) outb(0x61, tmp | 3);
+    g_active_freq = freq;
+}
+
+static void speaker_silence(void) {
+    uint8_t tmp = inb(0x61);
+    if (tmp & 3) outb(0x61, tmp & 0xFC);
+    g_active_freq = 0;
+}
+
+static bool str_eq_local(const char* a, const char* b) {
+    if (!a || !b) return false;
+    while (*a && *b) {
+        if (*a != *b) return false;
+        a++; b++;
     }
-    // Parabolic approximation: 4 * x * (256 - x) / 64
-    int val = (angle * (256 - angle)) / 64;
-    return sign * val;
+    return *a == *b;
 }
 
-// Software audio playback buffer (44.1kHz, 16-bit stereo)
-#define AUDIO_BUF_SAMPLES 44100
-static int16_t pcm_stream_buffer[AUDIO_BUF_SAMPLES * 2];
-
-void init_audio_subsystem(void) {
-    // Audio subsystem initialized with polyphonic synth & HDA ready
+static void copy_str_local(char* dst, const char* src, int max_len) {
+    int i = 0;
+    while (i < max_len - 1 && src && src[i]) {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = 0;
 }
 
-void set_master_volume(float volume) {
-    if (volume < 0.0f) volume = 0.0f;
-    if (volume > 1.0f) volume = 1.0f;
-    master_volume = volume;
+static void enqueue_sequence(const SeqNote* notes, int count) {
+    g_seq_count = (count > MAX_SEQ_NOTES) ? MAX_SEQ_NOTES : count;
+    for (int i = 0; i < g_seq_count; i++) {
+        g_seq[i] = notes[i];
+    }
+    g_seq_idx = 0;
+    if (g_seq_count > 0) {
+        speaker_set_freq(g_seq[0].freq);
+    }
 }
 
-float get_master_volume(void) {
+extern "C" {
+
+void init_audio_driver(EFI_SYSTEM_TABLE* st) {
+    (void)st;
+    hda_mmio_base = 0;
+    copy_str_local(audio_dev_name, "PIT Precision Chime Synth", 64);
+
+    // Probe PCI Bus 0 for Intel HDA (Class 0x04, Subclass 0x03)
+    for (uint8_t dev = 0; dev < 32; dev++) {
+        uint32_t id = pci_read_dword(0, dev, 0, 0x00);
+        if ((id & 0xFFFF) == 0xFFFF) continue;
+        uint32_t cls = pci_read_dword(0, dev, 0, 0x08);
+        uint8_t base_cls = (uint8_t)((cls >> 24) & 0xFF);
+        uint8_t sub_cls  = (uint8_t)((cls >> 16) & 0xFF);
+        if (base_cls == 0x04 && sub_cls == 0x03) {
+            uint32_t bar0 = pci_read_dword(0, dev, 0, 0x10);
+            uint32_t bar1 = pci_read_dword(0, dev, 0, 0x14);
+            hda_mmio_base = ((uint64_t)bar1 << 32) | (bar0 & ~0xFULL);
+            copy_str_local(audio_dev_name, "Intel HD Audio + PIT Chime", 64);
+            break;
+        }
+    }
+    speaker_silence();
+}
+
+void audio_tick(void) {
+    if (g_seq_idx >= g_seq_count) {
+        speaker_silence();
+        return;
+    }
+    if (audio_muted || master_volume <= 0) {
+        speaker_silence();
+        g_seq_count = 0;
+        return;
+    }
+    if (g_seq[g_seq_idx].ticks_left > 0) {
+        g_seq[g_seq_idx].ticks_left--;
+        if (g_seq[g_seq_idx].ticks_left == 0) {
+            g_seq_idx++;
+            if (g_seq_idx < g_seq_count) {
+                speaker_set_freq(g_seq[g_seq_idx].freq);
+            } else {
+                speaker_silence();
+                g_seq_count = 0;
+            }
+        }
+    }
+}
+
+void play_beep(uint32_t freq, uint32_t duration_ms) {
+    if (audio_muted || master_volume <= 0) return;
+    int ticks = (int)(duration_ms / 16);
+    if (ticks < 1) ticks = 1;
+    SeqNote n[1] = { { freq, ticks } };
+    enqueue_sequence(n, 1);
+}
+
+void play_system_sound(const char* name) {
+    if (!name || audio_muted || master_volume <= 0) return;
+
+    if (str_eq_local(name, "startup")) {
+        // Warm Horizon 4-note ascending chime
+        SeqNote notes[4] = { { 440, 4 }, { 554, 4 }, { 659, 4 }, { 880, 9 } };
+        enqueue_sequence(notes, 4);
+    } else if (str_eq_local(name, "click")) {
+        SeqNote notes[1] = { { 1480, 1 } };
+        enqueue_sequence(notes, 1);
+    } else if (str_eq_local(name, "notify")) {
+        SeqNote notes[2] = { { 659, 3 }, { 987, 5 } };
+        enqueue_sequence(notes, 2);
+    } else if (str_eq_local(name, "success") || str_eq_local(name, "download")) {
+        SeqNote notes[3] = { { 523, 3 }, { 659, 3 }, { 1046, 6 } };
+        enqueue_sequence(notes, 3);
+    } else if (str_eq_local(name, "error")) {
+        SeqNote notes[2] = { { 293, 4 }, { 220, 7 } };
+        enqueue_sequence(notes, 2);
+    } else if (str_eq_local(name, "lock")) {
+        SeqNote notes[2] = { { 880, 2 }, { 587, 4 } };
+        enqueue_sequence(notes, 2);
+    }
+}
+
+void set_master_volume(int vol) {
+    if (vol < 0) vol = 0;
+    if (vol > 100) vol = 100;
+    master_volume = vol;
+    if (master_volume == 0) speaker_silence();
+}
+
+int get_master_volume(void) {
     return master_volume;
 }
 
 void toggle_audio_mute(void) {
     audio_muted = !audio_muted;
+    if (audio_muted) speaker_silence();
+}
+
+void audio_set_hda_device(uintptr_t bar0) {
+    hda_mmio_base = (uint64_t)bar0;
+    if (hda_mmio_base != 0) {
+        copy_str_local(audio_dev_name, "Intel HD Audio + PIT Chime", 64);
+    }
 }
 
 bool is_audio_muted(void) {
     return audio_muted;
 }
 
-void audio_set_hda_device(uintptr_t base_addr) {
-    hda_base_addr = base_addr;
-    hda_detected = (base_addr != 0);
-}
-
-// Plays raw PCM audio out to hardware
-void audio_play_sound(uint8_t* pcm_buffer, int length) {
-    if (audio_muted || master_volume <= 0.01f || !pcm_buffer || length <= 0) return;
-    
-    // If HDA hardware stream is active, submit buffer to DMA descriptor ring
-    if (hda_detected && hda_base_addr != 0) {
-        // HDA Stream Output DMA pointer write
-        volatile uint32_t* stream_ctl = (volatile uint32_t*)(hda_base_addr + 0x80); // Stream 0 Output
-        (void)stream_ctl;
-    }
-}
-
-// Synthesizes a warm, lush polyphonic startup chord (C Major 9: C3, G3, C4, E4, G4, B4)
-void play_startup_chime(void) {
-    if (audio_muted || master_volume <= 0.01f) return;
-
-    // Harmonic chord frequencies in Hz
-    // C3 (130.8), G3 (196.0), C4 (261.6), E4 (329.6), G4 (392.0), B4 (493.8)
-    const uint32_t chord_freqs[] = { 131, 196, 262, 330, 392, 494 };
-    const int num_voices = 6;
-
-    // Rich arpeggiated entry followed by sustained harmonic decay
-    for (int v = 0; v < num_voices; v++) {
-        pc_speaker_play(chord_freqs[v]);
-        for (volatile int d = 0; d < 350000; d++) { asm volatile("pause"); }
-    }
-
-    // Hold the full resonance
-    for (int i = 0; i < 4; i++) {
-        pc_speaker_play(chord_freqs[num_voices - 1 - (i % num_voices)]);
-        for (volatile int d = 0; d < 200000; d++) { asm volatile("pause"); }
-    }
-
-    pc_speaker_stop();
-}
-
-void play_system_sound(char* sound_name) {
-    if (!sound_name || audio_muted || master_volume <= 0.01f) return;
-
-    if (sound_name[0] == 's') { 
-        // "startup" - Majestic polyphonic chord
-        play_startup_chime();
-    } else if (sound_name[0] == 'c') { 
-        // "click" - Crisp 10ms micro-click
-        pc_speaker_play(2400);
-        for (volatile int d = 0; d < 60000; d++) { asm volatile("pause"); }
-        pc_speaker_stop();
-    } else if (sound_name[0] == 'n') { 
-        // "notification" - Ascending two-tone ping (A5 -> E6)
-        pc_speaker_play(880);
-        for (volatile int d = 0; d < 400000; d++) { asm volatile("pause"); }
-        pc_speaker_play(1318);
-        for (volatile int d = 0; d < 600000; d++) { asm volatile("pause"); }
-        pc_speaker_stop();
-    } else if (sound_name[0] == 'e') { 
-        // "error" - Dual low warning tone
-        pc_speaker_play(220);
-        for (volatile int d = 0; d < 500000; d++) { asm volatile("pause"); }
-        pc_speaker_stop();
-        for (volatile int d = 0; d < 100000; d++) { asm volatile("pause"); }
-        pc_speaker_play(165);
-        for (volatile int d = 0; d < 700000; d++) { asm volatile("pause"); }
-        pc_speaker_stop();
-    } else if (sound_name[0] == 'u') { 
-        // "update" - Triumphant 3-tone fanfare (C5 -> E5 -> G5 -> C6)
-        pc_speaker_play(523);
-        for (volatile int d = 0; d < 300000; d++) { asm volatile("pause"); }
-        pc_speaker_play(659);
-        for (volatile int d = 0; d < 300000; d++) { asm volatile("pause"); }
-        pc_speaker_play(784);
-        for (volatile int d = 0; d < 300000; d++) { asm volatile("pause"); }
-        pc_speaker_play(1046);
-        for (volatile int d = 0; d < 700000; d++) { asm volatile("pause"); }
-        pc_speaker_stop();
-    } else if (sound_name[0] == 'a') {
-        // "ambient" - 8-note synthwave melody
-        const uint32_t notes[] = { 440, 523, 659, 784, 880, 784, 659, 523 };
-        for (int i = 0; i < 8; i++) {
-            pc_speaker_play(notes[i]);
-            for (volatile int d = 0; d < 250000; d++) { asm volatile("pause"); }
-        }
-        pc_speaker_stop();
-    } else {
-        // Default gentle chime
-        pc_speaker_beep(120, 880);
-    }
+const char* get_audio_device_name(void) {
+    return audio_dev_name;
 }
 
 } // extern "C"

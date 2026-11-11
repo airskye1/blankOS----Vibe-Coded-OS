@@ -122,11 +122,15 @@ foreach ($file in $files) {
     # F. Check for missing externs for dui_ and blankUI_ functions
     $checkDui = $true
     $checkBlankUI = $true
-    if ($relName -match "blankDUI.cpp" -or $relName -match "compositor.cpp" -or $relName -match "stubs.cpp") {
+    if ($relName -match "blankDUI.cpp" -or $relName -match "compositor.cpp" -or $relName -match "stubs.cpp" -or $relName -like "*.h") {
         $checkDui = $false
         $checkBlankUI = $false
     }
     if ($relName -match "blankUI.cpp") {
+        $checkBlankUI = $false
+    }
+    if ($content -match '#include\s+["<][^">]*blankDUI\.h[">]') {
+        $checkDui = $false
         $checkBlankUI = $false
     }
     if ($checkDui -or $checkBlankUI) {

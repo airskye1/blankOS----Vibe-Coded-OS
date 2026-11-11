@@ -5,37 +5,17 @@
 #include <efilib.h>
 #include <efiprot.h>
 
+#include "../ui/theme.h"
+#include "../ui/blankDUI.h"
+#include "../ui/window_manager.h"
+#include "../kernel/input.h"
+#include "../kernel/audio.h"
+
 extern "C" {
     extern EFI_SYSTEM_TABLE *gSystemTable;
-    extern int screen_width;
-    extern int screen_height;
-
-    extern void swap_buffers(void);
-    extern void play_system_sound(char* sound_name);
-
-    extern void dui_draw_wallpaper(void);
-    extern void dui_rect(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
-    extern void dui_rect_rounded(int x, int y, int w, int h, int radius, uint32_t color, uint8_t alpha);
-    extern void dui_rect_rounded_outline(int x, int y, int w, int h, int radius, uint32_t color, int thickness);
-    extern void dui_rect_outline(int x, int y, int w, int h, uint32_t color, int thickness);
-    extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
-    extern int dui_text_width(const char* text, int scale);
-    extern void dui_shadow(int x, int y, int w, int h, int radius, int blur_radius, uint32_t color, uint8_t alpha);
-    extern void dui_line(int x0, int y0, int x1, int y1, uint32_t color, int thickness);
-    extern void dui_circle(int cx, int cy, int r, uint32_t color, uint8_t alpha);
-
-    extern void blankUI_draw_menubar(void);
-    extern void blankUI_draw_dock(void);
-    extern void blankUI_draw_cursor(int x, int y);
-    extern void blankUI_draw_topbar(char* app_title);
-    extern void blankUI_draw_window(int width, int height, char* title);
-    extern void blankUI_get_window_pos(int* x, int* y, int width, int height);
-    extern void blankUI_update_window_drag(int mouse_x, int mouse_y, bool mouse_pressed, int width, int height);
-    extern int blankUI_hit_test_window_close(int cursor_x, int cursor_y, int width, int height);
-    extern void blankUI_set_cursor_type(int type);
 }
 
-#define VFS_MAX_FILES 32
+#define VFS_MAX_FILES 48
 #define VFS_NAME_MAX  64
 #define VFS_DATA_MAX  4096
 
@@ -105,6 +85,21 @@ static bool bp_str_eq_nocase(const char* a, const char* b) {
     return a[i] == '\0' && b[i] == '\0';
 }
 
+static bool bp_str_starts_with_nocase(const char* str, const char* prefix) {
+    if (!str || !prefix) return false;
+    int i = 0;
+    while (prefix[i]) {
+        if (!str[i]) return false;
+        char ca = bp_to_upper(str[i]);
+        char cb = bp_to_upper(prefix[i]);
+        if (ca == '/') ca = '\\';
+        if (cb == '/') cb = '\\';
+        if (ca != cb) return false;
+        i++;
+    }
+    return true;
+}
+
 static bool bp_str_ends_with_nocase(const char* str, const char* suffix) {
     int slen = bp_str_len(str);
     int xlen = bp_str_len(suffix);
@@ -165,10 +160,26 @@ static void bp_wide_to_ascii(const CHAR16* src, char* dst, int max_chars) {
     dst[i] = '\0';
 }
 
+static void bp_normalize_path(const char* raw, char* out, int max_len) {
+    if (!raw || !out || max_len <= 0) return;
+    int start = 0;
+    while (raw[start] == '\\' || raw[start] == '/') start++;
+    int j = 0;
+    for (int i = start; raw[i] && j < max_len - 1; i++) {
+        char c = raw[i];
+        if (c == '/') c = '\\';
+        out[j++] = c;
+    }
+    out[j] = '\0';
+}
+
 static int bp_find_file_index(const char* name) {
     if (!name) return -1;
+    char norm[VFS_NAME_MAX];
+    bp_normalize_path(name, norm, VFS_NAME_MAX);
     for (int i = 0; i < g_vfs_count; i++) {
-        if (g_vfs_files[i].used && bp_str_eq_nocase(g_vfs_files[i].name, name)) {
+        if (g_vfs_files[i].used &&
+            (bp_str_eq_nocase(g_vfs_files[i].name, name) || bp_str_eq_nocase(g_vfs_files[i].name, norm))) {
             return i;
         }
     }
@@ -176,7 +187,8 @@ static int bp_find_file_index(const char* name) {
 }
 
 static int bp_classify_file(const char* name, bool on_disk) {
-    // 1 = Documents, 2 = System Config, 3 = Disk Volume
+    // 1 = Docs, 2 = Config, 3 = Disk Volume / Downloads
+    if (bp_str_starts_with_nocase(name, "DOWNLOADS\\")) return 3;
     if (bp_str_ends_with_nocase(name, ".ini") ||
         bp_str_ends_with_nocase(name, ".cfg") ||
         bp_str_ends_with_nocase(name, ".json") ||
@@ -187,6 +199,8 @@ static int bp_classify_file(const char* name, bool on_disk) {
     }
     if (bp_str_ends_with_nocase(name, ".md") ||
         bp_str_ends_with_nocase(name, ".txt") ||
+        bp_str_ends_with_nocase(name, ".html") ||
+        bp_str_ends_with_nocase(name, ".htm") ||
         bp_str_ends_with_nocase(name, ".c") ||
         bp_str_ends_with_nocase(name, ".cpp") ||
         bp_str_ends_with_nocase(name, ".h")) {
@@ -197,18 +211,18 @@ static int bp_classify_file(const char* name, bool on_disk) {
 
 static uint32_t bp_file_badge_color(const char* name) {
     if (bp_str_ends_with_nocase(name, ".c") || bp_str_ends_with_nocase(name, ".cpp") || bp_str_ends_with_nocase(name, ".h")) {
-        return 0x0A84FF; // Code Blue
+        return THEME_ACCENT_CYAN;
     }
     if (bp_str_ends_with_nocase(name, ".ini") || bp_str_ends_with_nocase(name, ".json") || bp_str_ends_with_nocase(name, ".reg")) {
-        return 0xFF9F0A; // Config Amber
+        return THEME_ACCENT_AMBER;
     }
-    if (bp_str_ends_with_nocase(name, ".md")) {
-        return 0xBF5AF2; // Markdown Purple
+    if (bp_str_ends_with_nocase(name, ".md") || bp_str_ends_with_nocase(name, ".html") || bp_str_ends_with_nocase(name, ".htm")) {
+        return THEME_ACCENT_IRIS;
     }
     if (bp_str_ends_with_nocase(name, ".efi") || bp_str_ends_with_nocase(name, ".elf")) {
-        return 0x30D158; // Binary Green
+        return THEME_ACCENT_GREEN;
     }
-    return 0x5E5CE6; // Text Indigo
+    return THEME_ACCENT_TEAL;
 }
 
 static const char* bp_file_badge_label(const char* name) {
@@ -216,7 +230,8 @@ static const char* bp_file_badge_label(const char* name) {
     if (bp_str_ends_with_nocase(name, ".cpp")) return "C++";
     if (bp_str_ends_with_nocase(name, ".md")) return "MD";
     if (bp_str_ends_with_nocase(name, ".ini")) return "INI";
-    if (bp_str_ends_with_nocase(name, ".json")) return "JSON";
+    if (bp_str_ends_with_nocase(name, ".json")) return "JSN";
+    if (bp_str_ends_with_nocase(name, ".html") || bp_str_ends_with_nocase(name, ".htm")) return "HTM";
     if (bp_str_ends_with_nocase(name, ".efi")) return "EFI";
     if (bp_str_ends_with_nocase(name, ".elf")) return "ELF";
     if (bp_str_ends_with_nocase(name, ".ttf")) return "TTF";
@@ -232,8 +247,10 @@ static bool bp_fat32_write_raw(EFI_SYSTEM_TABLE *st, const char* name, const cha
     EFI_STATUS status = st->BootServices->LocateHandleBuffer(ByProtocol, &fsGuid, NULL, &numHandles, &handles);
     if (EFI_ERROR(status) || numHandles == 0 || !handles) return false;
 
+    char norm[VFS_NAME_MAX];
+    bp_normalize_path(name, norm, VFS_NAME_MAX);
     CHAR16 wideName[VFS_NAME_MAX];
-    bp_ascii_to_wide(name, wideName, VFS_NAME_MAX);
+    bp_ascii_to_wide(norm, wideName, VFS_NAME_MAX);
 
     bool wrote = false;
     for (UINTN i = 0; i < numHandles; i++) {
@@ -243,7 +260,15 @@ static bool bp_fat32_write_raw(EFI_SYSTEM_TABLE *st, const char* name, const cha
         EFI_FILE_HANDLE root = NULL;
         if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
 
-        // First delete existing file if present so truncated content doesn't leave stale tail bytes
+        if (bp_str_starts_with_nocase(norm, "DOWNLOADS\\")) {
+            EFI_FILE_HANDLE dlDir = NULL;
+            if (!EFI_ERROR(root->Open(root, &dlDir, (CHAR16*)L"DOWNLOADS",
+                                      EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+                                      EFI_FILE_DIRECTORY)) && dlDir) {
+                dlDir->Close(dlDir);
+            }
+        }
+
         EFI_FILE_HANDLE oldFile = NULL;
         if (!EFI_ERROR(root->Open(root, &oldFile, wideName, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0)) && oldFile) {
             oldFile->Delete(oldFile);
@@ -278,8 +303,10 @@ static bool bp_fat32_delete_raw(EFI_SYSTEM_TABLE *st, const char* name) {
     EFI_STATUS status = st->BootServices->LocateHandleBuffer(ByProtocol, &fsGuid, NULL, &numHandles, &handles);
     if (EFI_ERROR(status) || numHandles == 0 || !handles) return false;
 
+    char norm[VFS_NAME_MAX];
+    bp_normalize_path(name, norm, VFS_NAME_MAX);
     CHAR16 wideName[VFS_NAME_MAX];
-    bp_ascii_to_wide(name, wideName, VFS_NAME_MAX);
+    bp_ascii_to_wide(norm, wideName, VFS_NAME_MAX);
 
     bool deleted = false;
     for (UINTN i = 0; i < numHandles; i++) {
@@ -311,8 +338,10 @@ static bool bp_fat32_read_raw(EFI_SYSTEM_TABLE *st, const char* name, char* out_
     EFI_STATUS status = st->BootServices->LocateHandleBuffer(ByProtocol, &fsGuid, NULL, &numHandles, &handles);
     if (EFI_ERROR(status) || numHandles == 0 || !handles) return false;
 
+    char norm[VFS_NAME_MAX];
+    bp_normalize_path(name, norm, VFS_NAME_MAX);
     CHAR16 wideName[VFS_NAME_MAX];
-    bp_ascii_to_wide(name, wideName, VFS_NAME_MAX);
+    bp_ascii_to_wide(norm, wideName, VFS_NAME_MAX);
 
     bool ok = false;
     for (UINTN i = 0; i < numHandles; i++) {
@@ -348,11 +377,10 @@ static bool bp_fat32_read_raw(EFI_SYSTEM_TABLE *st, const char* name, char* out_
                     out_buf[w] = '\0';
                     if (out_real_size && *out_real_size <= 0) *out_real_size = (int)readBytes;
                 } else {
-                    // Format real binary header inspection preview from actual disk bytes
                     const char* hex = "0123456789ABCDEF";
                     out_buf[0] = '\0';
-                    bp_str_cat(out_buf, "# Binary File on UEFI FAT32 Partition: ", max_len);
-                    bp_str_cat(out_buf, name, max_len);
+                    bp_str_cat(out_buf, "# Binary File on UEFI FAT32: ", max_len);
+                    bp_str_cat(out_buf, norm, max_len);
                     bp_str_cat(out_buf, "\n# Real Disk Header Hex Dump (First 128 Bytes):\n\n", max_len);
                     UINTN dumpLen = readBytes < 128 ? readBytes : 128;
                     for (UINTN row = 0; row < dumpLen; row += 16) {
@@ -400,13 +428,15 @@ static bool bp_fat32_read_raw(EFI_SYSTEM_TABLE *st, const char* name, char* out_
 
 static int bp_upsert_memory_entry(const char* name, const char* content, int explicit_size, bool on_disk, bool is_binary) {
     if (!name || !name[0]) return -1;
-    int idx = bp_find_file_index(name);
+    char norm[VFS_NAME_MAX];
+    bp_normalize_path(name, norm, VFS_NAME_MAX);
+    int idx = bp_find_file_index(norm);
     if (idx < 0) {
         if (g_vfs_count >= VFS_MAX_FILES) return -1;
         idx = g_vfs_count++;
     }
     g_vfs_files[idx].used = true;
-    bp_str_copy(g_vfs_files[idx].name, name, VFS_NAME_MAX);
+    bp_str_copy(g_vfs_files[idx].name, norm, VFS_NAME_MAX);
     bp_str_copy(g_vfs_files[idx].content, content ? content : "", VFS_DATA_MAX);
     g_vfs_files[idx].size = (explicit_size > 0) ? explicit_size : bp_str_len(g_vfs_files[idx].content);
     g_vfs_files[idx].on_disk = on_disk;
@@ -429,7 +459,6 @@ static void bp_scan_directory_handle(EFI_SYSTEM_TABLE *st, EFI_FILE_HANDLE dir, 
         char entryName[48];
         bp_wide_to_ascii(info->FileName, entryName, sizeof(entryName));
         if (entryName[0] == '\0' || entryName[0] == '.') continue;
-
         if (info->Attribute & EFI_FILE_DIRECTORY) continue;
 
         char fullPath[VFS_NAME_MAX];
@@ -466,17 +495,20 @@ static void bp_sync_from_fat32(EFI_SYSTEM_TABLE *st) {
         EFI_FILE_HANDLE root = NULL;
         if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
 
-        // 1. Scan root directory entries
         bp_scan_directory_handle(st, root, "");
 
-        // 2. Scan EFI\BOOT directory
+        EFI_FILE_HANDLE dlDir = NULL;
+        if (!EFI_ERROR(root->Open(root, &dlDir, (CHAR16*)L"DOWNLOADS", EFI_FILE_MODE_READ, 0)) && dlDir) {
+            bp_scan_directory_handle(st, dlDir, "DOWNLOADS");
+            dlDir->Close(dlDir);
+        }
+
         EFI_FILE_HANDLE bootDir = NULL;
         if (!EFI_ERROR(root->Open(root, &bootDir, (CHAR16*)L"EFI\\BOOT", EFI_FILE_MODE_READ, 0)) && bootDir) {
             bp_scan_directory_handle(st, bootDir, "EFI\\BOOT");
             bootDir->Close(bootDir);
         }
 
-        // 3. Scan assets directory
         EFI_FILE_HANDLE assetsDir = NULL;
         if (!EFI_ERROR(root->Open(root, &assetsDir, (CHAR16*)L"assets", EFI_FILE_MODE_READ, 0)) && assetsDir) {
             bp_scan_directory_handle(st, assetsDir, "assets");
@@ -488,7 +520,6 @@ static void bp_sync_from_fat32(EFI_SYSTEM_TABLE *st) {
 
     st->BootServices->FreePool(handles);
 
-    // Also explicitly sync known disk files if present on any FAT32 volume
     const char* probe_files[7] = {
         "README.TXT", "NOTES.TXT", "CONFIG.INI", "BOOTLOG.TXT", "HELLO.SH", "REGISTRY.INI", "version.json"
     };
@@ -514,60 +545,44 @@ void vfs_init(EFI_SYSTEM_TABLE *st) {
         g_vfs_initialized = true;
 
         const char* readme_default =
-            "# BlankOS Sequoia Twist - Files & BlankPad Studio\n"
-            "Welcome to the unified macOS Finder + BlankPad Code Studio.\n\n"
-            "## Keyboard Shortcuts\n"
-            "- Arrow Keys : Move editor cursor (Up / Down / Left / Right)\n"
-            "- Enter / BS : Insert newline / delete character\n"
-            "- Ctrl + S   : Flush active buffer to UEFI FAT32 Volume\n"
-            "- ESC        : Close window and return to desktop\n\n"
-            "## Storage Architecture\n"
-            "- Real-time sync with EFI_SIMPLE_FILE_SYSTEM_PROTOCOL\n"
-            "- Direct FAT32 root & EFI\\BOOT directory enumeration\n";
+            "# BlankOS Horizon - Files & Notes\n"
+            "Unified FAT32 explorer and non-blocking text/code studio.\n\n"
+            "## Shortcuts\n"
+            "- Arrow Keys  : Move cursor\n"
+            "- Ctrl + S    : Save active file to FAT32 & VFS\n"
+            "- Ctrl + N    : Create a new note\n"
+            "- Mouse Wheel : Scroll editor or file sidebar\n\n"
+            "## Storage\n"
+            "- Syncs root, \\DOWNLOADS\\, \\EFI\\BOOT\\, and RAM VFS.\n";
 
         const char* notes_default =
-            "BlankOS Engineering Notes & Todo:\n"
-            "1. [DONE] TrueType font rendering via stb_truetype\n"
-            "2. [DONE] UEFI GOP hardware-accelerated double buffer\n"
-            "3. [DONE] Real FAT32 file read/write/delete persistence\n"
-            "4. [TODO] Test custom registry keys in blankReg Studio\n";
+            "BlankOS Horizon Notes:\n"
+            "1. Non-blocking multi-window desktop compositor\n"
+            "2. Real UEFI SNP Ethernet + HTTP/1.1 downloads\n"
+            "3. Real FAT32 persistence via EFI_SIMPLE_FILE_SYSTEM_PROTOCOL\n";
 
         const char* sysini_default =
             "[Boot]\n"
             "kernel=EFI\\BOOT\\BOOTX64.EFI\n"
-            "resolution=auto\n"
-            "audio=hda\n"
-            "theme=glass_twist\n"
+            "theme=horizon_glass\n"
             "vfs_mount=fat32_rw\n";
 
         const char* helloc_default =
-            "// Sample Freestanding BlankOS Application\n"
+            "// BlankOS Horizon Freestanding Sample\n"
             "#include <stdint.h>\n\n"
             "extern \"C\" void dui_text(int x, int y, const char* s, uint32_t c, int sc);\n\n"
             "void blankos_app_entry(void) {\n"
-            "    dui_text(40, 40, \"Hello from BlankPad Studio!\", 0x0A84FF, 1);\n"
+            "    dui_text(40, 40, \"Hello Horizon!\", 0x38BDF8, 1);\n"
             "}\n";
-
-        const char* credits_default =
-            "BlankOS Operating System Credits\n"
-            "================================\n"
-            "- Kernel Core     : UEFI x86_64 Long Mode Executive\n"
-            "- Compositor      : blankDUI + Glassmorphic Sequoia UI\n"
-            "- Storage Stack   : UEFI FAT32 + In-Memory VFS Layer\n"
-            "- Audio Subsystem : Intel HDA + PC Speaker Synth\n";
 
         bp_upsert_memory_entry("README.md", readme_default, 0, false, false);
         bp_upsert_memory_entry("NOTES.txt", notes_default, 0, false, false);
         bp_upsert_memory_entry("SYSTEM.ini", sysini_default, 0, false, false);
         bp_upsert_memory_entry("HELLO.c", helloc_default, 0, false, false);
-        bp_upsert_memory_entry("CREDITS.txt", credits_default, 0, false, false);
     }
 
     if (activeSt) {
-        // Scan real files from the UEFI FAT32 partition first
         bp_sync_from_fat32(activeSt);
-
-        // Ensure default text files are persisted to writable FAT32 volume if not yet on disk
         for (int i = 0; i < g_vfs_count; i++) {
             if (g_vfs_files[i].used && !g_vfs_files[i].on_disk && !g_vfs_files[i].is_binary) {
                 if (bp_fat32_write_raw(activeSt, g_vfs_files[i].name, g_vfs_files[i].content, g_vfs_files[i].size)) {
@@ -607,7 +622,6 @@ bool vfs_read_file(const char* name, char* out_buf, int max_len) {
 
     int idx = bp_find_file_index(name);
     if (idx >= 0) {
-        // Refresh from real FAT32 disk if backed by disk and not binary
         if (g_vfs_files[idx].on_disk && !g_vfs_files[idx].is_binary && gSystemTable) {
             int realSz = g_vfs_files[idx].size;
             bool isBin = false;
@@ -619,7 +633,6 @@ bool vfs_read_file(const char* name, char* out_buf, int max_len) {
         return true;
     }
 
-    // Try reading directly from UEFI FAT32 partition if not yet cached
     if (gSystemTable) {
         int diskSz = 0;
         bool isBin = false;
@@ -669,24 +682,38 @@ bool vfs_delete_file(const char* name) {
 
 } // extern "C"
 
+// ============================================================================
+// Horizon Spatial Glass Editor State & Helpers
+// ============================================================================
+
+static int  g_bp_selected = 0;
+static int  g_bp_cat = 0;        // 0=All, 1=Docs, 2=Cfg, 3=Disk/DL
+static bool g_bp_show_sidebar = true;
+static int  g_bp_sidebar_scroll = 0;
+static int  g_bp_cursor = 0;
+static int  g_bp_scroll_line = 0;
+static bool g_bp_dirty = false;
+static bool g_bp_editing_name = false;
+static char g_bp_name_buf[VFS_NAME_MAX] = {0};
+static char g_bp_status[64] = "VFS Ready";
+static int  g_bp_note_seq = 1;
+
+static bool bp_pt_in(int px, int py, int rx, int ry, int rw, int rh) {
+    return px >= rx && px < rx + rw && py >= ry && py < ry + rh;
+}
+
 static void bp_compute_line_col(const char* buf, int cursor, int* out_line, int* out_col) {
-    int line = 0;
-    int col = 0;
+    int line = 0, col = 0;
     for (int i = 0; i < cursor && buf[i]; i++) {
-        if (buf[i] == '\n') {
-            line++;
-            col = 0;
-        } else {
-            col++;
-        }
+        if (buf[i] == '\n') { line++; col = 0; }
+        else col++;
     }
     *out_line = line;
     *out_col = col;
 }
 
 static int bp_offset_for_line_col(const char* buf, int target_line, int target_col) {
-    int line = 0;
-    int i = 0;
+    int line = 0, i = 0;
     while (buf[i] && line < target_line) {
         if (buf[i] == '\n') line++;
         i++;
@@ -699,716 +726,520 @@ static int bp_offset_for_line_col(const char* buf, int target_line, int target_c
     return i;
 }
 
-extern "C" void launch_blankpad(void) {
-    EFI_SYSTEM_TABLE *SystemTable = gSystemTable;
-    blankUI_draw_topbar((char*)"Files & BlankPad Studio");
-    vfs_init(SystemTable);
+static int bp_count_lines(const char* buf) {
+    int lines = 1;
+    for (int i = 0; buf && buf[i]; i++) {
+        if (buf[i] == '\n') lines++;
+    }
+    return lines;
+}
 
-    if (!SystemTable) return;
+static void bp_select_index(int idx) {
+    if (idx < 0 || idx >= g_vfs_count || !g_vfs_files[idx].used) return;
+    g_bp_selected = idx;
+    g_bp_cursor = 0;
+    g_bp_scroll_line = 0;
+    g_bp_dirty = false;
+    g_bp_editing_name = false;
+    if (g_vfs_files[idx].on_disk && !g_vfs_files[idx].is_binary && gSystemTable) {
+        int realSz = g_vfs_files[idx].size;
+        bool isBin = false;
+        if (bp_fat32_read_raw(gSystemTable, g_vfs_files[idx].name, g_vfs_files[idx].content, VFS_DATA_MAX, &realSz, &isBin)) {
+            g_vfs_files[idx].size = bp_str_len(g_vfs_files[idx].content);
+        }
+    }
+    bp_str_copy(g_bp_status, g_vfs_files[idx].is_binary ? "Binary Hex View" : (g_vfs_files[idx].on_disk ? "FAT32 Backed" : "RAM Buffer"), sizeof(g_bp_status));
+}
 
-    EFI_GUID ptrGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
-    EFI_SIMPLE_POINTER_PROTOCOL *Mouse = NULL;
-    SystemTable->BootServices->LocateProtocol(&ptrGuid, NULL, (void**)&Mouse);
-    if (Mouse) Mouse->Reset(Mouse, TRUE);
+static void bp_create_new_file(void) {
+    char candidate[VFS_NAME_MAX];
+    while (g_bp_note_seq < 999) {
+        char num[12];
+        bp_int_to_str(g_bp_note_seq++, num, sizeof(num));
+        bp_str_copy(candidate, "NOTE_", sizeof(candidate));
+        bp_str_cat(candidate, num, sizeof(candidate));
+        bp_str_cat(candidate, ".txt", sizeof(candidate));
+        if (bp_find_file_index(candidate) < 0) break;
+    }
+    if (vfs_write_file(candidate, "")) {
+        int idx = bp_find_file_index(candidate);
+        if (idx >= 0) {
+            g_bp_cat = 0;
+            bp_select_index(idx);
+            bp_str_copy(g_bp_name_buf, candidate, sizeof(g_bp_name_buf));
+            g_bp_editing_name = true;
+            bp_str_copy(g_bp_status, "Created New File", sizeof(g_bp_status));
+        }
+    }
+}
 
-    int cursor_x = screen_width / 2;
-    int cursor_y = screen_height / 2;
-
-    const int win_w = 780;
-    const int win_h = 500;
-
-    int view_mode = 0;       // 0 = Split View, 1 = Finder Grid, 2 = Editor Mode
-    int category_filter = 0; // 0 = All Files, 1 = Documents, 2 = System Config, 3 = Disk Volume (FAT32)
-    int selected_file = 0;
-    int cursor_pos = 0;
-    int scroll_line = 0;
-    bool dirty = false;
-    bool editing_filename = false;
-    char filename_edit_buf[VFS_NAME_MAX];
-    char status_pill[64];
-    bp_str_copy(status_pill, "Saved to FAT32 & VFS", sizeof(status_pill));
-
-    if (g_vfs_count > 0) {
-        bp_str_copy(filename_edit_buf, g_vfs_files[0].name, VFS_NAME_MAX);
-        cursor_pos = bp_str_len(g_vfs_files[0].content);
+static void bp_save_active_file(void) {
+    if (g_bp_selected < 0 || g_bp_selected >= g_vfs_count || !g_vfs_files[g_bp_selected].used) return;
+    VfsEntry* f = &g_vfs_files[g_bp_selected];
+    if (f->is_binary) {
+        bp_str_copy(g_bp_status, "Read-Only Binary", sizeof(g_bp_status));
+        return;
+    }
+    f->size = bp_str_len(f->content);
+    bool ok = vfs_write_file(f->name, f->content);
+    g_bp_dirty = false;
+    if (ok) {
+        play_system_sound((const char*)"success");
+        bp_str_copy(g_bp_status, f->on_disk ? "Saved to FAT32" : "Saved to RAM VFS", sizeof(g_bp_status));
     } else {
-        bp_str_copy(filename_edit_buf, "UNTITLED.txt", VFS_NAME_MAX);
+        play_system_sound((const char*)"error");
+        bp_str_copy(g_bp_status, "Save Failed", sizeof(g_bp_status));
+    }
+}
+
+static void bp_open_pending_path(const char* raw_path) {
+    if (!raw_path || !raw_path[0]) return;
+    char norm[VFS_NAME_MAX];
+    bp_normalize_path(raw_path, norm, VFS_NAME_MAX);
+    if (gSystemTable) bp_sync_from_fat32(gSystemTable);
+
+    int idx = bp_find_file_index(norm);
+    if (idx < 0) {
+        char tmp[VFS_DATA_MAX];
+        if (vfs_read_file(norm, tmp, VFS_DATA_MAX)) {
+            idx = bp_find_file_index(norm);
+        }
+    }
+    if (idx >= 0) {
+        g_bp_cat = 0;
+        bp_select_index(idx);
+        bp_str_copy(g_bp_status, "Opened File", sizeof(g_bp_status));
+    } else {
+        bp_str_copy(g_bp_status, "File Not Found", sizeof(g_bp_status));
+    }
+}
+
+static void bp_commit_rename(void) {
+    if (g_bp_selected < 0 || g_bp_selected >= g_vfs_count) {
+        g_bp_editing_name = false;
+        return;
+    }
+    char norm[VFS_NAME_MAX];
+    bp_normalize_path(g_bp_name_buf, norm, VFS_NAME_MAX);
+    if (norm[0] && !bp_str_eq_nocase(norm, g_vfs_files[g_bp_selected].name)) {
+        char old_name[VFS_NAME_MAX];
+        char old_content[VFS_DATA_MAX];
+        bp_str_copy(old_name, g_vfs_files[g_bp_selected].name, VFS_NAME_MAX);
+        bp_str_copy(old_content, g_vfs_files[g_bp_selected].content, VFS_DATA_MAX);
+        vfs_delete_file(old_name);
+        vfs_write_file(norm, old_content);
+        int nidx = bp_find_file_index(norm);
+        if (nidx >= 0) bp_select_index(nidx);
+        bp_str_copy(g_bp_status, "Renamed File", sizeof(g_bp_status));
+    }
+    g_bp_editing_name = false;
+}
+
+static void blankpad_render(BlankWindow* win, int cx, int cy, int cw, int ch, const BlankInputState* in) {
+    (void)win;
+    if (!g_vfs_initialized) vfs_init(gSystemTable);
+
+    const char* pending = wm_consume_pending_file();
+    if (pending && pending[0]) {
+        bp_open_pending_path(pending);
     }
 
-    int new_file_seq = 1;
-    bool prev_left = false;
-    uint32_t blink_tick = 0;
-    bool done = false;
+    if (g_bp_selected < 0 || g_bp_selected >= g_vfs_count || !g_vfs_files[g_bp_selected].used) {
+        g_bp_selected = (g_vfs_count > 0) ? 0 : -1;
+    }
 
-    while (!done) {
-        blink_tick++;
-        int win_x = 0, win_y = 0;
-        blankUI_get_window_pos(&win_x, &win_y, win_w, win_h);
+    bool click_avail = (in && in->left_pressed);
+    int mx = in ? in->mx : -1;
+    int my = in ? in->my : -1;
 
-        // Build filtered file index mapping
-        int filtered_indices[VFS_MAX_FILES];
-        int filtered_count = 0;
+    // Subtle spatial glass backdrop
+    dui_rect(cx, cy, cw, ch, THEME_BG_DEEP, 185);
+
+    int sidebar_w = g_bp_show_sidebar ? 216 : 0;
+    if (g_bp_show_sidebar && cw < 480) sidebar_w = 168;
+
+    // ------------------------------------------------------------------------
+    // Left Sidebar: Volumes & Files
+    // ------------------------------------------------------------------------
+    if (g_bp_show_sidebar) {
+        int sx = cx + 8;
+        int sy = cy + 8;
+        int sw = sidebar_w - 8;
+        int sh = ch - 16;
+
+        dui_glass_card(sx, sy, sw, sh, THEME_RADIUS_MD, THEME_SURFACE_CARD, 210, false);
+        dui_text(sx + 12, sy + 11, "Explorer", THEME_TEXT_PRIMARY, 1);
+
+        if (dui_button(sx + sw - 96, sy + 7, 42, 24, "Sync", THEME_SURFACE_ELEVATED, false, mx, my, click_avail)) {
+            click_avail = false;
+            if (gSystemTable) bp_sync_from_fat32(gSystemTable);
+            bp_str_copy(g_bp_status, "FAT32 Synced", sizeof(g_bp_status));
+            play_system_sound((const char*)"click");
+        }
+        if (dui_button(sx + sw - 50, sy + 7, 42, 24, "+New", THEME_ACCENT_CYAN, true, mx, my, click_avail)) {
+            click_avail = false;
+            bp_create_new_file();
+            play_system_sound((const char*)"click");
+        }
+
+        // Category filter pills
+        const char* cats[4] = { "All", "Docs", "Cfg", "Disk" };
+        int pill_w = (sw - 22) / 4;
+        for (int c = 0; c < 4; c++) {
+            int px = sx + 8 + c * (pill_w + 2);
+            int py = sy + 38;
+            bool active = (g_bp_cat == c);
+            if (dui_button(px, py, pill_w, 22, cats[c], active ? THEME_ACCENT_CYAN : THEME_SURFACE_ELEVATED, active, mx, my, click_avail)) {
+                click_avail = false;
+                g_bp_cat = c;
+                g_bp_sidebar_scroll = 0;
+                play_system_sound((const char*)"click");
+            }
+        }
+
+        // Build filtered index list
+        int vis_idx[VFS_MAX_FILES];
+        int vis_cnt = 0;
         for (int i = 0; i < g_vfs_count; i++) {
             if (!g_vfs_files[i].used) continue;
-            bool match = false;
-            if (category_filter == 0) match = true;
-            else if (category_filter == 1 && bp_classify_file(g_vfs_files[i].name, g_vfs_files[i].on_disk) == 1) match = true;
-            else if (category_filter == 2 && bp_classify_file(g_vfs_files[i].name, g_vfs_files[i].on_disk) == 2) match = true;
-            else if (category_filter == 3 && g_vfs_files[i].on_disk) match = true;
-            if (match) {
-                filtered_indices[filtered_count++] = i;
-            }
+            if (g_bp_cat != 0 && bp_classify_file(g_vfs_files[i].name, g_vfs_files[i].on_disk) != g_bp_cat) continue;
+            vis_idx[vis_cnt++] = i;
         }
 
-        if (selected_file >= g_vfs_count) selected_file = g_vfs_count - 1;
-        if (selected_file < 0 && g_vfs_count > 0) selected_file = 0;
+        int list_y = sy + 68;
+        int list_h = sh - 76;
+        int row_h = 34;
+        int max_rows = list_h / row_h;
+        if (max_rows < 1) max_rows = 1;
 
-        // Keyboard input
-        EFI_INPUT_KEY Key;
-        if (SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &Key) == EFI_SUCCESS) {
-            if (Key.ScanCode == 0x17) {
-                done = true;
-            } else if (Key.UnicodeChar == 0x13 || Key.ScanCode == 0x0C) {
-                // Ctrl+S (0x13) or F2 (0x0C): Save to FAT32 & VFS
-                if (selected_file >= 0 && selected_file < g_vfs_count) {
-                    if (editing_filename && filename_edit_buf[0]) {
-                        bp_str_copy(g_vfs_files[selected_file].name, filename_edit_buf, VFS_NAME_MAX);
-                        editing_filename = false;
-                    }
-                    bool disk_saved = vfs_write_file(g_vfs_files[selected_file].name, g_vfs_files[selected_file].content);
-                    dirty = false;
-                    bp_str_copy(status_pill, disk_saved ? "Saved to FAT32 & VFS" : "Saved in VFS Memory", sizeof(status_pill));
-                    play_system_sound((char*)"notification");
-                }
-            } else if (editing_filename) {
-                int flen = bp_str_len(filename_edit_buf);
-                if (Key.UnicodeChar == 0x0D) {
-                    if (filename_edit_buf[0] && selected_file >= 0) {
-                        bp_str_copy(g_vfs_files[selected_file].name, filename_edit_buf, VFS_NAME_MAX);
-                    }
-                    editing_filename = false;
-                } else if (Key.UnicodeChar == 0x08) {
-                    if (flen > 0) filename_edit_buf[flen - 1] = '\0';
-                } else if (Key.UnicodeChar >= 33 && Key.UnicodeChar <= 126 && flen < VFS_NAME_MAX - 1) {
-                    filename_edit_buf[flen] = (char)Key.UnicodeChar;
-                    filename_edit_buf[flen + 1] = '\0';
-                }
-            } else if (selected_file >= 0 && selected_file < g_vfs_count && view_mode != 1 && !g_vfs_files[selected_file].is_binary) {
-                char* buf = g_vfs_files[selected_file].content;
-                int len = bp_str_len(buf);
-                if (cursor_pos > len) cursor_pos = len;
-                if (cursor_pos < 0) cursor_pos = 0;
+        if (in && in->scroll_y != 0 && bp_pt_in(mx, my, sx, list_y, sw, list_h)) {
+            g_bp_sidebar_scroll -= in->scroll_y;
+        }
+        if (g_bp_sidebar_scroll > vis_cnt - max_rows) g_bp_sidebar_scroll = vis_cnt - max_rows;
+        if (g_bp_sidebar_scroll < 0) g_bp_sidebar_scroll = 0;
 
-                if (Key.ScanCode == 0x01) { // Up arrow
-                    int cur_line = 0, cur_col = 0;
-                    bp_compute_line_col(buf, cursor_pos, &cur_line, &cur_col);
-                    if (cur_line > 0) {
-                        cursor_pos = bp_offset_for_line_col(buf, cur_line - 1, cur_col);
-                    } else {
-                        cursor_pos = 0;
-                    }
-                } else if (Key.ScanCode == 0x02) { // Down arrow
-                    int cur_line = 0, cur_col = 0;
-                    bp_compute_line_col(buf, cursor_pos, &cur_line, &cur_col);
-                    cursor_pos = bp_offset_for_line_col(buf, cur_line + 1, cur_col);
-                } else if (Key.ScanCode == 0x03) { // Right arrow
-                    if (cursor_pos < len) cursor_pos++;
-                } else if (Key.ScanCode == 0x04) { // Left arrow
-                    if (cursor_pos > 0) cursor_pos--;
-                } else if (Key.UnicodeChar == 0x08) { // Backspace
-                    if (cursor_pos > 0 && len > 0) {
-                        for (int i = cursor_pos - 1; i < len; i++) {
-                            buf[i] = buf[i + 1];
-                        }
-                        cursor_pos--;
-                        g_vfs_files[selected_file].size = bp_str_len(buf);
-                        dirty = true;
-                        bp_str_copy(status_pill, "Modified (Unsaved)", sizeof(status_pill));
-                    }
-                } else if (Key.UnicodeChar == 0x0D) { // Enter -> newline
-                    if (len < VFS_DATA_MAX - 2) {
-                        for (int i = len + 1; i > cursor_pos; i--) {
-                            buf[i] = buf[i - 1];
-                        }
-                        buf[cursor_pos] = '\n';
-                        cursor_pos++;
-                        g_vfs_files[selected_file].size = bp_str_len(buf);
-                        dirty = true;
-                        bp_str_copy(status_pill, "Modified (Unsaved)", sizeof(status_pill));
-                    }
-                } else if (Key.UnicodeChar >= 32 && Key.UnicodeChar <= 126) {
-                    if (len < VFS_DATA_MAX - 2) {
-                        for (int i = len + 1; i > cursor_pos; i--) {
-                            buf[i] = buf[i - 1];
-                        }
-                        buf[cursor_pos] = (char)Key.UnicodeChar;
-                        cursor_pos++;
-                        g_vfs_files[selected_file].size = bp_str_len(buf);
-                        dirty = true;
-                        bp_str_copy(status_pill, "Modified (Unsaved)", sizeof(status_pill));
-                    }
-                }
+        dui_push_clip(sx + 4, list_y, sw - 8, list_h);
+        for (int r = 0; r < max_rows && (g_bp_sidebar_scroll + r) < vis_cnt; r++) {
+            int idx = vis_idx[g_bp_sidebar_scroll + r];
+            VfsEntry* e = &g_vfs_files[idx];
+            int ry = list_y + r * row_h;
+            bool sel = (idx == g_bp_selected);
+            bool hov = bp_pt_in(mx, my, sx + 6, ry, sw - 12, row_h - 4);
+
+            uint32_t row_col = sel ? THEME_SURFACE_ELEVATED : (hov ? THEME_SURFACE_HOVER : THEME_SURFACE_BASE);
+            dui_rect_rounded(sx + 6, ry, sw - 12, row_h - 4, 7, row_col, sel ? 240 : (hov ? 210 : 120));
+            if (sel) {
+                dui_rect_rounded(sx + 6, ry + 5, 3, row_h - 14, 2, THEME_ACCENT_CYAN, 255);
+            }
+
+            // Extension badge
+            uint32_t bcol = bp_file_badge_color(e->name);
+            dui_rect_rounded(sx + 14, ry + 6, 30, 18, 4, bcol, 215);
+            dui_text(sx + 17, ry + 7, bp_file_badge_label(e->name), THEME_TEXT_ON_ACCENT, 1);
+
+            dui_text_ellipsis(sx + 50, ry + 7, sw - 64, e->name, sel ? THEME_TEXT_PRIMARY : THEME_TEXT_SECONDARY, 1);
+
+            if (hov && click_avail) {
+                click_avail = false;
+                bp_select_index(idx);
+                play_system_sound((const char*)"click");
             }
         }
+        dui_pop_clip();
+    }
 
-        // Mouse input
-        bool mouse_clicked = false;
-        if (Mouse) {
-            EFI_SIMPLE_POINTER_STATE State;
-            if (Mouse->GetState(Mouse, &State) == EFI_SUCCESS) {
-                int dx = State.RelativeMovementX / 1000;
-                int dy = State.RelativeMovementY / 1000;
-                cursor_x += dx;
-                cursor_y += dy;
-                if (cursor_x < 0) cursor_x = 0;
-                if (cursor_x > screen_width - 1) cursor_x = screen_width - 1;
-                if (cursor_y < 0) cursor_y = 0;
-                if (cursor_y > screen_height - 1) cursor_y = screen_height - 1;
+    // ------------------------------------------------------------------------
+    // Right Workspace: Toolbar + Code/Note Editor + Status Bar
+    // ------------------------------------------------------------------------
+    int ex = cx + sidebar_w + 8;
+    int ey = cy + 8;
+    int ew = cw - sidebar_w - 16;
+    int eh = ch - 16;
 
-                blankUI_update_window_drag(cursor_x, cursor_y, State.LeftButton, win_w, win_h);
-                if (State.LeftButton && !prev_left) {
-                    mouse_clicked = true;
-                }
-                prev_left = State.LeftButton;
-            }
-        }
+    dui_glass_card(ex, ey, ew, eh, THEME_RADIUS_MD, THEME_SURFACE_BASE, 220, true);
 
-        int toolbar_y = win_y + 36;
-        int content_y = win_y + 76;
-        int content_h = win_h - 76;
-        int sidebar_w = 190;
-        int main_x = win_x + sidebar_w;
-        int main_w = win_w - sidebar_w;
+    // Top toolbar
+    int tb_h = 40;
+    dui_rect(ex + 1, ey + tb_h, ew - 2, 1, THEME_BORDER_SUBTLE, 180);
 
-        if (mouse_clicked) {
-            if (blankUI_hit_test_window_close(cursor_x, cursor_y, win_w, win_h)) {
-                play_system_sound((char*)"click");
-                done = true;
-            }
+    if (dui_button(ex + 8, ey + 8, 66, 24, g_bp_show_sidebar ? "Focus" : "Files", THEME_SURFACE_ELEVATED, false, mx, my, click_avail)) {
+        click_avail = false;
+        g_bp_show_sidebar = !g_bp_show_sidebar;
+        play_system_sound((const char*)"click");
+    }
 
-            // Top Toolbar Mode Switch buttons:
-            // [ Split View ] (x: main_x + 10 .. +88)
-            // [ Finder Grid ] (x: main_x + 92 .. +174)
-            // [ Editor Mode ] (x: main_x + 178 .. +260)
-            if (cursor_y >= toolbar_y + 6 && cursor_y <= toolbar_y + 32) {
-                if (cursor_x >= main_x + 10 && cursor_x <= main_x + 88) {
-                    view_mode = 0;
-                    play_system_sound((char*)"click");
-                } else if (cursor_x >= main_x + 92 && cursor_x <= main_x + 174) {
-                    view_mode = 1;
-                    play_system_sound((char*)"click");
-                } else if (cursor_x >= main_x + 178 && cursor_x <= main_x + 260) {
-                    view_mode = 2;
-                    play_system_sound((char*)"click");
-                }
-                // Action buttons:
-                // [ + New File ] (main_x + 270 .. +346)
-                // [ Save to Disk ] (main_x + 350 .. +436)
-                // [ Duplicate ] (main_x + 440 .. +512)
-                // [ Delete ] (main_x + 516 .. +576)
-                else if (cursor_x >= main_x + 270 && cursor_x <= main_x + 346) {
-                    char newName[32];
-                    bp_str_copy(newName, "NOTE_", sizeof(newName));
-                    char numBuf[8];
-                    bp_int_to_str(new_file_seq++, numBuf, sizeof(numBuf));
-                    bp_str_cat(newName, numBuf, sizeof(newName));
-                    bp_str_cat(newName, ".txt", sizeof(newName));
+    VfsEntry* active = (g_bp_selected >= 0 && g_bp_selected < g_vfs_count && g_vfs_files[g_bp_selected].used)
+                       ? &g_vfs_files[g_bp_selected] : NULL;
 
-                    const char* initBody = "# New BlankPad Document\nType here and press Save to Disk (or Ctrl+S).\n";
-                    vfs_write_file(newName, initBody);
-                    int nidx = bp_find_file_index(newName);
-                    if (nidx >= 0) {
-                        selected_file = nidx;
-                        bp_str_copy(filename_edit_buf, g_vfs_files[nidx].name, VFS_NAME_MAX);
-                        cursor_pos = bp_str_len(g_vfs_files[nidx].content);
-                        scroll_line = 0;
-                        dirty = false;
-                    }
-                    bp_str_copy(status_pill, "Created on FAT32", sizeof(status_pill));
-                    play_system_sound((char*)"click");
-                } else if (cursor_x >= main_x + 350 && cursor_x <= main_x + 436) {
-                    if (selected_file >= 0 && selected_file < g_vfs_count) {
-                        if (editing_filename && filename_edit_buf[0]) {
-                            bp_str_copy(g_vfs_files[selected_file].name, filename_edit_buf, VFS_NAME_MAX);
-                            editing_filename = false;
-                        }
-                        bool disk_saved = vfs_write_file(g_vfs_files[selected_file].name, g_vfs_files[selected_file].content);
-                        dirty = false;
-                        bp_str_copy(status_pill, disk_saved ? "Saved to FAT32 & VFS" : "Saved in VFS Memory", sizeof(status_pill));
-                        play_system_sound((char*)"notification");
-                    }
-                } else if (cursor_x >= main_x + 440 && cursor_x <= main_x + 512) {
-                    if (selected_file >= 0 && selected_file < g_vfs_count) {
-                        char dupName[VFS_NAME_MAX];
-                        bp_str_copy(dupName, "COPY_", VFS_NAME_MAX);
-                        bp_str_cat(dupName, g_vfs_files[selected_file].name, VFS_NAME_MAX);
-                        vfs_write_file(dupName, g_vfs_files[selected_file].content);
-                        int didx = bp_find_file_index(dupName);
-                        if (didx >= 0) {
-                            selected_file = didx;
-                            bp_str_copy(filename_edit_buf, g_vfs_files[didx].name, VFS_NAME_MAX);
-                            cursor_pos = bp_str_len(g_vfs_files[didx].content);
-                        }
-                        bp_str_copy(status_pill, "Duplicated to FAT32", sizeof(status_pill));
-                        play_system_sound((char*)"click");
-                    }
-                } else if (cursor_x >= main_x + 516 && cursor_x <= main_x + 576) {
-                    if (selected_file >= 0 && selected_file < g_vfs_count && g_vfs_count > 1) {
-                        char delTarget[VFS_NAME_MAX];
-                        bp_str_copy(delTarget, g_vfs_files[selected_file].name, VFS_NAME_MAX);
-                        vfs_delete_file(delTarget);
-                        if (selected_file >= g_vfs_count) selected_file = g_vfs_count - 1;
-                        if (selected_file >= 0) {
-                            bp_str_copy(filename_edit_buf, g_vfs_files[selected_file].name, VFS_NAME_MAX);
-                            cursor_pos = bp_str_len(g_vfs_files[selected_file].content);
-                        }
-                        dirty = false;
-                        bp_str_copy(status_pill, "Deleted from FAT32", sizeof(status_pill));
-                        play_system_sound((char*)"click");
-                    }
-                }
-            }
+    int name_x = ex + 82;
+    int name_w = ew - 240;
+    if (name_w < 80) name_w = 80;
 
-            // Left Sidebar clicks (Favorites + VFS file list + Rescan button)
-            if (cursor_x >= win_x + 8 && cursor_x <= win_x + sidebar_w - 8) {
-                // Favorites: 4 items starting at content_y + 24
-                for (int f = 0; f < 4; f++) {
-                    int fy = content_y + 22 + f * 24;
-                    if (cursor_y >= fy && cursor_y <= fy + 22) {
-                        category_filter = f;
-                        play_system_sound((char*)"click");
-                    }
-                }
-                // File list in sidebar starting at content_y + 144
-                int list_start_y = content_y + 144;
-                int max_sidebar_files = 10;
-                for (int i = 0; i < filtered_count && i < max_sidebar_files; i++) {
-                    int ry = list_start_y + i * 24;
-                    if (cursor_y >= ry && cursor_y <= ry + 22) {
-                        int real_idx = filtered_indices[i];
-                        selected_file = real_idx;
-                        // Read fresh bytes from disk if it's a real disk text file
-                        char refreshBuf[VFS_DATA_MAX];
-                        vfs_read_file(g_vfs_files[real_idx].name, refreshBuf, VFS_DATA_MAX);
-                        bp_str_copy(filename_edit_buf, g_vfs_files[real_idx].name, VFS_NAME_MAX);
-                        cursor_pos = bp_str_len(g_vfs_files[real_idx].content);
-                        scroll_line = 0;
-                        editing_filename = false;
-                        play_system_sound((char*)"click");
-                    }
-                }
-                // Rescan FAT32 button at bottom of sidebar
-                int rescan_y = win_y + win_h - 34;
-                if (cursor_y >= rescan_y && cursor_y <= rescan_y + 24) {
-                    bp_sync_from_fat32(SystemTable);
-                    bp_str_copy(status_pill, "Synced FAT32 Volume", sizeof(status_pill));
-                    play_system_sound((char*)"notification");
-                }
-            }
-
-            // Main Content Area clicks
-            if (cursor_x >= main_x && cursor_x <= win_x + win_w && cursor_y >= content_y && cursor_y <= win_y + win_h) {
-                if (view_mode == 1) {
-                    // Finder Grid Mode: 3 columns of cards
-                    int cols = 3;
-                    int card_w = 176;
-                    int card_h = 92;
-                    int gap_x = 14;
-                    int gap_y = 14;
-                    for (int i = 0; i < filtered_count && i < 12; i++) {
-                        int r = i / cols;
-                        int c = i % cols;
-                        int cx = main_x + 18 + c * (card_w + gap_x);
-                        int cy = content_y + 42 + r * (card_h + gap_y);
-                        if (cursor_x >= cx && cursor_x <= cx + card_w && cursor_y >= cy && cursor_y <= cy + card_h) {
-                            int real_idx = filtered_indices[i];
-                            if (selected_file == real_idx) {
-                                // Second click opens file in Editor!
-                                view_mode = 0;
-                            } else {
-                                selected_file = real_idx;
-                                char refreshBuf[VFS_DATA_MAX];
-                                vfs_read_file(g_vfs_files[real_idx].name, refreshBuf, VFS_DATA_MAX);
-                                bp_str_copy(filename_edit_buf, g_vfs_files[real_idx].name, VFS_NAME_MAX);
-                                cursor_pos = bp_str_len(g_vfs_files[real_idx].content);
-                                scroll_line = 0;
-                            }
-                            play_system_sound((char*)"click");
-                        }
-                    }
-                    // "Edit Selected File" button in Finder Grid header
-                    if (cursor_x >= main_x + main_w - 130 && cursor_x <= main_x + main_w - 16 &&
-                        cursor_y >= content_y + 8 && cursor_y <= content_y + 32) {
-                        view_mode = 0;
-                        play_system_sound((char*)"click");
-                    }
-                } else {
-                    // Split View (0) or Editor Mode (2)
-                    int editor_x = (view_mode == 0) ? (main_x + 165) : main_x;
-                    if (view_mode == 0 && cursor_x < editor_x) {
-                        // Clicked in Split View middle Finder column
-                        for (int i = 0; i < filtered_count && i < 9; i++) {
-                            int card_y = content_y + 34 + i * 42;
-                            if (cursor_y >= card_y && cursor_y <= card_y + 38) {
-                                int real_idx = filtered_indices[i];
-                                selected_file = real_idx;
-                                char refreshBuf[VFS_DATA_MAX];
-                                vfs_read_file(g_vfs_files[real_idx].name, refreshBuf, VFS_DATA_MAX);
-                                bp_str_copy(filename_edit_buf, g_vfs_files[real_idx].name, VFS_NAME_MAX);
-                                cursor_pos = bp_str_len(g_vfs_files[real_idx].content);
-                                scroll_line = 0;
-                                editing_filename = false;
-                                play_system_sound((char*)"click");
-                            }
-                        }
-                    } else {
-                        // Clicked inside Editor pane
-                        if (cursor_y >= content_y + 6 && cursor_y <= content_y + 30 &&
-                            cursor_x >= editor_x + 12 && cursor_x <= editor_x + 220) {
-                            editing_filename = true;
-                            if (selected_file >= 0) {
-                                bp_str_copy(filename_edit_buf, g_vfs_files[selected_file].name, VFS_NAME_MAX);
-                            }
-                        } else {
-                            editing_filename = false;
-                            if (selected_file >= 0 && selected_file < g_vfs_count) {
-                                int text_top = content_y + 40;
-                                int text_left = editor_x + 44;
-                                int clicked_line = scroll_line + (cursor_y - text_top) / 18;
-                                if (clicked_line < 0) clicked_line = 0;
-                                int clicked_col = (cursor_x - text_left) / 7;
-                                if (clicked_col < 0) clicked_col = 0;
-                                cursor_pos = bp_offset_for_line_col(g_vfs_files[selected_file].content, clicked_line, clicked_col);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Keep active cursor line in visible scroll window
-        if (selected_file >= 0 && selected_file < g_vfs_count) {
-            int cur_line = 0, cur_col = 0;
-            bp_compute_line_col(g_vfs_files[selected_file].content, cursor_pos, &cur_line, &cur_col);
-            int visible_lines = 19;
-            if (cur_line < scroll_line) scroll_line = cur_line;
-            if (cur_line >= scroll_line + visible_lines) scroll_line = cur_line - visible_lines + 1;
-        }
-
-        // ======================== RENDER FRAME ========================
-        dui_draw_wallpaper();
-        blankUI_draw_menubar();
-        blankUI_draw_dock();
-
-        blankUI_draw_window(win_w, win_h, (char*)"Files & BlankPad Studio");
-
-        // Top Toolbar background (macOS Sequoia frosted header bar)
-        dui_rect(win_x + 1, toolbar_y, win_w - 2, 38, 0xEBEBF0, 255);
-        dui_line(win_x, toolbar_y + 38, win_x + win_w, toolbar_y + 38, 0xD1D1D6, 1);
-
-        // Status Pill on left side of toolbar above sidebar
-        uint32_t pill_bg = dirty ? 0xFFF4E5 : 0xE3F9E5;
-        uint32_t pill_fg = dirty ? 0xB25000 : 0x1B7F2A;
-        dui_rect_rounded(win_x + 10, toolbar_y + 7, sidebar_w - 20, 24, 12, pill_bg, 255);
-        dui_circle(win_x + 22, toolbar_y + 19, 4, pill_fg, 255);
-        dui_text(win_x + 32, toolbar_y + 13, status_pill, pill_fg, 1);
-
-        // Mode Switch Segmented Control
-        const char* mode_labels[3] = { "Split View", "Finder Grid", "Editor Mode" };
-        int mode_xs[3] = { main_x + 10, main_x + 92, main_x + 178 };
-        int mode_ws[3] = { 78, 82, 82 };
-        for (int m = 0; m < 3; m++) {
-            bool active = (view_mode == m);
-            dui_rect_rounded(mode_xs[m], toolbar_y + 6, mode_ws[m], 26, 6, active ? 0x0A84FF : 0xD8D8DF, 255);
-            dui_text(mode_xs[m] + 8, toolbar_y + 13, mode_labels[m], active ? 0xFFFFFF : 0x2C2C2E, 1);
-        }
-
-        // Action Buttons: [ + New File ] [ Save to Disk ] [ Duplicate ] [ Delete ]
-        dui_rect_rounded(main_x + 270, toolbar_y + 6, 76, 26, 6, 0xFFFFFF, 255);
-        dui_rect_rounded_outline(main_x + 270, toolbar_y + 6, 76, 26, 6, 0xC7C7CC, 1);
-        dui_text(main_x + 278, toolbar_y + 13, "+ New File", 0x1C1C1E, 1);
-
-        dui_rect_rounded(main_x + 350, toolbar_y + 6, 86, 26, 6, 0x30D158, 255);
-        dui_text(main_x + 358, toolbar_y + 13, "Save to Disk", 0xFFFFFF, 1);
-
-        dui_rect_rounded(main_x + 440, toolbar_y + 6, 72, 26, 6, 0xFFFFFF, 255);
-        dui_rect_rounded_outline(main_x + 440, toolbar_y + 6, 72, 26, 6, 0xC7C7CC, 1);
-        dui_text(main_x + 449, toolbar_y + 13, "Duplicate", 0x1C1C1E, 1);
-
-        dui_rect_rounded(main_x + 516, toolbar_y + 6, 60, 26, 6, 0xFF3B30, 255);
-        dui_text(main_x + 528, toolbar_y + 13, "Delete", 0xFFFFFF, 1);
-
-        // Left Sidebar (width 190px)
-        dui_rect(win_x + 1, content_y, sidebar_w - 1, content_h - 1, 0xF2F2F7, 245);
-        dui_line(win_x + sidebar_w, content_y, win_x + sidebar_w, win_y + win_h, 0xD1D1D6, 1);
-
-        dui_text(win_x + 14, content_y + 6, "FAVORITES", 0x8E8E93, 1);
-        const char* fav_names[4] = {
-            "All Files",
-            "Documents",
-            "System Config",
-            "Disk Volume (FAT32)"
-        };
-        uint32_t fav_dots[4] = { 0x0A84FF, 0x5E5CE6, 0xFF9F0A, 0x30D158 };
-        for (int f = 0; f < 4; f++) {
-            int fy = content_y + 22 + f * 24;
-            if (category_filter == f) {
-                dui_rect_rounded(win_x + 8, fy, sidebar_w - 16, 22, 6, 0x0A84FF, 255);
-            }
-            dui_circle(win_x + 18, fy + 11, 4, (category_filter == f) ? 0xFFFFFF : fav_dots[f], 255);
-            dui_text(win_x + 28, fy + 5, fav_names[f], (category_filter == f) ? 0xFFFFFF : 0x1C1C1E, 1);
-        }
-
-        // VFS / FAT32 File List in Sidebar
-        dui_line(win_x + 12, content_y + 122, win_x + sidebar_w - 12, content_y + 122, 0xD1D1D6, 1);
-        dui_text(win_x + 14, content_y + 127, "WORKSPACE & FAT32", 0x8E8E93, 1);
-
-        int list_start_y = content_y + 144;
-        for (int i = 0; i < filtered_count && i < 10; i++) {
-            int real_idx = filtered_indices[i];
-            int ry = list_start_y + i * 24;
-            bool is_sel = (real_idx == selected_file);
-            if (is_sel) {
-                dui_rect_rounded(win_x + 8, ry, sidebar_w - 16, 22, 5, 0xD1E4FF, 255);
-            }
-
-            uint32_t bcol = bp_file_badge_color(g_vfs_files[real_idx].name);
-            dui_rect_rounded(win_x + 12, ry + 3, 24, 15, 3, bcol, 255);
-            dui_text(win_x + 14, ry + 5, bp_file_badge_label(g_vfs_files[real_idx].name), 0xFFFFFF, 1);
-
-            // Truncate display name to fit sidebar
-            char dispName[16];
-            bp_str_copy(dispName, g_vfs_files[real_idx].name, 14);
-            dui_text(win_x + 40, ry + 5, dispName, is_sel ? 0x0040DD : 0x1C1C1E, 1);
-
-            char szStr[12];
-            bp_int_to_str(g_vfs_files[real_idx].size, szStr, sizeof(szStr));
-            bp_str_cat(szStr, "B", sizeof(szStr));
-            int sw = dui_text_width(szStr, 1);
-            dui_text(win_x + sidebar_w - 12 - sw, ry + 5, szStr, 0x8E8E93, 1);
-        }
-
-        // Rescan FAT32 Partition button at bottom of sidebar
-        int rescan_y = win_y + win_h - 34;
-        dui_rect_rounded(win_x + 12, rescan_y, sidebar_w - 24, 24, 6, 0xE5E5EA, 255);
-        dui_text(win_x + 28, rescan_y + 6, "Rescan FAT32 Disk", 0x0A84FF, 1);
-
-        // Main Content Area
-        if (view_mode == 1) {
-            // ==================== FINDER GRID MODE ====================
-            dui_rect(main_x, content_y, main_w - 1, content_h - 1, 0xFFFFFF, 255);
-            dui_text(main_x + 18, content_y + 14, "FAT32 & VFS Volume Browser (Click to select, click again to edit)", 0x3A3A3C, 1);
-
-            dui_rect_rounded(main_x + main_w - 130, content_y + 8, 114, 24, 6, 0x0A84FF, 255);
-            dui_text(main_x + main_w - 118, content_y + 14, "Edit File ->", 0xFFFFFF, 1);
-
-            int cols = 3;
-            int card_w = 176;
-            int card_h = 92;
-            int gap_x = 14;
-            int gap_y = 14;
-            for (int i = 0; i < filtered_count && i < 12; i++) {
-                int real_idx = filtered_indices[i];
-                int r = i / cols;
-                int c = i % cols;
-                int cx = main_x + 18 + c * (card_w + gap_x);
-                int cy = content_y + 42 + r * (card_h + gap_y);
-                bool is_sel = (real_idx == selected_file);
-
-                dui_rect_rounded(cx, cy, card_w, card_h, 10, is_sel ? 0xE8F2FF : 0xF7F7FA, 255);
-                dui_rect_rounded_outline(cx, cy, card_w, card_h, 10, is_sel ? 0x0A84FF : 0xE5E5EA, is_sel ? 2 : 1);
-
-                // Document icon graphic
-                uint32_t badge_col = bp_file_badge_color(g_vfs_files[real_idx].name);
-                dui_rect_rounded(cx + 12, cy + 12, 34, 42, 5, badge_col, 255);
-                dui_text(cx + 16, cy + 26, bp_file_badge_label(g_vfs_files[real_idx].name), 0xFFFFFF, 1);
-
-                char cardTitle[18];
-                bp_str_copy(cardTitle, g_vfs_files[real_idx].name, 17);
-                dui_text(cx + 54, cy + 14, cardTitle, 0x1C1C1E, 1);
-
-                char metaLine[32];
-                bp_int_to_str(g_vfs_files[real_idx].size, metaLine, sizeof(metaLine));
-                bp_str_cat(metaLine, " bytes", sizeof(metaLine));
-                dui_text(cx + 54, cy + 32, metaLine, 0x636366, 1);
-
-                const char* storageTag = g_vfs_files[real_idx].on_disk ? "FAT32 Disk" : "VFS RAM";
-                dui_rect_rounded(cx + 54, cy + 50, 74, 16, 4, g_vfs_files[real_idx].on_disk ? 0xD4F7DC : 0xE5E5EA, 255);
-                dui_text(cx + 60, cy + 52, storageTag, g_vfs_files[real_idx].on_disk ? 0x157328 : 0x636366, 1);
-
-                // Preview line of content
-                char prevLine[24];
-                int p = 0;
-                const char* rawc = g_vfs_files[real_idx].content;
-                while (rawc[p] && rawc[p] != '\n' && p < 22) {
-                    prevLine[p] = rawc[p];
-                    p++;
-                }
-                prevLine[p] = '\0';
-                dui_text(cx + 12, cy + 72, prevLine, 0x8E8E93, 1);
-            }
+    if (active) {
+        if (g_bp_editing_name) {
+            dui_rect_rounded(name_x, ey + 7, name_w, 26, 6, THEME_SURFACE_INPUT, 245);
+            dui_rect_rounded_outline(name_x, ey + 7, name_w, 26, 6, THEME_BORDER_FOCUS, 220);
+            dui_text_ellipsis(name_x + 8, ey + 12, name_w - 16, g_bp_name_buf, THEME_TEXT_PRIMARY, 1);
         } else {
-            // ==================== SPLIT VIEW / EDITOR MODE ====================
-            int editor_x = main_x;
-            int editor_w = main_w;
-
-            if (view_mode == 0) {
-                // Middle Finder Column in Split View (width 165px)
-                int mid_w = 165;
-                dui_rect(main_x, content_y, mid_w, content_h - 1, 0xFAFAFC, 255);
-                dui_line(main_x + mid_w, content_y, main_x + mid_w, win_y + win_h, 0xD1D1D6, 1);
-                dui_text(main_x + 10, content_y + 10, "FILES (", 0x636366, 1);
-                char cntStr[16];
-                bp_int_to_str(filtered_count, cntStr, sizeof(cntStr));
-                bp_str_cat(cntStr, ")", sizeof(cntStr));
-                dui_text(main_x + 56, content_y + 10, cntStr, 0x636366, 1);
-
-                for (int i = 0; i < filtered_count && i < 9; i++) {
-                    int real_idx = filtered_indices[i];
-                    int cy = content_y + 34 + i * 42;
-                    bool is_sel = (real_idx == selected_file);
-                    dui_rect_rounded(main_x + 6, cy, mid_w - 12, 38, 6, is_sel ? 0x0A84FF : 0xFFFFFF, 255);
-                    if (!is_sel) {
-                        dui_rect_rounded_outline(main_x + 6, cy, mid_w - 12, 38, 6, 0xE5E5EA, 1);
-                    }
-                    char fTitle[18];
-                    bp_str_copy(fTitle, g_vfs_files[real_idx].name, 17);
-                    dui_text(main_x + 12, cy + 6, fTitle, is_sel ? 0xFFFFFF : 0x1C1C1E, 1);
-
-                    char infoLine[28];
-                    bp_int_to_str(g_vfs_files[real_idx].size, infoLine, sizeof(infoLine));
-                    bp_str_cat(infoLine, " B  ", sizeof(infoLine));
-                    bp_str_cat(infoLine, g_vfs_files[real_idx].on_disk ? "[FAT32]" : "[VFS]", sizeof(infoLine));
-                    dui_text(main_x + 12, cy + 21, infoLine, is_sel ? 0xD1E4FF : 0x8E8E93, 1);
+            bool hov_name = bp_pt_in(mx, my, name_x, ey + 7, name_w, 26);
+            if (hov_name) {
+                dui_rect_rounded(name_x, ey + 7, name_w, 26, 6, THEME_SURFACE_HOVER, 140);
+                if (click_avail) {
+                    click_avail = false;
+                    bp_str_copy(g_bp_name_buf, active->name, sizeof(g_bp_name_buf));
+                    g_bp_editing_name = true;
                 }
-
-                editor_x = main_x + mid_w;
-                editor_w = main_w - mid_w;
             }
+            dui_text_ellipsis(name_x + 6, ey + 12, name_w - 12, active->name, THEME_TEXT_PRIMARY, 1);
+        }
+    } else {
+        dui_text(name_x + 6, ey + 12, "No File Selected", THEME_TEXT_MUTED, 1);
+    }
 
-            // Sleek Dark Studio Editor Surface
-            dui_rect(editor_x, content_y, editor_w - 1, content_h - 1, 0x1E1E24, 255);
+    if (dui_button(ex + ew - 142, ey + 8, 64, 24, "Save", THEME_ACCENT_CYAN, true, mx, my, click_avail)) {
+        click_avail = false;
+        bp_save_active_file();
+    }
+    if (dui_button(ex + ew - 72, ey + 8, 64, 24, "Delete", THEME_ACCENT_ROSE, false, mx, my, click_avail)) {
+        click_avail = false;
+        if (active) {
+            char del_name[VFS_NAME_MAX];
+            bp_str_copy(del_name, active->name, VFS_NAME_MAX);
+            vfs_delete_file(del_name);
+            g_bp_dirty = false;
+            g_bp_cursor = 0;
+            g_bp_scroll_line = 0;
+            if (g_bp_selected >= g_vfs_count) g_bp_selected = g_vfs_count - 1;
+            if (g_bp_selected >= 0) bp_select_index(g_bp_selected);
+            bp_str_copy(g_bp_status, "Deleted File", sizeof(g_bp_status));
+            play_system_sound((const char*)"click");
+        }
+    }
 
-            // Editor Sub-header bar (filename + cursor position + encoding)
-            dui_rect(editor_x, content_y, editor_w - 1, 32, 0x282830, 255);
-            dui_line(editor_x, content_y + 32, editor_x + editor_w, content_y + 32, 0x3A3A44, 1);
+    // Editor content area
+    int body_x = ex + 6;
+    int body_y = ey + tb_h + 6;
+    int body_w = ew - 12;
+    int body_h = eh - tb_h - 38;
+    int gutter_w = 40;
+    int line_h = 20;
+    int vis_lines = body_h / line_h;
+    if (vis_lines < 1) vis_lines = 1;
 
-            if (selected_file >= 0 && selected_file < g_vfs_count) {
-                if (editing_filename) {
-                    dui_rect_rounded(editor_x + 10, content_y + 5, 200, 22, 4, 0x141418, 255);
-                    dui_rect_rounded_outline(editor_x + 10, content_y + 5, 200, 22, 4, 0x0A84FF, 1);
-                    dui_text(editor_x + 16, content_y + 9, filename_edit_buf, 0xFFFFFF, 1);
-                } else {
-                    dui_text(editor_x + 12, content_y + 9, g_vfs_files[selected_file].name, 0xFFFFFF, 1);
-                    int nw = dui_text_width(g_vfs_files[selected_file].name, 1);
-                    dui_text(editor_x + 20 + nw, content_y + 9, "(click name to rename)", 0x6E6E77, 1);
+    dui_rect_rounded(body_x, body_y, body_w, body_h, 8, THEME_SURFACE_INPUT, 235);
+    dui_rect(body_x, body_y, gutter_w, body_h, THEME_BG_DEEP, 180);
+    dui_rect(body_x + gutter_w, body_y + 4, 1, body_h - 8, THEME_BORDER_SUBTLE, 140);
+
+    if (active) {
+        char* buf = active->content;
+        int len = bp_str_len(buf);
+        if (g_bp_cursor < 0) g_bp_cursor = 0;
+        if (g_bp_cursor > len) g_bp_cursor = len;
+
+        // Keyboard handling
+        if (in && in->has_key) {
+            if (g_bp_editing_name) {
+                int nlen = bp_str_len(g_bp_name_buf);
+                if (in->key_char == '\n') {
+                    bp_commit_rename();
+                } else if (in->scan_code == BLANK_SCAN_ESC) {
+                    g_bp_editing_name = false;
+                } else if (in->key_char == '\b') {
+                    if (nlen > 0) g_bp_name_buf[nlen - 1] = '\0';
+                } else if (in->key_char >= 32 && in->key_char <= 126 && nlen < VFS_NAME_MAX - 2) {
+                    g_bp_name_buf[nlen] = in->key_char;
+                    g_bp_name_buf[nlen + 1] = '\0';
                 }
-
-                // Line / Col indicator on right of editor header
+            } else if (in->ctrl_held && (in->key_char == 's' || in->key_char == 'S')) {
+                bp_save_active_file();
+            } else if (in->ctrl_held && (in->key_char == 'n' || in->key_char == 'N')) {
+                bp_create_new_file();
+            } else if (!active->is_binary) {
                 int cur_line = 0, cur_col = 0;
-                bp_compute_line_col(g_vfs_files[selected_file].content, cursor_pos, &cur_line, &cur_col);
-                char posInfo[48];
-                bp_str_copy(posInfo, "Ln ", sizeof(posInfo));
-                char tmpNum[12];
-                bp_int_to_str(cur_line + 1, tmpNum, sizeof(tmpNum));
-                bp_str_cat(posInfo, tmpNum, sizeof(posInfo));
-                bp_str_cat(posInfo, ", Col ", sizeof(posInfo));
-                bp_int_to_str(cur_col + 1, tmpNum, sizeof(tmpNum));
-                bp_str_cat(posInfo, tmpNum, sizeof(posInfo));
-                bp_str_cat(posInfo, " | UTF-8", sizeof(posInfo));
-                int pw = dui_text_width(posInfo, 1);
-                dui_text(editor_x + editor_w - pw - 14, content_y + 9, posInfo, 0x9898A6, 1);
+                bp_compute_line_col(buf, g_bp_cursor, &cur_line, &cur_col);
 
-                // Gutter background for line numbers
-                int gutter_w = 36;
-                int body_y = content_y + 33;
-                int body_h = content_h - 58;
-                dui_rect(editor_x, body_y, gutter_w, body_h, 0x18181D, 255);
-                dui_line(editor_x + gutter_w, body_y, editor_x + gutter_w, body_y + body_h, 0x2E2E38, 1);
-
-                // Render lines of text with line numbers, active line highlight, and blinking caret
-                const char* text = g_vfs_files[selected_file].content;
-                int idx = 0;
-                int line_no = 0;
-                int max_vis_lines = 19;
-                int max_chars_per_line = (editor_w - gutter_w - 20) / 7;
-                if (max_chars_per_line > 96) max_chars_per_line = 96;
-
-                while (line_no < scroll_line + max_vis_lines) {
-                    char lineBuf[104];
-                    int c = 0;
-                    while (text[idx] && text[idx] != '\n') {
-                        if (c < max_chars_per_line) {
-                            lineBuf[c++] = text[idx];
-                        }
-                        idx++;
+                if (in->scan_code == BLANK_SCAN_LEFT) {
+                    if (g_bp_cursor > 0) g_bp_cursor--;
+                } else if (in->scan_code == BLANK_SCAN_RIGHT) {
+                    if (g_bp_cursor < len) g_bp_cursor++;
+                } else if (in->scan_code == BLANK_SCAN_UP) {
+                    if (cur_line > 0) g_bp_cursor = bp_offset_for_line_col(buf, cur_line - 1, cur_col);
+                } else if (in->scan_code == BLANK_SCAN_DOWN) {
+                    int total_l = bp_count_lines(buf);
+                    if (cur_line + 1 < total_l) g_bp_cursor = bp_offset_for_line_col(buf, cur_line + 1, cur_col);
+                } else if (in->scan_code == BLANK_SCAN_HOME) {
+                    g_bp_cursor = bp_offset_for_line_col(buf, cur_line, 0);
+                } else if (in->scan_code == BLANK_SCAN_END) {
+                    g_bp_cursor = bp_offset_for_line_col(buf, cur_line, 1024);
+                } else if (in->scan_code == BLANK_SCAN_PGUP) {
+                    int nl = cur_line - vis_lines;
+                    if (nl < 0) nl = 0;
+                    g_bp_cursor = bp_offset_for_line_col(buf, nl, cur_col);
+                } else if (in->scan_code == BLANK_SCAN_PGDN) {
+                    int total_l = bp_count_lines(buf);
+                    int nl = cur_line + vis_lines;
+                    if (nl >= total_l) nl = total_l - 1;
+                    g_bp_cursor = bp_offset_for_line_col(buf, nl, cur_col);
+                } else if (in->key_char == '\b') {
+                    if (g_bp_cursor > 0) {
+                        for (int i = g_bp_cursor - 1; i < len; i++) buf[i] = buf[i + 1];
+                        g_bp_cursor--;
+                        active->size = len - 1;
+                        g_bp_dirty = true;
                     }
-                    lineBuf[c] = '\0';
-
-                    if (line_no >= scroll_line) {
-                        int vis_row = line_no - scroll_line;
-                        int ry = body_y + 6 + vis_row * 18;
-
-                        if (line_no == cur_line) {
-                            dui_rect(editor_x + gutter_w + 1, ry - 2, editor_w - gutter_w - 2, 18, 0x2C2C38, 255);
-                        }
-
-                        char lnStr[12];
-                        bp_int_to_str(line_no + 1, lnStr, sizeof(lnStr));
-                        dui_text(editor_x + 8, ry, lnStr, (line_no == cur_line) ? 0x0A84FF : 0x63636E, 1);
-
-                        // Simple syntax tint for comments/headers
-                        uint32_t line_color = 0xE5E5EA;
-                        if (lineBuf[0] == '#' || (lineBuf[0] == '/' && lineBuf[1] == '/')) {
-                            line_color = 0x30D158;
-                        } else if (lineBuf[0] == '[') {
-                            line_color = 0xFF9F0A;
-                        }
-                        dui_text(editor_x + gutter_w + 8, ry, lineBuf, line_color, 1);
-
-                        // Blinking caret on active line
-                        if (line_no == cur_line && !editing_filename && ((blink_tick / 15) % 2 == 0)) {
-                            char prefixSub[104];
-                            int pc = cur_col < max_chars_per_line ? cur_col : max_chars_per_line;
-                            for (int k = 0; k < pc; k++) prefixSub[k] = lineBuf[k];
-                            prefixSub[pc] = '\0';
-                            int caret_dx = dui_text_width(prefixSub, 1);
-                            int caret_x = editor_x + gutter_w + 8 + caret_dx;
-                            dui_rect(caret_x, ry - 1, 2, 15, 0x0A84FF, 255);
-                        }
+                } else if (in->scan_code == BLANK_SCAN_DELETE) {
+                    if (g_bp_cursor < len) {
+                        for (int i = g_bp_cursor; i < len; i++) buf[i] = buf[i + 1];
+                        active->size = len - 1;
+                        g_bp_dirty = true;
                     }
-
-                    if (text[idx] == '\n') {
-                        idx++;
-                        line_no++;
-                    } else {
-                        break;
+                } else if (in->key_char == '\t') {
+                    if (len + 2 < VFS_DATA_MAX - 1) {
+                        for (int i = len; i >= g_bp_cursor; i--) buf[i + 2] = buf[i];
+                        buf[g_bp_cursor++] = ' ';
+                        buf[g_bp_cursor++] = ' ';
+                        active->size = len + 2;
+                        g_bp_dirty = true;
+                    }
+                } else if (in->key_char == '\n' || (in->key_char >= 32 && in->key_char <= 126)) {
+                    if (len + 1 < VFS_DATA_MAX - 1) {
+                        for (int i = len; i >= g_bp_cursor; i--) buf[i + 1] = buf[i];
+                        buf[g_bp_cursor++] = in->key_char;
+                        active->size = len + 1;
+                        g_bp_dirty = true;
                     }
                 }
 
-                // Bottom Status Bar inside Editor
-                int foot_y = win_y + win_h - 24;
-                dui_rect(editor_x, foot_y, editor_w - 1, 23, 0x141418, 255);
-                char footText[96];
-                bp_str_copy(footText, g_vfs_files[selected_file].on_disk ? "FAT32 Hardware Volume Synced | " : "VFS Volume | ", sizeof(footText));
-                char szNum[16];
-                bp_int_to_str(g_vfs_files[selected_file].size, szNum, sizeof(szNum));
-                bp_str_cat(footText, szNum, sizeof(footText));
-                bp_str_cat(footText, " bytes | Ctrl+S to Save", sizeof(footText));
-                dui_text(editor_x + 12, foot_y + 5, footText, 0x8E8E93, 1);
+                // Auto-scroll to keep cursor in view
+                bp_compute_line_col(buf, g_bp_cursor, &cur_line, &cur_col);
+                if (cur_line < g_bp_scroll_line) g_bp_scroll_line = cur_line;
+                if (cur_line >= g_bp_scroll_line + vis_lines) g_bp_scroll_line = cur_line - vis_lines + 1;
             }
         }
 
-        blankUI_draw_cursor(cursor_x, cursor_y);
-        swap_buffers();
-        SystemTable->BootServices->Stall(16000);
+        // Mouse wheel scrolling & click-to-place cursor
+        int total_lines = bp_count_lines(buf);
+        if (in && in->scroll_y != 0 && bp_pt_in(mx, my, body_x, body_y, body_w, body_h)) {
+            g_bp_scroll_line -= in->scroll_y * 2;
+        }
+        if (g_bp_scroll_line > total_lines - vis_lines) g_bp_scroll_line = total_lines - vis_lines;
+        if (g_bp_scroll_line < 0) g_bp_scroll_line = 0;
+
+        if (click_avail && bp_pt_in(mx, my, body_x + gutter_w, body_y, body_w - gutter_w, body_h)) {
+            click_avail = false;
+            g_bp_editing_name = false;
+            int clicked_line = g_bp_scroll_line + (my - (body_y + 6)) / line_h;
+            if (clicked_line < 0) clicked_line = 0;
+            if (clicked_line >= total_lines) clicked_line = total_lines - 1;
+            int line_start = bp_offset_for_line_col(buf, clicked_line, 0);
+            int rel_x = mx - (body_x + gutter_w + 10);
+            int best_col = 0;
+            if (rel_x > 0) {
+                char seg[128];
+                int col = 0;
+                while (buf[line_start + col] && buf[line_start + col] != '\n' && col < 126) {
+                    seg[col] = buf[line_start + col];
+                    seg[col + 1] = '\0';
+                    if (dui_text_width(seg, 1) > rel_x) break;
+                    col++;
+                    best_col = col;
+                }
+            }
+            g_bp_cursor = bp_offset_for_line_col(buf, clicked_line, best_col);
+        }
+
+        int cur_line = 0, cur_col = 0;
+        bp_compute_line_col(buf, g_bp_cursor, &cur_line, &cur_col);
+
+        // Render visible lines
+        dui_push_clip(body_x + 2, body_y + 4, body_w - 4, body_h - 8);
+        int pos = 0;
+        int line_idx = 0;
+        while (buf[pos] && line_idx < g_bp_scroll_line) {
+            if (buf[pos] == '\n') line_idx++;
+            pos++;
+        }
+
+        for (int row = 0; row < vis_lines; row++) {
+            int ln = g_bp_scroll_line + row;
+            if (ln >= total_lines) break;
+
+            int ly = body_y + 6 + row * line_h;
+            if (ln == cur_line && !active->is_binary) {
+                dui_rect(body_x + gutter_w + 1, ly - 1, body_w - gutter_w - 3, line_h, THEME_SURFACE_ELEVATED, 120);
+            }
+
+            char lnum[8];
+            bp_int_to_str(ln + 1, lnum, sizeof(lnum));
+            dui_text(body_x + 8, ly + 1, lnum, (ln == cur_line) ? THEME_ACCENT_CYAN : THEME_TEXT_MUTED, 1);
+
+            char line_buf[256];
+            int lpos = 0;
+            while (buf[pos] && buf[pos] != '\n' && lpos < 254) {
+                line_buf[lpos++] = buf[pos++];
+            }
+            while (buf[pos] && buf[pos] != '\n') pos++;
+            if (buf[pos] == '\n') pos++;
+            line_buf[lpos] = '\0';
+
+            uint32_t lcol = THEME_TEXT_PRIMARY;
+            if (line_buf[0] == '#') lcol = THEME_ACCENT_CYAN;
+            else if (line_buf[0] == '/' && line_buf[1] == '/') lcol = THEME_TEXT_MUTED;
+            else if (line_buf[0] == ';') lcol = THEME_TEXT_MUTED;
+            else if (line_buf[0] == '[') lcol = THEME_ACCENT_AMBER;
+
+            dui_text(body_x + gutter_w + 10, ly + 1, line_buf, lcol, 1);
+
+            // Blinking caret on active cursor line
+            if (ln == cur_line && !active->is_binary && !g_bp_editing_name) {
+                bool blink_on = !in || (((in->frame_ms / 450) % 2) == 0);
+                if (blink_on) {
+                    char prefix[256];
+                    int cl = cur_col < 254 ? cur_col : 254;
+                    for (int k = 0; k < cl; k++) prefix[k] = line_buf[k];
+                    prefix[cl] = '\0';
+                    int cx_caret = body_x + gutter_w + 10 + dui_text_width(prefix, 1);
+                    dui_rect(cx_caret, ly, 2, line_h - 3, THEME_ACCENT_CYAN, 255);
+                }
+            }
+        }
+        dui_pop_clip();
+
+        // Status Footer
+        int fy = ey + eh - 24;
+        char footer[128];
+        char nb1[16], nb2[16], nb3[16];
+        bp_int_to_str(cur_line + 1, nb1, sizeof(nb1));
+        bp_int_to_str(cur_col + 1, nb2, sizeof(nb2));
+        bp_int_to_str(active->size, nb3, sizeof(nb3));
+        bp_str_copy(footer, "Ln ", sizeof(footer));
+        bp_str_cat(footer, nb1, sizeof(footer));
+        bp_str_cat(footer, ", Col ", sizeof(footer));
+        bp_str_cat(footer, nb2, sizeof(footer));
+        bp_str_cat(footer, "  |  ", sizeof(footer));
+        bp_str_cat(footer, nb3, sizeof(footer));
+        bp_str_cat(footer, " B  |  ", sizeof(footer));
+        bp_str_cat(footer, g_bp_dirty ? "Unsaved*" : g_bp_status, sizeof(footer));
+
+        dui_text_ellipsis(ex + 10, fy, ew - 140, footer, g_bp_dirty ? THEME_ACCENT_AMBER : THEME_TEXT_SECONDARY, 1);
+        dui_text(ex + ew - 118, fy, "Ctrl+S Save", THEME_TEXT_MUTED, 1);
     }
 }
 
-extern "C" void launch_files_app(EFI_SYSTEM_TABLE *SystemTable) {
-    if (SystemTable) {
-        gSystemTable = SystemTable;
-    }
-    vfs_init(gSystemTable);
-    launch_blankpad();
+extern "C" {
+
+void blankpad_register(void) {
+    wm_register_app(APP_FILES, "Files & Notes", 760, 500, THEME_ACCENT_CYAN, blankpad_render, NULL);
 }
+
+void launch_blankpad(void) {
+    if (!g_vfs_initialized) vfs_init(gSystemTable);
+    wm_open_app(APP_FILES);
+}
+
+void launch_files_app(void) {
+    if (!g_vfs_initialized) vfs_init(gSystemTable);
+    wm_open_app(APP_FILES);
+}
+
+} // extern "C"

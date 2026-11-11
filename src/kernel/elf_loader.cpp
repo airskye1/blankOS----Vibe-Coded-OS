@@ -32,25 +32,27 @@ typedef struct {
 
 extern "C" {
     extern void swap_buffers();
-    extern void dui_draw_wallpaper();
+    extern void dui_draw_wallpaper(int theme_id);
+    extern int dui_get_wallpaper_id(void);
     extern void blankUI_draw_menubar();
     extern void blankUI_draw_dock();
     extern void blankUI_set_cursor_type(int type);
-    extern void blankUI_draw_cursor(int x, int y);
-    
+    extern void blankUI_draw_cursor(int x, int y, int type);
+
     extern void dui_rect(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
     extern void dui_rect_rounded(int x, int y, int w, int h, int radius, uint32_t color, uint8_t alpha);
     extern void dui_rect_outline(int x, int y, int w, int h, uint32_t color, int thickness);
     extern void dui_circle(int cx, int cy, int r, uint32_t color, uint8_t alpha);
-    extern void dui_line(int x0, int y0, int x1, int y1, uint32_t color, int thickness);
+    extern void dui_line(int x0, int y0, int x1, int y1, uint32_t color, uint8_t alpha);
     extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
     extern int dui_text_width(const char* text, int scale);
     extern int dui_text_height(int scale);
-    extern void dui_shadow(int x, int y, int w, int h, int radius, int blur_radius, uint32_t color, uint8_t alpha);
-    
-    extern void play_system_sound(char* sound_name);
+    extern void dui_shadow(int x, int y, int w, int h, int radius, int elevation);
+    extern void dui_glass_card(int x, int y, int w, int h, int radius, uint32_t tint, uint8_t alpha, bool focused);
+
+    extern void play_system_sound(const char* sound_name);
     extern void blankOS_panic(const char* error_code, const char* details);
-    
+
     struct RTC_Time {
         uint8_t second;
         uint8_t minute;
@@ -60,34 +62,38 @@ extern "C" {
         uint32_t year;
     };
     extern void get_rtc_time(RTC_Time *time);
-    
+
     typedef void (*AppMainFunc)(OS_API* api);
 
     bool load_and_run_elf(EFI_SYSTEM_TABLE *SystemTable, CHAR16* filename) {
         OS_API api;
         api.swap_buffers = swap_buffers;
-        api.draw_wallpaper = dui_draw_wallpaper;
+        api.draw_wallpaper = []() { dui_draw_wallpaper(dui_get_wallpaper_id()); };
         api.draw_menubar = blankUI_draw_menubar;
         api.draw_dock = blankUI_draw_dock;
-        
+
         api.set_cursor_type = [](SDK_CursorType type) {
             blankUI_set_cursor_type((int)type);
         };
-        api.draw_cursor = blankUI_draw_cursor;
-        
+        api.draw_cursor = [](int x, int y) {
+            blankUI_draw_cursor(x, y, 0);
+        };
+
         api.draw_rect = dui_rect;
         api.draw_rect_rounded = dui_rect_rounded;
         api.draw_rect_outline = dui_rect_outline;
         api.draw_circle = dui_circle;
-        api.draw_line = dui_line;
+        api.draw_line = [](int x0, int y0, int x1, int y1, uint32_t color, int thickness) {
+            (void)thickness;
+            dui_line(x0, y0, x1, y1, color, 255);
+        };
         api.draw_text = dui_text;
         api.get_text_width = dui_text_width;
         api.get_text_height = dui_text_height;
-        
+
         api.draw_window = [](int x, int y, int w, int h, const char* title) {
-            dui_shadow(x, y, w, h, 12, 12, 0x000000, 60);
-            dui_rect_rounded(x, y, w, h, 12, 0xFFFFFF, 255);
-            dui_rect_rounded(x, y, w, 32, 12, 0xE5E5EA, 255);
+            dui_shadow(x, y, w, h, 14, 8);
+            dui_glass_card(x, y, w, h, 14, 0x111726, 236, true);
             dui_rect(x, y + 20, w, 12, 0xE5E5EA, 255);
             dui_circle(x + 16, y + 16, 6, 0xFF5F56, 255);
             dui_circle(x + 36, y + 16, 6, 0xFFBD2E, 255);

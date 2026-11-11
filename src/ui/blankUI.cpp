@@ -1,71 +1,71 @@
+#include "blankDUI.h"
+#include "window_manager.h"
+#include "theme.h"
+#include "../kernel/input.h"
+#include "../kernel/audio.h"
+#include "../kernel/net.h"
+#include <efi.h>
 #include <stdint.h>
-#include <stddef.h>
 #include <stdbool.h>
 
 extern "C" {
 
-extern volatile uint32_t* framebuffer;
-extern int screen_width;
-extern int screen_height;
-extern int pixels_per_scanline;
+// External OS subsystem hooks
+typedef struct {
+    uint8_t second;
+    uint8_t minute;
+    uint8_t hour;
+    uint8_t day;
+    uint8_t month;
+    uint32_t year;
+} RTC_Time;
 
-extern void put_pixel_alpha(int x, int y, uint32_t color, uint8_t alpha);
-extern void draw_rect_filled(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
-extern void draw_rect_rounded(int x, int y, int w, int h, int r, uint32_t color, uint8_t alpha);
-extern void draw_circle_filled(int cx, int cy, int r, uint32_t color);
-extern void draw_frosted_glass_rounded(int x, int y, int w, int h, int r, uint32_t tint_color, uint8_t tint_alpha);
-
-extern void dui_rect(int x, int y, int w, int h, uint32_t color, uint8_t alpha);
-extern void dui_rect_rounded(int x, int y, int w, int h, int radius, uint32_t color, uint8_t alpha);
-extern void dui_rect_rounded_outline(int x, int y, int w, int h, int radius, uint32_t color, int thickness);
-extern void dui_circle(int cx, int cy, int r, uint32_t color, uint8_t alpha);
-extern void dui_text(int x, int y, const char* text, uint32_t color, int scale);
-extern int dui_text_width(const char* text, int scale);
-extern int dui_text_height(int scale);
-extern void dui_line(int x0, int y0, int x1, int y1, uint32_t color, int thickness);
-extern void dui_shadow(int x, int y, int w, int h, int radius, int blur_radius, uint32_t color, uint8_t alpha);
-
-extern void dui_icon_folder(int x, int y, int size);
-extern void dui_icon_gear(int x, int y, int size);
-extern void dui_icon_globe(int x, int y, int size);
-extern void dui_icon_store(int x, int y, int size);
-extern void dui_icon_terminal(int x, int y, int size);
-extern void dui_icon_trash(int x, int y, int size);
-extern void dui_icon_calculator(int x, int y, int size);
-extern void dui_icon_weather(int x, int y, int size);
-extern void dui_icon_updater(int x, int y, int size);
-extern bool g_is_live_cd;
-
-extern uint64_t memory_get_total_mb(void);
+extern void get_rtc_time(RTC_Time* out_time);
+extern void os_restart(void);
+extern void os_shutdown(void);
+extern void os_sleep(void);
+extern bool set_screen_resolution(uint32_t target_w, uint32_t target_h);
+extern void blankReg_set_int(const char* key, int value);
+extern bool blankReg_save(EFI_SYSTEM_TABLE* st);
+extern void os_send_notification(const char* title, const char* message);
+extern void launch_login_screen(EFI_SYSTEM_TABLE* SystemTable);
+extern int vfs_get_file_count(void);
+extern const char* vfs_get_file_name(int idx);
 extern uint64_t memory_get_used_mb(void);
-extern int pci_get_device_count(void);
-extern const char* net_get_adapter_name(void);
-extern const char* net_get_ipv4_str(void);
-extern const char* net_get_mac_str(void);
-extern int battery_get_percentage(void);
+extern uint64_t memory_get_total_mb(void);
+extern EFI_SYSTEM_TABLE* gSystemTable;
 
-static bool reduce_motion_enabled = false;
-int last_mouse_x = 0;
-int last_mouse_y = 0;
-static float dock_icon_scales[10] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-
+// Desktop Shell State Globals
+bool g_is_live_cd = false;
+extern int g_wallpaper_theme;
 bool g_show_desktop_widgets = true;
 bool g_show_dynamic_island = true;
 bool apple_menu_open = false;
 bool island_expanded = false;
+bool wifi_menu_open = false;
+bool bt_menu_open = false;
+bool battery_menu_open = false;
+bool rclick_menu_open = false;
+int rclick_menu_x = 0;
+int rclick_menu_y = 0;
 
-static void ui_u64_to_str(uint64_t val, char* buf) {
-    if (val == 0) { buf[0] = '0'; buf[1] = '\0'; return; }
-    char tmp[24];
-    int i = 0;
-    while (val > 0) { tmp[i++] = '0' + (val % 10); val /= 10; }
-    int j = 0;
-    while (i > 0) buf[j++] = tmp[--i];
-    buf[j] = '\0';
-}
+static bool g_brand_menu_open = false;
+static bool g_control_center_open = false;
+static bool g_downloads_open = false;
+static bool g_spotlight_open = false;
 
-// Basic 8x8 bitmap font (subset for GUI text)
-extern const uint8_t font8x8_basic[95][8] = {
+static char g_spotlight_query[64] = {0};
+static int g_spotlight_len = 0;
+
+// Smooth animation state (0.0 .. 1.0)
+static float g_anim_cc = 0.0f;
+static float g_anim_spot = 0.0f;
+static float g_anim_pulse = 0.0f;
+static float g_dock_scale[APP_COUNT] = {0};
+
+// 8x8 fallback bitmap font (exported for blankDUI.cpp)
+extern const uint8_t font8x8_basic[95][8];
+const uint8_t font8x8_basic[95][8] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, // ' ' (32)
     {0x18,0x18,0x18,0x18,0x18,0x00,0x18,0x00}, // '!' (33)
     {0x6C,0x6C,0x6C,0x00,0x00,0x00,0x00,0x00}, // '"' (34)
@@ -163,449 +163,8 @@ extern const uint8_t font8x8_basic[95][8] = {
     {0x76,0xDC,0x00,0x00,0x00,0x00,0x00,0x00}  // '~' (126)
 };
 
-void blankUI_draw_char(int x, int y, char c, uint32_t color) {
-    if (c < 32 || c > 126) return;
-    int idx = c - 32;
-    for (int row = 0; row < 8; row++) {
-        uint8_t byte = font8x8_basic[idx][row];
-        for (int col = 0; col < 8; col++) {
-            if (byte & (0x80 >> col)) {
-                put_pixel_alpha(x + col, y + row, color, 255);
-            }
-        }
-    }
-}
-
-void blankUI_draw_text(int x, int y, char* text) {
-    if (!text) return;
-    int cur_x = x;
-    while (*text) {
-        blankUI_draw_char(cur_x, y, *text, 0x000000);
-        cur_x += 8;
-        text++;
-    }
-}
-
-void blankUI_draw_text_color(int x, int y, char* text, uint32_t color) {
-    dui_text(x, y, text, color, 1);
-}
-
-void init_blankUI_toolkit(void) {
-    reduce_motion_enabled = false;
-}
-
-void blankUI_set_reduce_motion(bool enabled) {
-    reduce_motion_enabled = enabled;
-}
-
-void blankUI_animate_fade_in(void* component) { (void)component; }
-void blankUI_animate_slide_up(void* component) { (void)component; }
-
-void blankUI_draw_button(int x, int y, int width, int height, char* text) {
-    draw_rect_rounded(x, y, width, height, 16, 0x18171c, 255);
-    draw_rect_rounded(x, y, width, 1, 16, 0xFFFFFF, 40);
-
-    int text_w = dui_text_width(text, 1);
-    int text_h = dui_text_height(1);
-    int text_x = x + (width - text_w) / 2;
-    int text_y = y + (height - text_h) / 2;
-    blankUI_draw_text_color(text_x, text_y, text, 0xFFFFFF);
-}
-
-extern bool wifi_connected;
-extern char connected_ssid[32];
-extern int wifi_signal_strength;
-extern bool bluetooth_connected;
-extern char paired_device_name[32];
-extern bool bluetooth_enabled;
-
-struct RTC_Time {
-    uint8_t second;
-    uint8_t minute;
-    uint8_t hour;
-    uint8_t day;
-    uint8_t month;
-    uint32_t year;
-};
-extern void get_rtc_time(RTC_Time *time);
-
-bool wifi_menu_open = false;
-bool bt_menu_open = false;
-bool battery_menu_open = false;
-bool rclick_menu_open = false;
-int rclick_menu_x = 0;
-int rclick_menu_y = 0;
-
-static void format_time_str(char* buf) {
-    RTC_Time t;
-    get_rtc_time(&t);
-    int h = t.hour;
-    int m = t.minute;
-    buf[0] = '0' + (h / 10);
-    buf[1] = '0' + (h % 10);
-    buf[2] = ':';
-    buf[3] = '0' + (m / 10);
-    buf[4] = '0' + (m % 10);
-    buf[5] = '\0';
-}
-
-static void format_full_clock(char* time_buf, char* date_buf) {
-    RTC_Time t;
-    get_rtc_time(&t);
-    time_buf[0] = '0' + (t.hour / 10);
-    time_buf[1] = '0' + (t.hour % 10);
-    time_buf[2] = ':';
-    time_buf[3] = '0' + (t.minute / 10);
-    time_buf[4] = '0' + (t.minute % 10);
-    time_buf[5] = ':';
-    time_buf[6] = '0' + (t.second / 10);
-    time_buf[7] = '0' + (t.second % 10);
-    time_buf[8] = '\0';
-
-    uint32_t y = t.year ? t.year : 2026;
-    date_buf[0] = '0' + ((y / 1000) % 10);
-    date_buf[1] = '0' + ((y / 100) % 10);
-    date_buf[2] = '0' + ((y / 10) % 10);
-    date_buf[3] = '0' + (y % 10);
-    date_buf[4] = '-';
-    date_buf[5] = '0' + (t.month / 10);
-    date_buf[6] = '0' + (t.month % 10);
-    date_buf[7] = '-';
-    date_buf[8] = '0' + (t.day / 10);
-    date_buf[9] = '0' + (t.day % 10);
-    date_buf[10] = '\0';
-}
-
-// Desktop Glass Widgets (macOS Sonoma/Sequoia Widget Layer with Hardware Telemetry Twist)
-void blankUI_draw_desktop_widgets() {
-    if (!g_show_desktop_widgets) return;
-
-    int wx = screen_width - 268;
-    int wy = 44;
-
-    // Widget 1: Live Hardware RTC Clock & Date Glass Card
-    dui_shadow(wx, wy, 248, 92, 16, 8, 0x000000, 60);
-    dui_rect_rounded(wx, wy, 248, 92, 16, 0x1E1E2E, 200);
-    dui_rect_rounded_outline(wx, wy, 248, 92, 16, 0x585B70, 1);
-
-    char t_str[12], d_str[16];
-    format_full_clock(t_str, d_str);
-    dui_text(wx + 18, wy + 14, t_str, 0xFFFFFF, 2);
-    dui_text(wx + 18, wy + 48, d_str, 0x89B4FA, 1);
-    dui_text(wx + 18, wy + 68, g_is_live_cd ? "MODE: LIVE ISO9660" : "MODE: DISK FAT32", g_is_live_cd ? 0xFAB387 : 0xA6E3A1, 1);
-
-    // Widget 2: Bare-Metal Hardware Telemetry Card
-    int wy2 = wy + 106;
-    dui_shadow(wx, wy2, 248, 124, 16, 8, 0x000000, 60);
-    dui_rect_rounded(wx, wy2, 248, 124, 16, 0x1E1E2E, 200);
-    dui_rect_rounded_outline(wx, wy2, 248, 124, 16, 0x585B70, 1);
-
-    dui_text(wx + 16, wy2 + 12, "SYSTEM TELEMETRY", 0xCBA6F7, 1);
-
-    char ram_line[48];
-    int p = 0;
-    const char* r1 = "RAM: ";
-    while (*r1) ram_line[p++] = *r1++;
-    char umb[12], tmb[12];
-    ui_u64_to_str(memory_get_used_mb(), umb);
-    ui_u64_to_str(memory_get_total_mb(), tmb);
-    int k = 0; while (umb[k]) ram_line[p++] = umb[k++];
-    ram_line[p++] = '/';
-    k = 0; while (tmb[k]) ram_line[p++] = tmb[k++];
-    const char* r2 = " MB";
-    while (*r2) ram_line[p++] = *r2++;
-    ram_line[p] = '\0';
-    dui_text(wx + 16, wy2 + 36, ram_line, 0xFFFFFF, 1);
-
-    char pci_line[48];
-    p = 0;
-    const char* p1 = "PCIe Devices: ";
-    while (*p1) pci_line[p++] = *p1++;
-    char pcnt[12];
-    ui_u64_to_str((uint64_t)pci_get_device_count(), pcnt);
-    k = 0; while (pcnt[k]) pci_line[p++] = pcnt[k++];
-    const char* p2 = " Bound";
-    while (*p2) pci_line[p++] = *p2++;
-    pci_line[p] = '\0';
-    dui_text(wx + 16, wy2 + 58, pci_line, 0xA6E3A1, 1);
-
-    char net_line[48];
-    p = 0;
-    const char* n1 = "IP: ";
-    while (*n1) net_line[p++] = *n1++;
-    const char* ip = net_get_ipv4_str();
-    while (*ip) net_line[p++] = *ip++;
-    net_line[p] = '\0';
-    dui_text(wx + 16, wy2 + 80, net_line, 0x89DCEB, 1);
-    dui_text(wx + 16, wy2 + 100, "F1:Set F2:Term F6:Files F7:Mon", 0xA6ADC8, 1);
-}
-
-void blankUI_draw_menubar() {
-    // Draw Desktop Widgets underneath menubar dropdowns so they appear on the desktop!
-    blankUI_draw_desktop_widgets();
-
-    // Top bar, frosted glass look
-    draw_frosted_glass_rounded(0, 0, screen_width, 26, 0, 0xFFFFFF, 210);
-    draw_rect_filled(0, 26, screen_width, 1, 0x000000, 25);
-
-    // Left side items (macOS style menu items)
-    dui_rect_rounded(8, 3, 86, 20, 6, apple_menu_open ? 0x007AFF : 0x1E1E2E, apple_menu_open ? 255 : 25);
-    blankUI_draw_text_color(14, 6, (char*)"* BlankOS", apple_menu_open ? 0xFFFFFF : 0x000000);
-    blankUI_draw_text_color(106, 6, (char*)"Files", 0x1C1C1E);
-    blankUI_draw_text_color(156, 6, (char*)"Monitor", 0x1C1C1E);
-    blankUI_draw_text_color(224, 6, (char*)"Theme", 0x1C1C1E);
-    blankUI_draw_text_color(278, 6, (char*)"Terminal", 0x1C1C1E);
-
-    // Center Twist: BlankIsland Dynamic Capsule!
-    if (g_show_dynamic_island) {
-        int isl_w = 240;
-        int isl_x = (screen_width - isl_w) / 2;
-        dui_rect_rounded(isl_x, 2, isl_w, 22, 11, 0x11111B, 245);
-        dui_circle(isl_x + 14, 13, 4, 0x34C759, 255); // Live pulse LED
-
-        char isl_txt[48];
-        int p = 0;
-        const char* s1 = "RAM ";
-        while (*s1) isl_txt[p++] = *s1++;
-        char umb[12], pcnt[12];
-        ui_u64_to_str(memory_get_used_mb(), umb);
-        ui_u64_to_str((uint64_t)pci_get_device_count(), pcnt);
-        int k = 0; while (umb[k]) isl_txt[p++] = umb[k++];
-        const char* s2 = "M | PCI ";
-        while (*s2) isl_txt[p++] = *s2++;
-        k = 0; while (pcnt[k]) isl_txt[p++] = pcnt[k++];
-        const char* s3 = " | Hub";
-        while (*s3) isl_txt[p++] = *s3++;
-        isl_txt[p] = '\0';
-
-        blankUI_draw_text_color(isl_x + 26, 6, isl_txt, 0xCDD6F4);
-
-        if (island_expanded) {
-            int ex_w = 340;
-            int ex_h = 128;
-            int ex_x = (screen_width - ex_w) / 2;
-            int ex_y = 28;
-            dui_shadow(ex_x, ex_y, ex_w, ex_h, 16, 8, 0x000000, 80);
-            dui_rect_rounded(ex_x, ex_y, ex_w, ex_h, 16, 0x11111B, 245);
-            dui_rect_rounded_outline(ex_x, ex_y, ex_w, ex_h, 16, 0x007AFF, 1);
-
-            blankUI_draw_text_color(ex_x + 16, ex_y + 12, (char*)"BlankIsland Quick Command Center", 0x89B4FA);
-            blankUI_draw_text_color(ex_x + 16, ex_y + 34, (char*)net_get_adapter_name(), 0xA6E3A1);
-
-            // 4 Quick Pill Buttons inside expanded Dynamic Island
-            dui_rect_rounded(ex_x + 16, ex_y + 60, 148, 26, 8, 0x007AFF, 255);
-            blankUI_draw_text_color(ex_x + 30, ex_y + 66, (char*)"Files & BlankPad", 0xFFFFFF);
-
-            dui_rect_rounded(ex_x + 176, ex_y + 60, 148, 26, 8, 0x34C759, 255);
-            blankUI_draw_text_color(ex_x + 190, ex_y + 66, (char*)"Activity Monitor", 0xFFFFFF);
-
-            dui_rect_rounded(ex_x + 16, ex_y + 92, 148, 26, 8, 0x5856D6, 255);
-            blankUI_draw_text_color(ex_x + 32, ex_y + 98, (char*)"Registry Studio", 0xFFFFFF);
-
-            dui_rect_rounded(ex_x + 176, ex_y + 92, 148, 26, 8, 0xFF9500, 255);
-            blankUI_draw_text_color(ex_x + 198, ex_y + 98, (char*)"Cycle Theme", 0xFFFFFF);
-        }
-    }
-
-    // Right side items - Clock
-    char time_str[8];
-    format_time_str(time_str);
-    blankUI_draw_text_color(screen_width - 68, 6, time_str, 0x000000);
-
-    // Battery widget
-    int bx = screen_width - 110;
-    draw_rect_rounded(bx, 8, 20, 10, 2, 0x555555, 255);
-    draw_rect_filled(bx + 20, 11, 2, 4, 0x555555, 255);
-    draw_rect_filled(bx + 2, 10, 16, 6, 0x34C759, 255);
-
-    // Wi-Fi / Ethernet widget
-    int wx = screen_width - 150;
-    for (int b = 0; b < 4; b++) {
-        uint32_t bar_color = 0xCCCCCC;
-        if (wifi_connected && wifi_signal_strength > b) bar_color = 0x007AFF;
-        draw_rect_filled(wx + b * 5, 18 - b * 3, 3, b * 3 + 2, bar_color, 255);
-    }
-
-    // Bluetooth / USB widget
-    int btx = screen_width - 180;
-    uint32_t bt_color = bluetooth_connected ? 0x007AFF : 0x8E8E93;
-    dui_line(btx + 4, 6, btx + 4, 18, bt_color, 1);
-    dui_line(btx + 4, 6, btx + 8, 9, bt_color, 1);
-    dui_line(btx + 8, 9, btx + 4, 12, bt_color, 1);
-    dui_line(btx + 4, 12, btx + 8, 15, bt_color, 1);
-    dui_line(btx + 8, 15, btx + 4, 18, bt_color, 1);
-
-    // Apple / BlankOS System Menu Dropdown
-    if (apple_menu_open) {
-        int mx = 8, my = 28, mw = 220, mh = 216;
-        dui_shadow(mx, my, mw, mh, 12, 6, 0x000000, 50);
-        draw_rect_rounded(mx, my, mw, mh, 12, 0xFFFFFF, 245);
-        dui_rect_rounded_outline(mx, my, mw, mh, 12, 0xD1D1D6, 1);
-
-        blankUI_draw_text_color(mx + 14, my + 10, (char*)"About BlankBook Pro...", 0x111111);
-        blankUI_draw_text_color(mx + 14, my + 36, (char*)"System Settings...", 0x111111);
-        blankUI_draw_text_color(mx + 14, my + 62, (char*)"App Store...", 0x111111);
-        draw_rect_filled(mx + 12, my + 84, mw - 24, 1, 0x000000, 25);
-        blankUI_draw_text_color(mx + 14, my + 92, (char*)"Activity Monitor...", 0x007AFF);
-        blankUI_draw_text_color(mx + 14, my + 118, (char*)"Registry Studio...", 0x5856D6);
-        blankUI_draw_text_color(mx + 14, my + 144, (char*)"Files & BlankPad...", 0x111111);
-        draw_rect_filled(mx + 12, my + 166, mw - 24, 1, 0x000000, 25);
-        blankUI_draw_text_color(mx + 14, my + 172, (char*)"Restart System", 0xFF9500);
-        blankUI_draw_text_color(mx + 14, my + 194, (char*)"Shut Down System", 0xFF3B30);
-    }
-
-    // Network Dropdown
-    if (wifi_menu_open) {
-        int mx = screen_width - 250;
-        dui_shadow(mx, 28, 240, 170, 12, 6, 0x000000, 45);
-        draw_rect_rounded(mx, 28, 240, 170, 12, 0xFFFFFF, 245);
-        blankUI_draw_text_color(mx + 14, 38, (char*)"Network & PCIe Link", 0x111111);
-        draw_rect_filled(mx + 14, 56, 212, 1, 0x000000, 20);
-        blankUI_draw_text_color(mx + 14, 64, (char*)net_get_adapter_name(), 0x007AFF);
-        blankUI_draw_text_color(mx + 14, 84, (char*)net_get_mac_str(), 0x666666);
-        blankUI_draw_text_color(mx + 14, 112, (char*)"1. Intel e1000 GbE Link", 0x333333);
-        blankUI_draw_text_color(mx + 14, 134, (char*)"2. BlankOS_5G_Mesh", 0x333333);
-        blankUI_draw_text_color(mx + 14, 156, (char*)net_get_ipv4_str(), 0x248A3D);
-    }
-
-    if (bt_menu_open) {
-        int mx = screen_width - 240;
-        dui_shadow(mx, 28, 230, 140, 12, 6, 0x000000, 45);
-        draw_rect_rounded(mx, 28, 230, 140, 12, 0xFFFFFF, 245);
-        blankUI_draw_text_color(mx + 16, 40, (char*)"USB HID & Bluetooth", 0x333333);
-        draw_rect_filled(mx + 16, 56, 198, 1, 0x000000, 20);
-        blankUI_draw_text_color(mx + 16, 68, paired_device_name, 0x007AFF);
-        blankUI_draw_text_color(mx + 16, 94, (char*)"1. AirPods Pro (USB-C)", 0x333333);
-        blankUI_draw_text_color(mx + 16, 114, (char*)"2. Magic Trackpad 3", 0x333333);
-    }
-
-    if (battery_menu_open) {
-        int mx = screen_width - 190;
-        dui_shadow(mx, 28, 180, 96, 12, 6, 0x000000, 45);
-        draw_rect_rounded(mx, 28, 180, 96, 12, 0xFFFFFF, 245);
-        blankUI_draw_text_color(mx + 14, 40, (char*)"Power: AC / High Perf", 0x248A3D);
-        blankUI_draw_text_color(mx + 14, 62, (char*)"ACPI / UEFI Runtime", 0x333333);
-        blankUI_draw_text_color(mx + 14, 84, (char*)"Watchdog: Disabled", 0x8E8E93);
-    }
-
-    // Desktop Right-Click Context Menu
-    if (rclick_menu_open) {
-        int mx = rclick_menu_x;
-        int my = rclick_menu_y;
-        int mw = 210, mh = 186;
-        if (mx + mw > screen_width) mx = screen_width - mw - 8;
-        if (my + mh > screen_height) my = screen_height - mh - 8;
-
-        dui_shadow(mx, my, mw, mh, 10, 6, 0x000000, 50);
-        draw_rect_rounded(mx, my, mw, mh, 10, 0xFFFFFF, 245);
-        dui_rect_rounded_outline(mx, my, mw, mh, 10, 0xD1D1D6, 1);
-
-        blankUI_draw_text_color(mx + 14, my + 10, (char*)"Files & BlankPad", 0x111111);
-        blankUI_draw_text_color(mx + 14, my + 36, (char*)"Activity Monitor", 0x007AFF);
-        blankUI_draw_text_color(mx + 14, my + 62, (char*)"Terminal (blanksh)", 0x111111);
-        blankUI_draw_text_color(mx + 14, my + 88, (char*)"Cycle Wallpaper Theme", 0x5856D6);
-        blankUI_draw_text_color(mx + 14, my + 114, (char*)"Toggle Glass Widgets", 0x248A3D);
-        blankUI_draw_text_color(mx + 14, my + 140, (char*)"System Settings...", 0x333333);
-        blankUI_draw_text_color(mx + 14, my + 164, (char*)"Trigger Kernel Panic", 0xFF3B30);
-    }
-}
-
-void blankUI_draw_dock() {
-    int icon_size = 48;
-    int spacing = 10;
-    int num_icons = 10;
-    // 0: Files/BlankPad, 1: Monitor, 2: Settings, 3: Browser, 4: Store, 5: Terminal, 6: Calc, 7: Weather, 8: Update/Install, 9: RegEdit
-    int dock_content_w = num_icons * icon_size + (num_icons - 1) * spacing + 36;
-    int dock_w = dock_content_w;
-    int dock_h = 66;
-    int dock_x = (screen_width - dock_w) / 2;
-    int dock_y = screen_height - dock_h - 8;
-
-    dui_shadow(dock_x, dock_y, dock_w, dock_h, 20, 8, 0x000000, 65);
-    draw_frosted_glass_rounded(dock_x, dock_y, dock_w, dock_h, 20, 0xFFFFFF, 190);
-    draw_rect_rounded(dock_x, dock_y, dock_w, dock_h, 20, 0xFFFFFF, 95);
-
-    int start_x = dock_x + 16;
-    int start_y = dock_y + 8;
-
-    for (int i = 0; i < num_icons; i++) {
-        int base_x = start_x + (icon_size + spacing) * i;
-        if (i == 9) base_x += 6;
-
-        float target = 1.0f;
-        if (last_mouse_x >= base_x && last_mouse_x <= base_x + icon_size &&
-            last_mouse_y >= start_y && last_mouse_y <= start_y + icon_size) {
-            target = 1.25f;
-        }
-        dock_icon_scales[i] += (target - dock_icon_scales[i]) * 0.25f;
-
-        int s = (int)(icon_size * dock_icon_scales[i]);
-        int cx = base_x - (s - icon_size) / 2;
-        int cy = start_y - (s - icon_size);
-
-        if (i == 0) {
-            draw_rect_rounded(cx, cy, s, s, 12, 0x007AFF, 255);
-            dui_icon_folder(cx, cy, s);
-            blankUI_draw_text_color(base_x + 6, start_y + icon_size + 1, (char*)"Files", 0x222222);
-        } else if (i == 1) {
-            // Activity Monitor icon (dark telemetry pulse tile)
-            draw_rect_rounded(cx, cy, s, s, 12, 0x11111B, 255);
-            dui_line(cx + 6, cy + s/2, cx + s/3, cy + s/2, 0x34C759, 2);
-            dui_line(cx + s/3, cy + s/2, cx + s/2, cy + s/4, 0x34C759, 2);
-            dui_line(cx + s/2, cy + s/4, cx + s*2/3, cy + s*3/4, 0x34C759, 2);
-            dui_line(cx + s*2/3, cy + s*3/4, cx + s - 6, cy + s/2, 0x34C759, 2);
-            blankUI_draw_text_color(base_x - 2, start_y + icon_size + 1, (char*)"Monitor", 0x222222);
-        } else if (i == 2) {
-            draw_rect_rounded(cx, cy, s, s, 12, 0x8E8E93, 255);
-            dui_icon_gear(cx, cy, s);
-            blankUI_draw_text_color(base_x - 6, start_y + icon_size + 1, (char*)"Settings", 0x222222);
-        } else if (i == 3) {
-            draw_rect_rounded(cx, cy, s, s, 12, 0x5AC8FA, 255);
-            dui_icon_globe(cx, cy, s);
-            blankUI_draw_text_color(base_x - 4, start_y + icon_size + 1, (char*)"Browser", 0x222222);
-        } else if (i == 4) {
-            draw_rect_rounded(cx, cy, s, s, 12, 0x0A84FF, 255);
-            dui_icon_store(cx, cy, s);
-            blankUI_draw_text_color(base_x + 6, start_y + icon_size + 1, (char*)"Store", 0x222222);
-        } else if (i == 5) {
-            draw_rect_rounded(cx, cy, s, s, 12, 0x1C1C1E, 255);
-            dui_icon_terminal(cx, cy, s);
-            blankUI_draw_text_color(base_x + 6, start_y + icon_size + 1, (char*)"Term", 0x222222);
-        } else if (i == 6) {
-            draw_rect_rounded(cx, cy, s, s, 12, 0xFF9500, 255);
-            dui_icon_calculator(cx, cy, s);
-            blankUI_draw_text_color(base_x + 8, start_y + icon_size + 1, (char*)"Calc", 0x222222);
-        } else if (i == 7) {
-            draw_rect_rounded(cx, cy, s, s, 12, 0x30B0C7, 255);
-            dui_icon_weather(cx, cy, s);
-            blankUI_draw_text_color(base_x - 4, start_y + icon_size + 1, (char*)"Weather", 0x222222);
-        } else if (i == 8) {
-            if (g_is_live_cd) {
-                draw_rect_rounded(cx, cy, s, s, 12, 0xFF9500, 255);
-                dui_icon_updater(cx, cy, s);
-                blankUI_draw_text_color(base_x - 2, start_y + icon_size + 1, (char*)"Install", 0x222222);
-            } else {
-                draw_rect_rounded(cx, cy, s, s, 12, 0x34C759, 255);
-                dui_icon_updater(cx, cy, s);
-                blankUI_draw_text_color(base_x, start_y + icon_size + 1, (char*)"Verify", 0x222222);
-            }
-        } else if (i == 9) {
-            draw_rect_rounded(cx, cy, s, s, 12, 0x5856D6, 255);
-            dui_icon_trash(cx, cy, s);
-            blankUI_draw_text_color(base_x + 2, start_y + icon_size + 1, (char*)"RegEdit", 0x222222);
-        }
-
-        if (i <= 5) {
-            draw_circle_filled(base_x + icon_size / 2, dock_y + dock_h - 4, 2, 0x11111B);
-        }
-    }
-
-    draw_rect_filled(start_x + (icon_size + spacing) * 9 - 3, start_y + 6, 1, icon_size - 12, 0x000000, 35);
-}
-
-static int current_cursor_type = 0;
-
-static const uint8_t cursor_arrow[19][12] = {
+// Sharp 14x18 arrow cursor with alpha border + inner fill (no transparency punch-through issues)
+static const uint8_t g_arrow_bitmap[18][12] = {
     {1,0,0,0,0,0,0,0,0,0,0,0},
     {1,1,0,0,0,0,0,0,0,0,0,0},
     {1,2,1,0,0,0,0,0,0,0,0,0},
@@ -617,291 +176,639 @@ static const uint8_t cursor_arrow[19][12] = {
     {1,2,2,2,2,2,2,2,1,0,0,0},
     {1,2,2,2,2,2,2,2,2,1,0,0},
     {1,2,2,2,2,2,2,2,2,2,1,0},
-    {1,2,2,2,2,2,2,1,1,1,1,1},
+    {1,2,2,2,2,2,2,1,1,1,1,0},
     {1,2,2,2,1,2,2,1,0,0,0,0},
     {1,2,2,1,0,1,2,2,1,0,0,0},
     {1,2,1,0,0,1,2,2,1,0,0,0},
     {1,1,0,0,0,0,1,2,2,1,0,0},
-    {1,0,0,0,0,0,1,2,2,1,0,0},
-    {0,0,0,0,0,0,0,1,1,0,0,0},
-    {0,0,0,0,0,0,0,0,0,0,0,0}
+    {0,0,0,0,0,0,1,2,2,1,0,0},
+    {0,0,0,0,0,0,0,1,1,0,0,0}
 };
 
-static const uint8_t cursor_hand[19][12] = {
-    {0,0,0,1,1,0,0,0,0,0,0,0},
-    {0,0,1,2,2,1,0,0,0,0,0,0},
-    {0,0,1,2,2,1,0,0,0,0,0,0},
-    {0,0,1,2,2,1,0,0,0,0,0,0},
-    {0,0,1,2,2,1,1,1,0,0,0,0},
-    {0,0,1,2,2,2,2,2,1,1,0,0},
-    {0,1,1,2,2,2,2,2,2,2,1,0},
-    {1,2,2,2,2,2,2,2,2,2,2,1},
-    {1,2,2,2,2,2,2,2,2,2,2,1},
-    {1,2,2,2,2,2,2,2,2,2,2,1},
-    {0,1,2,2,2,2,2,2,2,2,2,1},
-    {0,0,1,2,2,2,2,2,2,2,1,0},
-    {0,0,0,1,2,2,2,2,2,1,0,0},
-    {0,0,0,0,1,2,2,2,1,0,0,0},
-    {0,0,0,0,0,1,2,1,0,0,0,0},
-    {0,0,0,0,0,0,1,0,0,0,0,0},
-    {0,0,0,0,0,0,0,0,0,0,0,0},
-    {0,0,0,0,0,0,0,0,0,0,0,0},
-    {0,0,0,0,0,0,0,0,0,0,0,0}
+typedef struct {
+    AppId id;
+    const char* name;
+    const char* short_name;
+    const char* keywords;
+} DockAppItem;
+
+static const DockAppItem g_dock_items[APP_COUNT] = {
+    { APP_FILES,      "Files & Notes",    "Files",    "files finder notes blankpad editor" },
+    { APP_BROWSER,    "Horizon Web",      "Browser",  "browser web internet http download surf" },
+    { APP_TERMINAL,   "Terminal",         "Term",     "terminal shell bash ping dhcp" },
+    { APP_STORE,      "Software Hub",     "Store",    "store apps install pkg repo" },
+    { APP_SETTINGS,   "System Settings",  "Settings", "settings display audio wallpaper network" },
+    { APP_MONITOR,    "System Pulse",     "Monitor",  "monitor cpu memory task pci activity" },
+    { APP_CALCULATOR, "Calculator",       "Calc",     "calc math calculator" },
+    { APP_WEATHER,    "Atmosphere",       "Weather",  "weather climate forecast" },
+    { APP_REGEDIT,    "Registry Studio",  "Registry", "regedit registry ini config" },
+    { APP_UPDATER,    "System Updater",   "Updates",  "updater verify integrity os update" }
 };
 
-static const uint8_t cursor_ibeam[19][12] = {
-    {1,1,1,1,1,1,1,1,1,1,1,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {1,1,1,1,1,1,1,1,1,1,1,0}
-};
-
-static const uint8_t cursor_move[19][12] = {
-    {0,0,0,0,0,1,0,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,1,2,2,2,1,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {1,1,0,0,1,2,1,0,0,1,1,0},
-    {2,2,1,1,1,2,1,1,1,2,2,0},
-    {1,2,2,2,2,2,2,2,2,2,1,0},
-    {0,1,1,1,1,2,1,1,1,1,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,1,2,2,2,1,0,0,0,0},
-    {0,0,0,0,1,2,1,0,0,0,0,0},
-    {0,0,0,0,0,1,0,0,0,0,0,0},
-    {0,0,0,0,0,0,0,0,0,0,0,0},
-    {0,0,0,0,0,0,0,0,0,0,0,0},
-    {0,0,0,0,0,0,0,0,0,0,0,0},
-    {0,0,0,0,0,0,0,0,0,0,0,0},
-    {0,0,0,0,0,0,0,0,0,0,0,0}
-};
-
-void blankUI_set_cursor_type(int type) {
-    current_cursor_type = type;
+static bool pt_in(int px, int py, int rx, int ry, int rw, int rh) {
+    return px >= rx && px < rx + rw && py >= ry && py < ry + rh;
 }
 
-void blankUI_draw_cursor(int x, int y) {
-    last_mouse_x = x;
-    last_mouse_y = y;
-    const uint8_t (*bitmap)[12] = cursor_arrow;
+static bool str_icontains(const char* hay, const char* needle) {
+    if (!needle || !needle[0]) return true;
+    if (!hay) return false;
+    for (int i = 0; hay[i]; i++) {
+        int j = 0;
+        while (needle[j] && hay[i + j]) {
+            char a = hay[i + j];
+            char b = needle[j];
+            if (a >= 'A' && a <= 'Z') a += 32;
+            if (b >= 'A' && b <= 'Z') b += 32;
+            if (a != b) break;
+            j++;
+        }
+        if (!needle[j]) return true;
+    }
+    return false;
+}
 
-    if (current_cursor_type == 1) bitmap = cursor_hand;
-    else if (current_cursor_type == 2) bitmap = cursor_ibeam;
-    else if (current_cursor_type == 3 || current_cursor_type == 4 || current_cursor_type == 5) bitmap = cursor_move;
+static void fmt_two_digits(int val, char* out) {
+    out[0] = (char)('0' + ((val / 10) % 10));
+    out[1] = (char)('0' + (val % 10));
+    out[2] = 0;
+}
 
-    for (int row = 0; row < 19; row++) {
-        for (int col = 0; col < 12; col++) {
-            uint8_t pixel = bitmap[row][col];
-            if (pixel == 1) {
-                put_pixel_alpha(x + col, y + row, 0x000000, 255);
-            } else if (pixel == 2) {
-                put_pixel_alpha(x + col, y + row, 0xFFFFFF, 255);
+void blankUI_draw_cursor(int x, int y, int type) {
+    (void)type;
+    // Soft shadow under cursor
+    for (int r = 0; r < 18; r++) {
+        for (int c = 0; c < 12; c++) {
+            if (g_arrow_bitmap[r][c] != 0) {
+                put_pixel_alpha(x + c + 2, y + r + 2, 0x000000, 90);
             }
         }
     }
+    // Crisp dark rim + bright cyan-white core
+    for (int r = 0; r < 18; r++) {
+        for (int c = 0; c < 12; c++) {
+            uint8_t px = g_arrow_bitmap[r][c];
+            if (px == 1) put_pixel(x + c, y + r, 0x070B14);
+            else if (px == 2) put_pixel(x + c, y + r, 0xF8FAFC);
+        }
+    }
 }
 
-int blankUI_hit_test_dock(int cursor_x, int cursor_y) {
-    int icon_size = 48;
-    int spacing = 10;
-    int num_icons = 10;
-    int dock_content_w = num_icons * icon_size + (num_icons - 1) * spacing + 36;
-    int dock_w = dock_content_w;
-    int dock_h = 66;
-    int dock_x = (screen_width - dock_w) / 2;
-    int dock_y = screen_height - dock_h - 8;
+void blankUI_draw_toast(const char* title, const char* message) {
+    os_send_notification(title, message);
+}
 
-    if (cursor_x >= dock_x && cursor_x <= dock_x + dock_w &&
-        cursor_y >= dock_y && cursor_y <= dock_y + dock_h) {
+void blankUI_draw_desktop_widgets(const BlankInputState* in) {
+    if (!g_show_desktop_widgets) return;
+    int sw = (int)screen_width;
+    int sh = (int)screen_height;
 
-        int start_x = dock_x + 16;
-        int start_y = dock_y + 8;
+    // Only draw subtle left-side workspace telemetry card when not crowded, positioned cleanly below top bar
+    int wx = 26;
+    int wy = THEME_TOPBAR_H + 30;
+    int ww = 248;
+    int wh = 128;
+    if (sw < 800 || sh < 560) return;
 
-        for (int i = 0; i < num_icons; i++) {
-            int icon_x = start_x + (icon_size + spacing) * i;
-            if (i == 9) icon_x += 6;
+    dui_shadow(wx, wy, ww, wh, THEME_RADIUS_LG, 5);
+    dui_glass_card(wx, wy, ww, wh, THEME_RADIUS_LG, THEME_SURFACE_BASE, 165, false);
 
-            if (cursor_x >= icon_x && cursor_x <= icon_x + icon_size &&
-                cursor_y >= start_y && cursor_y <= start_y + icon_size) {
-                return i;
+    RTC_Time now;
+    get_rtc_time(&now);
+
+    char time_buf[16];
+    fmt_two_digits(now.hour, time_buf);
+    time_buf[2] = ':';
+    fmt_two_digits(now.minute, time_buf + 3);
+    time_buf[5] = 0;
+
+    dui_text(wx + 18, wy + 16, time_buf, THEME_TEXT_PRIMARY, 3);
+
+    char sub[48];
+    NetStatus ns;
+    net_get_status(&ns);
+    int used_mb = (int)memory_get_used_mb();
+    int tot_mb = (int)memory_get_total_mb();
+    if (tot_mb <= 0) tot_mb = 512;
+
+    // Format telemetry line cleanly
+    int pos = 0;
+    const char* pfx = "RAM ";
+    while (*pfx) sub[pos++] = *pfx++;
+    int tmp = used_mb;
+    char digits[12]; int dc = 0;
+    if (tmp == 0) digits[dc++] = '0';
+    else while (tmp > 0 && dc < 10) { digits[dc++] = (char)('0' + (tmp % 10)); tmp /= 10; }
+    for (int k = dc - 1; k >= 0; k--) sub[pos++] = digits[k];
+    const char* mid = "MB  |  ";
+    while (*mid) sub[pos++] = *mid++;
+    const char* ip = ns.dhcp_bound ? ns.ip_str : (ns.nic_present ? "Link Up" : "Offline");
+    while (*ip && pos < 45) sub[pos++] = *ip++;
+    sub[pos] = 0;
+
+    dui_text(wx + 18, wy + 68, sub, THEME_TEXT_SECONDARY, 1);
+
+    // Quick pill button to launch Browser or Files right from workspace card
+    if (in) {
+        if (dui_button(wx + 18, wy + 90, 98, 26, "Open Web", THEME_ACCENT_CYAN, true, in->mx, in->my, in->left_pressed)) {
+            wm_open_app(APP_BROWSER);
+        }
+        if (dui_button(wx + 124, wy + 90, 104, 26, "Quick Search", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed)) {
+            g_spotlight_open = true;
+            g_spotlight_len = 0;
+            g_spotlight_query[0] = 0;
+        }
+    }
+}
+
+static void close_all_popovers(void) {
+    g_brand_menu_open = false;
+    g_control_center_open = false;
+    g_downloads_open = false;
+    g_spotlight_open = false;
+    rclick_menu_open = false;
+    island_expanded = false;
+}
+
+void blankUI_draw_shell(BlankInputState* in) {
+    if (!in) return;
+    int sw = (int)screen_width;
+    int sh = (int)screen_height;
+
+    // Keyboard global shortcuts: Ctrl+K opens Spotlight, Esc closes active overlay
+    if (in->has_key) {
+        if (in->ctrl_held && in->key_char == 'k') {
+            bool was = g_spotlight_open;
+            close_all_popovers();
+            g_spotlight_open = !was;
+            g_spotlight_len = 0;
+            g_spotlight_query[0] = 0;
+            input_consume_key(in);
+        } else if (in->scan_code == BLANK_SCAN_ESC) {
+            if (g_brand_menu_open || g_control_center_open || g_downloads_open || g_spotlight_open || rclick_menu_open || island_expanded) {
+                close_all_popovers();
+                input_consume_key(in);
             }
         }
     }
-    return -1;
-}
 
-int active_win_x = -1;
-int active_win_y = -1;
-bool is_dragging = false;
-int drag_offset_x = 0;
-int drag_offset_y = 0;
-int last_width = 0;
-int last_height = 0;
+    // ------------------------------------------------------------------------
+    // 1. Floating Horizon Spatial Top Bar
+    // ------------------------------------------------------------------------
+    int bar_y = 8;
+    int left_x = 14;
+    int left_w = 216;
+    int bar_h = 34;
 
-void blankUI_get_window_pos(int* x, int* y, int width, int height) {
-    if (width != last_width || height != last_height) {
-        active_win_x = (screen_width - width) / 2;
-        active_win_y = (screen_height - height) / 2;
-        last_width = width;
-        last_height = height;
-        is_dragging = false;
-    }
-    *x = active_win_x;
-    *y = active_win_y;
-}
+    dui_shadow(left_x, bar_y, left_w, bar_h, THEME_RADIUS_PILL, 4);
+    dui_glass_card(left_x, bar_y, left_w, bar_h, THEME_RADIUS_PILL, THEME_SURFACE_BASE, 215, g_brand_menu_open);
 
-void blankUI_update_window_drag(int mouse_x, int mouse_y, bool mouse_pressed, int width, int height) {
-    int wx = 0, wy = 0;
-    blankUI_get_window_pos(&wx, &wy, width, height);
+    // Brand orb + active window title
+    BlankWindow* focused = wm_get_focused_window();
+    bool hov_brand = pt_in(in->mx, in->my, left_x, bar_y, left_w, bar_h);
+    dui_circle(left_x + 17, bar_y + 17, 8, THEME_ACCENT_CYAN, 255);
+    dui_circle(left_x + 17, bar_y + 17, 4, THEME_BG_VOID, 255);
+    dui_text_ellipsis(left_x + 32, bar_y + 10, left_w - 44,
+                      focused ? focused->title : (g_is_live_cd ? "Horizon Live" : "BlankOS Horizon"),
+                      hov_brand ? THEME_ACCENT_CYAN : THEME_TEXT_PRIMARY, 1);
 
-    bool hover_title = (mouse_x >= wx && mouse_x <= wx + width &&
-                        mouse_y >= wy && mouse_y <= wy + 32);
-
-    bool hover_close = (mouse_x >= wx + 10 && mouse_x <= wx + 70 &&
-                        mouse_y >= wy + 10 && mouse_y <= wy + 26);
-
-    if (hover_close) {
-        blankUI_set_cursor_type(1);
-    } else if (hover_title && !is_dragging) {
-        blankUI_set_cursor_type(3);
-    } else if (is_dragging) {
-        blankUI_set_cursor_type(3);
-    } else {
-        blankUI_set_cursor_type(0);
+    if (in->left_pressed && hov_brand) {
+        bool next = !g_brand_menu_open;
+        close_all_popovers();
+        g_brand_menu_open = next;
+        play_system_sound((char*)"click");
+        input_consume_mouse(in);
     }
 
-    if (!mouse_pressed) {
-        is_dragging = false;
-        return;
+    // Center Horizon Pulse Capsule (Clock + Active Download / Network Pulse)
+    NetStatus ns;
+    net_get_status(&ns);
+    int dl_count = net_download_count();
+    int active_dl = 0;
+    for (int i = 0; i < dl_count; i++) {
+        const DownloadEntry* de = net_get_download(i);
+        if (de && de->state != HTTP_DONE && de->state != HTTP_ERROR && de->state != HTTP_IDLE) active_dl++;
     }
 
-    if (mouse_pressed && !is_dragging) {
-        if (hover_title && !hover_close) {
-            is_dragging = true;
-            drag_offset_x = mouse_x - wx;
-            drag_offset_y = mouse_y - wy;
+    RTC_Time now;
+    get_rtc_time(&now);
+    char clk[16];
+    fmt_two_digits(now.hour, clk);
+    clk[2] = ':';
+    fmt_two_digits(now.minute, clk + 3);
+    clk[5] = ':';
+    fmt_two_digits(now.second, clk + 6);
+    clk[8] = 0;
+
+    g_anim_pulse = horizon_spring_step(g_anim_pulse, island_expanded ? 1.0f : 0.0f, 0.25f);
+    int pill_w = 190 + (int)(g_anim_pulse * 120.0f);
+    int pill_x = (sw - pill_w) / 2;
+    if (pill_x < left_x + left_w + 10) pill_x = left_x + left_w + 10;
+
+    bool hov_pulse = pt_in(in->mx, in->my, pill_x, bar_y, pill_w, bar_h);
+    dui_shadow(pill_x, bar_y, pill_w, bar_h, THEME_RADIUS_PILL, 4);
+    dui_glass_card(pill_x, bar_y, pill_w, bar_h, THEME_RADIUS_PILL, THEME_SURFACE_CARD, 225, island_expanded || active_dl > 0);
+
+    dui_circle(pill_x + 16, bar_y + 17, 4, (active_dl > 0) ? THEME_ACCENT_AMBER : (ns.dhcp_bound ? THEME_ACCENT_GREEN : THEME_ACCENT_CYAN), 255);
+    dui_text(pill_x + 28, bar_y + 10, clk, THEME_TEXT_PRIMARY, 1);
+    dui_text(pill_x + 102, bar_y + 10, (active_dl > 0) ? "Syncing..." : (ns.dhcp_bound ? "Online" : "Local"), THEME_TEXT_SECONDARY, 1);
+
+    if (in->left_pressed && hov_pulse) {
+        island_expanded = !island_expanded;
+        play_system_sound((char*)"click");
+        input_consume_mouse(in);
+    }
+
+    // Right Status Pill: Search + Downloads + Control Center
+    int right_w = 248;
+    int right_x = sw - right_w - 14;
+    dui_shadow(right_x, bar_y, right_w, bar_h, THEME_RADIUS_PILL, 4);
+    dui_glass_card(right_x, bar_y, right_w, bar_h, THEME_RADIUS_PILL, THEME_SURFACE_BASE, 215, g_control_center_open || g_downloads_open);
+
+    // Search trigger
+    bool hov_search = pt_in(in->mx, in->my, right_x + 6, bar_y + 4, 72, 26);
+    if (hov_search || g_spotlight_open) dui_rect_rounded(right_x + 6, bar_y + 4, 72, 26, 13, THEME_SURFACE_HOVER, 210);
+    dui_draw_sys_icon(right_x + 14, bar_y + 9, 16, 0, THEME_TEXT_PRIMARY);
+    dui_text(right_x + 34, bar_y + 10, "Find", THEME_TEXT_PRIMARY, 1);
+
+    // Downloads trigger
+    bool hov_dl = pt_in(in->mx, in->my, right_x + 84, bar_y + 4, 74, 26);
+    if (hov_dl || g_downloads_open) dui_rect_rounded(right_x + 84, bar_y + 4, 74, 26, 13, THEME_SURFACE_HOVER, 210);
+    dui_draw_sys_icon(right_x + 92, bar_y + 9, 16, 8, (active_dl > 0) ? THEME_ACCENT_AMBER : THEME_ACCENT_CYAN);
+    dui_text(right_x + 112, bar_y + 10, "Files", THEME_TEXT_SECONDARY, 1);
+
+    // Control Center trigger (Wifi + Vol + Gear)
+    bool hov_cc = pt_in(in->mx, in->my, right_x + 164, bar_y + 4, 78, 26);
+    if (hov_cc || g_control_center_open) dui_rect_rounded(right_x + 164, bar_y + 4, 78, 26, 13, THEME_SURFACE_HOVER, 210);
+    dui_draw_sys_icon(right_x + 174, bar_y + 9, 16, 1, ns.link_up ? THEME_ACCENT_GREEN : THEME_TEXT_MUTED);
+    dui_draw_sys_icon(right_x + 196, bar_y + 9, 16, 2, is_audio_muted() ? THEME_ACCENT_ROSE : THEME_TEXT_PRIMARY);
+    dui_draw_sys_icon(right_x + 218, bar_y + 9, 16, 4, THEME_TEXT_PRIMARY);
+
+    if (in->left_pressed) {
+        if (hov_search) {
+            bool next = !g_spotlight_open;
+            close_all_popovers();
+            g_spotlight_open = next;
+            g_spotlight_len = 0; g_spotlight_query[0] = 0;
+            play_system_sound((char*)"click");
+            input_consume_mouse(in);
+        } else if (hov_dl) {
+            bool next = !g_downloads_open;
+            close_all_popovers();
+            g_downloads_open = next;
+            play_system_sound((char*)"click");
+            input_consume_mouse(in);
+        } else if (hov_cc) {
+            bool next = !g_control_center_open;
+            close_all_popovers();
+            g_control_center_open = next;
+            play_system_sound((char*)"click");
+            input_consume_mouse(in);
         }
     }
 
-    if (is_dragging) {
-        active_win_x = mouse_x - drag_offset_x;
-        active_win_y = mouse_y - drag_offset_y;
+    // ------------------------------------------------------------------------
+    // 2. Floating Spatial Glass Dock (Bottom)
+    // ------------------------------------------------------------------------
+    int dock_count = APP_COUNT;
+    int slot_w = 50;
+    int dock_pad_x = 14;
+    int dock_w = dock_count * slot_w + dock_pad_x * 2;
+    int dock_h = 56;
+    int dock_x = (sw - dock_w) / 2;
+    int dock_y = sh - dock_h - 10;
 
-        if (active_win_y < 26) active_win_y = 26;
-        if (active_win_x < -width + 100) active_win_x = -width + 100;
-        if (active_win_x > screen_width - 100) active_win_x = screen_width - 100;
+    dui_shadow(dock_x, dock_y, dock_w, dock_h, 18, 8);
+    dui_glass_card(dock_x, dock_y, dock_w, dock_h, 18, THEME_SURFACE_BASE, 224, false);
+
+    int hovered_dock = -1;
+    for (int i = 0; i < dock_count; i++) {
+        int ix = dock_x + dock_pad_x + i * slot_w + 5;
+        int iy = dock_y + 8;
+        bool hov = pt_in(in->mx, in->my, ix - 4, iy - 12, slot_w - 2, dock_h + 10);
+        if (hov) hovered_dock = i;
+
+        g_dock_scale[i] = horizon_spring_step(g_dock_scale[i], hov ? 1.0f : 0.0f, 0.30f);
+        int lift = (int)(g_dock_scale[i] * 9.0f);
+        int isize = 38 + (int)(g_dock_scale[i] * 6.0f);
+        int draw_ix = ix - (isize - 38) / 2;
+        int draw_iy = iy - lift;
+
+        dui_draw_squircle_icon(draw_ix, draw_iy, isize, (int)g_dock_items[i].id, hov);
+
+        // Active running dot indicator beneath open/focused app
+        if (wm_is_app_open(g_dock_items[i].id)) {
+            BlankWindow* w = wm_get_window(g_dock_items[i].id);
+            bool is_top = (w && w == wm_get_focused_window());
+            dui_rect_rounded(ix + 12, dock_y + dock_h - 6, is_top ? 14 : 6, 3, 2,
+                             is_top ? THEME_ACCENT_CYAN : THEME_TEXT_SECONDARY, 240);
+        }
+
+        if (hov && in->left_pressed) {
+            BlankWindow* w = wm_get_window(g_dock_items[i].id);
+            if (w && w->open && w == wm_get_focused_window() && !w->minimized) {
+                wm_minimize_window(w);
+            } else {
+                wm_open_app(g_dock_items[i].id);
+            }
+            input_consume_mouse(in);
+        }
+    }
+
+    // Tooltip above hovered dock item
+    if (hovered_dock >= 0) {
+        const char* tip = g_dock_items[hovered_dock].name;
+        int tw = dui_text_width(tip, 1) + 20;
+        int tx = dock_x + dock_pad_x + hovered_dock * slot_w + 25 - tw / 2;
+        int ty = dock_y - 34;
+        dui_shadow(tx, ty, tw, 24, 8, 4);
+        dui_glass_card(tx, ty, tw, 24, 8, THEME_SURFACE_ELEVATED, 240, true);
+        dui_text(tx + 10, ty + 5, tip, THEME_TEXT_PRIMARY, 1);
+    }
+
+    // ------------------------------------------------------------------------
+    // 3. Popovers & Overlays (Z-layered above windows)
+    // ------------------------------------------------------------------------
+
+    // A) Brand Menu Dropdown
+    if (g_brand_menu_open) {
+        int mx0 = left_x;
+        int my0 = bar_y + bar_h + 8;
+        int mw = 224;
+        int mh = 238;
+        dui_shadow(mx0, my0, mw, mh, THEME_RADIUS_LG, 8);
+        dui_glass_card(mx0, my0, mw, mh, THEME_RADIUS_LG, THEME_SURFACE_CARD, 242, true);
+
+        const char* labels[6] = {
+            "About BlankOS Horizon",
+            "System Settings...",
+            "Quick Search (Ctrl+K)",
+            "Lock Screen",
+            "Restart System",
+            "Shut Down"
+        };
+        for (int i = 0; i < 6; i++) {
+            int ry = my0 + 10 + i * 36;
+            bool hov = pt_in(in->mx, in->my, mx0 + 8, ry, mw - 16, 30);
+            if (hov) dui_rect_rounded(mx0 + 8, ry, mw - 16, 30, 8, (i >= 4) ? THEME_ACCENT_ROSE : THEME_ACCENT_CYAN, 45);
+            dui_text(mx0 + 18, ry + 7, labels[i], (i == 5) ? THEME_ACCENT_ROSE : THEME_TEXT_PRIMARY, 1);
+            if (hov && in->left_pressed) {
+                g_brand_menu_open = false;
+                input_consume_mouse(in);
+                if (i == 0) wm_open_app(APP_MONITOR);
+                else if (i == 1) wm_open_app(APP_SETTINGS);
+                else if (i == 2) g_spotlight_open = true;
+                else if (i == 3 && gSystemTable) launch_login_screen(gSystemTable);
+                else if (i == 4) os_restart();
+                else if (i == 5) os_shutdown();
+            }
+        }
+    }
+
+    // B) Control Center Popover (Volume slider, Wallpaper grid, Resolution, DHCP, Power)
+    g_anim_cc = horizon_spring_step(g_anim_cc, g_control_center_open ? 1.0f : 0.0f, 0.30f);
+    if (g_control_center_open || g_anim_cc > 0.05f) {
+        int cw = 320;
+        int ch = 356;
+        int cx0 = sw - cw - 14;
+        int cy0 = bar_y + bar_h + 8 - (int)((1.0f - g_anim_cc) * 14.0f);
+
+        dui_shadow(cx0, cy0, cw, ch, THEME_RADIUS_LG, 9);
+        dui_glass_card(cx0, cy0, cw, ch, THEME_RADIUS_LG, THEME_SURFACE_CARD, 244, true);
+
+        dui_text(cx0 + 18, cy0 + 16, "Control Center", THEME_TEXT_PRIMARY, 2);
+
+        // Quick Network + DHCP Renew row
+        dui_rect_rounded(cx0 + 14, cy0 + 48, cw - 28, 56, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 210);
+        dui_draw_sys_icon(cx0 + 26, cy0 + 66, 20, 1, ns.link_up ? THEME_ACCENT_GREEN : THEME_TEXT_MUTED);
+        dui_text_ellipsis(cx0 + 56, cy0 + 56, 150, ns.nic_present ? ns.adapter_name : "No NIC", THEME_TEXT_PRIMARY, 1);
+        dui_text(cx0 + 56, cy0 + 76, ns.dhcp_bound ? ns.ip_str : (ns.nic_present ? "No DHCP" : "Offline"), THEME_TEXT_SECONDARY, 1);
+        if (dui_button(cx0 + cw - 92, cy0 + 62, 66, 28, "Renew", THEME_ACCENT_CYAN, false, in->mx, in->my, in->left_pressed && g_control_center_open)) {
+            net_dhcp_renew();
+            input_consume_mouse(in);
+        }
+
+        // Volume Slider
+        dui_rect_rounded(cx0 + 14, cy0 + 114, cw - 28, 60, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 210);
+        dui_text(cx0 + 26, cy0 + 124, is_audio_muted() ? "Audio Output (Muted)" : "Audio Output", THEME_TEXT_PRIMARY, 1);
+        if (dui_button(cx0 + cw - 82, cy0 + 120, 56, 24, is_audio_muted() ? "Unmute" : "Mute", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed && g_control_center_open)) {
+            toggle_audio_mute();
+            input_consume_mouse(in);
+        }
+        int sl_x = cx0 + 26, sl_y = cy0 + 152, sl_w = cw - 52;
+        dui_rect_rounded(sl_x, sl_y, sl_w, 8, 4, THEME_BORDER_SUBTLE, 240);
+        int fill_w = (sl_w * get_master_volume()) / 100;
+        dui_rect_rounded(sl_x, sl_y, fill_w, 8, 4, THEME_ACCENT_CYAN, 255);
+        dui_circle(sl_x + fill_w, sl_y + 4, 7, 0xFFFFFF, 255);
+        if (g_control_center_open && in->left_down && pt_in(in->mx, in->my, sl_x - 6, sl_y - 8, sl_w + 12, 24)) {
+            int nv = ((in->mx - sl_x) * 100) / sl_w;
+            set_master_volume(nv);
+        }
+
+        // Wallpaper Theme Switcher (5 Horizon themes)
+        dui_text(cx0 + 18, cy0 + 188, "Horizon Wallpaper Theme", THEME_TEXT_SECONDARY, 1);
+        const uint32_t theme_swatches[5] = { 0x1E3A8A, 0x065F46, 0x3730A3, 0x7F1D1D, 0x0F766E };
+        for (int t = 0; t < 5; t++) {
+            int sx = cx0 + 18 + t * 58;
+            int sy = cy0 + 210;
+            bool act = (dui_get_wallpaper_id() == t);
+            dui_rect_rounded(sx, sy, 48, 30, 8, theme_swatches[t], 255);
+            if (act) dui_rect_rounded_outline(sx - 2, sy - 2, 52, 34, 10, THEME_ACCENT_CYAN, 255);
+            if (g_control_center_open && in->left_pressed && pt_in(in->mx, in->my, sx, sy, 48, 30)) {
+                dui_set_wallpaper_id(t);
+                g_wallpaper_theme = t;
+                blankReg_set_int("UI/WallpaperTheme", t);
+                if (gSystemTable) blankReg_save(gSystemTable);
+                play_system_sound((char*)"click");
+                input_consume_mouse(in);
+            }
+        }
+
+        // Resolution Buttons + Power Pills
+        dui_text(cx0 + 18, cy0 + 254, "Display Mode", THEME_TEXT_SECONDARY, 1);
+        if (dui_button(cx0 + 18, cy0 + 274, 134, 28, "1024 x 768", (screen_width == 1024) ? THEME_ACCENT_CYAN : THEME_SURFACE_ELEVATED, screen_width == 1024, in->mx, in->my, in->left_pressed && g_control_center_open)) {
+            set_screen_resolution(1024, 768);
+            input_consume_mouse(in);
+        }
+        if (dui_button(cx0 + 162, cy0 + 274, 140, 28, "1280 x 800", (screen_width == 1280) ? THEME_ACCENT_CYAN : THEME_SURFACE_ELEVATED, screen_width == 1280, in->mx, in->my, in->left_pressed && g_control_center_open)) {
+            set_screen_resolution(1280, 800);
+            input_consume_mouse(in);
+        }
+
+        if (dui_button(cx0 + 18, cy0 + 314, 90, 28, "Lock", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed && g_control_center_open)) {
+            g_control_center_open = false;
+            if (gSystemTable) launch_login_screen(gSystemTable);
+            input_consume_mouse(in);
+        }
+        if (dui_button(cx0 + 116, cy0 + 314, 90, 28, "Restart", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed && g_control_center_open)) {
+            os_restart();
+        }
+        if (dui_button(cx0 + 214, cy0 + 314, 88, 28, "Power Off", THEME_ACCENT_ROSE, true, in->mx, in->my, in->left_pressed && g_control_center_open)) {
+            os_shutdown();
+        }
+    }
+
+    // C) Downloads Popover
+    if (g_downloads_open) {
+        int dw = 330;
+        int dh = 280;
+        int dx0 = sw - dw - 48;
+        int dy0 = bar_y + bar_h + 8;
+
+        dui_shadow(dx0, dy0, dw, dh, THEME_RADIUS_LG, 8);
+        dui_glass_card(dx0, dy0, dw, dh, THEME_RADIUS_LG, THEME_SURFACE_CARD, 242, true);
+        dui_text(dx0 + 16, dy0 + 14, "Downloads (\\DOWNLOADS\\)", THEME_TEXT_PRIMARY, 1);
+
+        if (dui_button(dx0 + dw - 76, dy0 + 10, 62, 24, "Clear", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed)) {
+            net_clear_finished_downloads();
+            input_consume_mouse(in);
+        }
+
+        if (dl_count == 0) {
+            dui_text(dx0 + 18, dy0 + 96, "No downloaded files yet.", THEME_TEXT_SECONDARY, 1);
+            if (dui_button(dx0 + 18, dy0 + 128, 160, 30, "Open Horizon Web", THEME_ACCENT_CYAN, true, in->mx, in->my, in->left_pressed)) {
+                g_downloads_open = false;
+                wm_open_app(APP_BROWSER);
+                input_consume_mouse(in);
+            }
+        } else {
+            int max_show = (dl_count > 4) ? 4 : dl_count;
+            for (int i = 0; i < max_show; i++) {
+                const DownloadEntry* de = net_get_download(i);
+                if (!de) continue;
+                int ry = dy0 + 48 + i * 54;
+                bool hov = pt_in(in->mx, in->my, dx0 + 12, ry, dw - 24, 46);
+                dui_rect_rounded(dx0 + 12, ry, dw - 24, 46, 8, hov ? THEME_SURFACE_HOVER : THEME_SURFACE_INPUT, 220);
+                dui_text_ellipsis(dx0 + 22, ry + 8, dw - 100, de->filename, THEME_TEXT_PRIMARY, 1);
+                dui_text_ellipsis(dx0 + 22, ry + 26, dw - 100, de->status_text, THEME_TEXT_SECONDARY, 1);
+                if (hov && in->left_pressed && de->state == HTTP_DONE) {
+                    g_downloads_open = false;
+                    wm_request_open_file(de->disk_path);
+                    input_consume_mouse(in);
+                }
+            }
+        }
+    }
+
+    // D) Spotlight Command Palette Overlay
+    g_anim_spot = horizon_spring_step(g_anim_spot, g_spotlight_open ? 1.0f : 0.0f, 0.30f);
+    if (g_spotlight_open) {
+        dui_rect(0, 0, sw, sh, 0x04070E, 130);
+
+        int spw = 500;
+        if (spw > sw - 40) spw = sw - 40;
+        int sph = 330;
+        int spx = (sw - spw) / 2;
+        int spy = (sh - sph) / 2 - 40;
+
+        dui_shadow(spx, spy, spw, sph, THEME_RADIUS_XL, 12);
+        dui_glass_card(spx, spy, spw, sph, THEME_RADIUS_XL, THEME_SURFACE_CARD, 246, true);
+
+        // Search box
+        dui_rect_rounded(spx + 16, spy + 16, spw - 32, 44, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 240);
+        dui_rect_rounded_outline(spx + 16, spy + 16, spw - 32, 44, THEME_RADIUS_MD, THEME_BORDER_FOCUS, 200);
+        dui_draw_sys_icon(spx + 28, spy + 29, 18, 0, THEME_ACCENT_CYAN);
+
+        if (g_spotlight_len > 0) {
+            dui_text(spx + 54, spy + 29, g_spotlight_query, THEME_TEXT_PRIMARY, 1);
+        } else {
+            dui_text(spx + 54, spy + 29, "Type to launch apps or open URL (http://...)", THEME_TEXT_MUTED, 1);
+        }
+
+        // Capture keyboard typing cleanly inside Spotlight
+        if (in->has_key) {
+            if (in->key_char == '\b') {
+                if (g_spotlight_len > 0) {
+                    g_spotlight_query[--g_spotlight_len] = 0;
+                }
+            } else if (in->key_char == '\n') {
+                if (str_icontains(g_spotlight_query, "http://") || str_icontains(g_spotlight_query, "blank://")) {
+                    g_spotlight_open = false;
+                    wm_request_open_url(g_spotlight_query);
+                } else {
+                    for (int i = 0; i < APP_COUNT; i++) {
+                        if (str_icontains(g_dock_items[i].name, g_spotlight_query) ||
+                            str_icontains(g_dock_items[i].keywords, g_spotlight_query)) {
+                            g_spotlight_open = false;
+                            wm_open_app(g_dock_items[i].id);
+                            break;
+                        }
+                    }
+                }
+            } else if (in->key_char >= 32 && in->key_char < 127 && g_spotlight_len < 60) {
+                g_spotlight_query[g_spotlight_len++] = in->key_char;
+                g_spotlight_query[g_spotlight_len] = 0;
+            }
+            input_consume_key(in);
+        }
+
+        // Matching apps list
+        int shown = 0;
+        for (int i = 0; i < APP_COUNT && shown < 5; i++) {
+            if (str_icontains(g_dock_items[i].name, g_spotlight_query) ||
+                str_icontains(g_dock_items[i].keywords, g_spotlight_query)) {
+                int ry = spy + 74 + shown * 46;
+                bool hov = pt_in(in->mx, in->my, spx + 16, ry, spw - 32, 40);
+                dui_rect_rounded(spx + 16, ry, spw - 32, 40, THEME_RADIUS_MD, hov ? THEME_SURFACE_HOVER : THEME_SURFACE_BASE, 210);
+                dui_draw_squircle_icon(spx + 24, ry + 6, 28, (int)g_dock_items[i].id, false);
+                dui_text(spx + 62, ry + 12, g_dock_items[i].name, THEME_TEXT_PRIMARY, 1);
+                if (hov && in->left_pressed) {
+                    g_spotlight_open = false;
+                    wm_open_app(g_dock_items[i].id);
+                    input_consume_mouse(in);
+                }
+                shown++;
+            }
+        }
+
+        // Click outside Spotlight dismisses it cleanly
+        if (in->left_pressed && !pt_in(in->mx, in->my, spx, spy, spw, sph)) {
+            g_spotlight_open = false;
+            input_consume_mouse(in);
+        }
+    }
+
+    // E) Desktop Right-Click Context Menu
+    if (in->right_pressed && !wm_get_focused_window()) {
+        close_all_popovers();
+        rclick_menu_open = true;
+        rclick_menu_x = in->mx;
+        rclick_menu_y = in->my;
+        if (rclick_menu_x + 190 > sw - 12) rclick_menu_x = sw - 202;
+        if (rclick_menu_y + 160 > sh - 80) rclick_menu_y = sh - 240;
+    }
+
+    if (rclick_menu_open) {
+        int mw = 190, mh = 152;
+        dui_shadow(rclick_menu_x, rclick_menu_y, mw, mh, THEME_RADIUS_MD, 7);
+        dui_glass_card(rclick_menu_x, rclick_menu_y, mw, mh, THEME_RADIUS_MD, THEME_SURFACE_CARD, 240, true);
+        const char* items[4] = { "New Terminal", "Open Horizon Web", "Next Wallpaper", "Display Settings" };
+        for (int i = 0; i < 4; i++) {
+            int ry = rclick_menu_y + 8 + i * 34;
+            bool hov = pt_in(in->mx, in->my, rclick_menu_x + 6, ry, mw - 12, 30);
+            if (hov) dui_rect_rounded(rclick_menu_x + 6, ry, mw - 12, 30, 6, THEME_ACCENT_CYAN, 50);
+            dui_text(rclick_menu_x + 14, ry + 7, items[i], THEME_TEXT_PRIMARY, 1);
+            if (hov && in->left_pressed) {
+                rclick_menu_open = false;
+                input_consume_mouse(in);
+                if (i == 0) wm_open_app(APP_TERMINAL);
+                else if (i == 1) wm_open_app(APP_BROWSER);
+                else if (i == 2) {
+                    int nt = (dui_get_wallpaper_id() + 1) % 5;
+                    dui_set_wallpaper_id(nt);
+                    g_wallpaper_theme = nt;
+                } else if (i == 3) wm_open_app(APP_SETTINGS);
+            }
+        }
+        if (in->left_pressed && !pt_in(in->mx, in->my, rclick_menu_x, rclick_menu_y, mw, mh)) {
+            rclick_menu_open = false;
+        }
     }
 }
 
-int blankUI_hit_test_window_close(int cursor_x, int cursor_y, int width, int height) {
-    int x, y;
-    blankUI_get_window_pos(&x, &y, width, height);
-    int cx = x + 16;
-    int cy = y + 16;
-    if ((cursor_x - cx) * (cursor_x - cx) + (cursor_y - cy) * (cursor_y - cy) <= 100) {
-        return 1;
-    }
-    return 0;
-}
-
-void blankUI_draw_window_controls(int window_x, int window_y) {
-    draw_circle_filled(window_x + 16, window_y + 16, 6, 0xFF5F56);
-    draw_circle_filled(window_x + 36, window_y + 16, 6, 0xFFBD2E);
-    draw_circle_filled(window_x + 56, window_y + 16, 6, 0x27C93F);
-}
-
-void blankUI_draw_window(int width, int height, char* title) {
-    int x, y;
-    blankUI_get_window_pos(&x, &y, width, height);
-
-    draw_rect_rounded(x + 10, y + 10, width, height, 12, 0x000000, 45);
-    draw_rect_rounded(x, y, width, height, 12, 0xFFFFFF, 242);
-    draw_rect_rounded(x, y, width, height, 12, 0xFFFFFF, 100);
-    draw_rect_filled(x, y + 32, width, 1, 0x000000, 20);
-
-    blankUI_draw_window_controls(x, y);
-
-    int title_w = dui_text_width(title, 1);
-    int title_x = x + (width - title_w) / 2;
-    blankUI_draw_text_color(title_x, y + 10, title, 0x2C2C2E);
-}
-
-void blankUI_draw_modal(int width, int height, char* title, char* content) {
-    draw_rect_filled(0, 0, screen_width, screen_height, 0x000000, 80);
-    blankUI_draw_window(width, height, title);
-
-    int x = (screen_width - width) / 2;
-    int y = (screen_height - height) / 2;
-
-    blankUI_draw_text_color(x + 30, y + 60, content, 0x000000);
-    blankUI_draw_button(x + width - 120, y + height - 50, 100, 32, (char*)"OK");
-}
-
-void blankUI_draw_topbar(char* app_title) {
-    (void)app_title;
-    blankUI_draw_menubar();
-}
-
-void blankUI_draw_search_bar(int x, int y, int width) {
-    draw_rect_rounded(x, y, width, 28, 14, 0xFFFFFF, 180);
-    draw_rect_rounded(x, y, width, 28, 14, 0x000000, 40);
-    blankUI_draw_text_color(x + 10, y + 8, (char*)"Search...", 0x666666);
-}
-
-void blankUI_draw_dropdown(int x, int y, char** items, int item_count) {
-    (void)x; (void)y; (void)items; (void)item_count;
-}
-void blankUI_draw_slider(int x, int y, int width, float value, char* label) {
-    (void)x; (void)y; (void)width; (void)value; (void)label;
-}
-void blankUI_draw_toggle_switch(int x, int y, bool is_on, char* label) {
-    (void)x; (void)y; (void)is_on; (void)label;
-}
-
-void blankUI_draw_progress_bar(int x, int y, int width, float percentage) {
-    if (percentage < 0.0f) percentage = 0.0f;
-    if (percentage > 1.0f) percentage = 1.0f;
-    draw_rect_rounded(x, y, width, 8, 4, 0xDDDDDD, 255);
-    int fill_w = (int)(width * percentage);
-    if (fill_w > 0) {
-        draw_rect_rounded(x, y, fill_w, 8, 4, 0x007AFF, 255);
-    }
-}
-
-void blankUI_draw_toast(char* title, char* message) {
-    if (!title && !message) return;
-    int toast_w = 360;
-    int toast_h = 66;
-    int toast_x = (screen_width - toast_w) / 2;
-    int toast_y = 36;
-
-    dui_shadow(toast_x, toast_y, toast_w, toast_h, 14, 8, 0x000000, 70);
-    draw_frosted_glass_rounded(toast_x, toast_y, toast_w, toast_h, 14, 0x1E1E2E, 235);
-    draw_rect_rounded(toast_x, toast_y, toast_w, toast_h, 14, 0xFFFFFF, 35);
-
-    if (title) {
-        blankUI_draw_text_color(toast_x + 18, toast_y + 14, title, 0xFFFFFF);
-    }
-    if (message) {
-        blankUI_draw_text_color(toast_x + 18, toast_y + 36, message, 0xA6ADC8);
-    }
-}
+// Legacy compatibility stubs (in case external callers still reference them)
+void blankUI_set_cursor_type(int type) { (void)type; }
+void blankUI_draw_menubar(void) {}
+void blankUI_draw_dock(void) {}
+int blankUI_hit_test_dock(int cx, int cy) { (void)cx; (void)cy; return -1; }
 
 } // extern "C"
