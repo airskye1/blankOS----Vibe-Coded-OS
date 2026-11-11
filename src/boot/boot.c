@@ -11,6 +11,7 @@ typedef struct {
     uint32_t width;
     uint32_t height;
     uint32_t pixels_per_scanline;
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
 } FramebufferInfo;
 
 /*
@@ -35,13 +36,16 @@ EFI_STATUS __attribute__((sysv_abi)) efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
     EFI_GUID gopGuid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
 
-    /* Immediate sign-of-life Ã¢â‚¬â€ if this prints, the ABI is correct */
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"BlankOS UEFI Hybrid Boot Loader v1.2.9\r\n");
+    /* CRITICAL: Disable UEFI firmware watchdog timer so the VM never resets after 5 minutes */
+    SystemTable->BootServices->SetWatchdogTimer(0, 0, 0, NULL);
+
+    /* Immediate sign-of-life */
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"BlankOS UEFI Hybrid Boot Loader v1.3.0\r\n");
     SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"--------------------------------------\r\n");
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"  Welcome to BlankOS v1.2.9 Bootloader  \r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"  Welcome to BlankOS v1.3.0 Bootloader  \r\n");
     SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"========================================\r\n\r\n");
 
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ OK ] UEFI Firmware Detected.\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ OK ] UEFI Firmware Detected & Watchdog Disabled.\r\n");
     SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ OK ] Locating Graphics Output Protocol (GOP)...\r\n");
 
     /* Retrieve the Graphics Output Protocol (GOP) handle */
@@ -52,28 +56,33 @@ EFI_STATUS __attribute__((sysv_abi)) efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM
         
         // 1. Search for 1024x768 to match the standard UI layouts
         for (UINT32 i = 0; i < gop->Mode->MaxMode; i++) {
-            EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
-            UINTN sizeOfInfo;
-            if (gop->QueryMode(gop, i, &sizeOfInfo, &info) == EFI_SUCCESS) {
+            EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info = NULL;
+            UINTN sizeOfInfo = 0;
+            if (gop->QueryMode(gop, i, &sizeOfInfo, &info) == EFI_SUCCESS && info != NULL) {
                 if (info->HorizontalResolution == 1024 && info->VerticalResolution == 768) {
                     best_mode = i;
                     mode_found = TRUE;
+                    SystemTable->BootServices->FreePool(info);
                     break;
                 }
+                SystemTable->BootServices->FreePool(info);
             }
         }
         
-        // 2. Fallback to 1280x800
+        // 2. Fallback to 1280x800 or 1280x720
         if (!mode_found) {
             for (UINT32 i = 0; i < gop->Mode->MaxMode; i++) {
-                EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
-                UINTN sizeOfInfo;
-                if (gop->QueryMode(gop, i, &sizeOfInfo, &info) == EFI_SUCCESS) {
-                    if (info->HorizontalResolution == 1280 && info->VerticalResolution == 800) {
+                EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info = NULL;
+                UINTN sizeOfInfo = 0;
+                if (gop->QueryMode(gop, i, &sizeOfInfo, &info) == EFI_SUCCESS && info != NULL) {
+                    if ((info->HorizontalResolution == 1280 && info->VerticalResolution == 800) ||
+                        (info->HorizontalResolution == 1280 && info->VerticalResolution == 720)) {
                         best_mode = i;
                         mode_found = TRUE;
+                        SystemTable->BootServices->FreePool(info);
                         break;
                     }
+                    SystemTable->BootServices->FreePool(info);
                 }
             }
         }
@@ -82,14 +91,15 @@ EFI_STATUS __attribute__((sysv_abi)) efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM
         if (!mode_found) {
             UINT32 max_res = 0;
             for (UINT32 i = 0; i < gop->Mode->MaxMode; i++) {
-                EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
-                UINTN sizeOfInfo;
-                if (gop->QueryMode(gop, i, &sizeOfInfo, &info) == EFI_SUCCESS) {
+                EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info = NULL;
+                UINTN sizeOfInfo = 0;
+                if (gop->QueryMode(gop, i, &sizeOfInfo, &info) == EFI_SUCCESS && info != NULL) {
                     UINT32 res = info->HorizontalResolution * info->VerticalResolution;
                     if (res > max_res) {
                         max_res = res;
                         best_mode = i;
                     }
+                    SystemTable->BootServices->FreePool(info);
                 }
             }
         }
@@ -100,7 +110,8 @@ EFI_STATUS __attribute__((sysv_abi)) efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM
         fb_info.width = gop->Mode->Info->HorizontalResolution;
         fb_info.height = gop->Mode->Info->VerticalResolution;
         fb_info.pixels_per_scanline = gop->Mode->Info->PixelsPerScanLine;
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ OK ] Graphics Mode Initialized successfully (Highest Resolution).\r\n");
+        fb_info.gop = gop;
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ OK ] Graphics Mode Initialized successfully.\r\n");
     } else {
         SystemTable->ConOut->OutputString(SystemTable->ConOut, (CHAR16*)L"[ WARN ] GOP not found! Defaulting to Text Mode.\r\n");
     }
@@ -110,7 +121,7 @@ EFI_STATUS __attribute__((sysv_abi)) efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM
     /* Call kernel_main with the SystemTable and our GOP Framebuffer details */
     kernel_main(SystemTable, &fb_info);
 
-    /* Fallback halt Ã¢â‚¬â€ should never reach here */
+    /* Fallback halt - should never reach here */
     while(1) { __asm__ volatile("hlt"); }
     return EFI_SUCCESS;
 }

@@ -22,12 +22,23 @@ extern void init_blankUI_toolkit(void);
 void swap_buffers() {
     if (!framebuffer || !backbuffer) return;
     
-    // Fast 64-bit aligned CPU copy (optimized software fallback)
-    uint64_t* dst = (uint64_t*)framebuffer;
-    uint64_t* src = (uint64_t*)backbuffer;
-    int count = (screen_width * screen_height * 4) / 8;
-    for (int i = 0; i < count; i++) {
-        dst[i] = src[i];
+    if (pixels_per_scanline == screen_width) {
+        // Fast 64-bit aligned CPU copy
+        uint64_t* dst = (uint64_t*)framebuffer;
+        uint64_t* src = (uint64_t*)backbuffer;
+        int count = (screen_width * screen_height * 4) / 8;
+        for (int i = 0; i < count; i++) {
+            dst[i] = src[i];
+        }
+    } else {
+        // Pitch-aware row copy for arbitrary scanline stride
+        for (int y = 0; y < screen_height; y++) {
+            uint32_t* dst_row = (uint32_t*)framebuffer + (y * pixels_per_scanline);
+            uint32_t* src_row = backbuffer + (y * screen_width);
+            for (int x = 0; x < screen_width; x++) {
+                dst_row[x] = src_row[x];
+            }
+        }
     }
     
     // Hardware accelerated presentation

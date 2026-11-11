@@ -125,21 +125,30 @@ extern "C" {
     }
 
     bool format_disk_gpt_fat32(EFI_SYSTEM_TABLE *SystemTable, EFI_BLOCK_IO_PROTOCOL* BlockIo) {
-        if (!BlockIo || !BlockIo->Media || BlockIo->Media->ReadOnly) return false;
+        if (!SystemTable || !BlockIo || !BlockIo->Media || BlockIo->Media->ReadOnly) return false;
         
         uint32_t block_size = BlockIo->Media->BlockSize;
-        if (block_size != 512) return false; // For simplicity, only support 512 byte sectors
+        if (block_size != 512) return false; // Standard 512-byte sector support
 
         uint64_t last_lba = BlockIo->Media->LastBlock;
         if (last_lba < 100000) return false; // Disk too small (needs > 50MB)
 
-        uint8_t buffer[512]; // We'll reuse this 512-byte buffer for sector writes
+        // Allocate 8 pages (32KB) of aligned memory from UEFI for scratch buffers (prevents stack overflow)
+        EFI_PHYSICAL_ADDRESS scratch_phys = 0;
+        EFI_STATUS status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 8, &scratch_phys);
+        if (EFI_ERROR(status) || scratch_phys == 0) return false;
+
+        uint8_t* sector_buf = (uint8_t*)scratch_phys;              // 512 bytes
+        uint8_t* part_array = (uint8_t*)(scratch_phys + 4096);      // 16384 bytes (16KB)
+        uint8_t* zeros      = (uint8_t*)(scratch_phys + 20480);     // 4096 bytes zero buffer
+
+        memset8(zeros, 0, 4096);
 
         // ----------------------------------------------------
         // 1. Protective MBR (LBA 0)
         // ----------------------------------------------------
-        memset8(buffer, 0, 512);
-        MasterBootRecord* mbr = (MasterBootRecord*)buffer;
+        memset8(sector_buf, 0, 512);
+        MasterBootRecord* mbr = (MasterBootRecord*)sector_buf;
         mbr->partitions[0].boot_indicator = 0;
         mbr->partitions[0].start_head = 0;
         mbr->partitions[0].start_sector = 2;
@@ -151,26 +160,25 @@ extern "C" {
         mbr->partitions[0].starting_lba = 1;
         mbr->partitions[0].size_in_lba = (last_lba > 0xFFFFFFFF) ? 0xFFFFFFFF : (uint32_t)last_lba;
         mbr->signature = 0xAA55;
-        if (!write_blocks(BlockIo, 0, 512, buffer)) return false;
+        if (!write_blocks(BlockIo, 0, 512, sector_buf)) {
+            SystemTable->BootServices->FreePages(scratch_phys, 8);
+            return false;
+        }
 
         // ----------------------------------------------------
-        // 2. GPT Partition Entries (LBA 2..33)
+        // 2. GPT Partition Entries (LBA 2..33 & Backup at last_lba - 32)
         // ----------------------------------------------------
-        // We want a single partition spanning the whole usable space.
         uint64_t first_usable_lba = 34;
         uint64_t last_usable_lba = last_lba - 33;
-        uint64_t partition_start = 2048; // Align to 1MB
+        uint64_t partition_start = 2048; // Align partition to 1MB
         if (partition_start < first_usable_lba) partition_start = first_usable_lba;
         uint64_t partition_end = last_usable_lba;
         uint64_t partition_size_lba = partition_end - partition_start + 1;
 
         // EFI System Partition GUID: C12A7328-F81F-11D2-BA4B-00A0C93EC93B
         EFI_GUID esp_guid = {0xC12A7328, 0xF81F, 0x11D2, {0xBA, 0x4B, 0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B}};
-        EFI_GUID unique_guid = {0x12345678, 0x1234, 0x1234, {0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC}}; // Static for now
+        EFI_GUID unique_guid = {0x12345678, 0xABCD, 0xEF01, {0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01}};
 
-        // Create the 128-byte partition entry array (we need 128 entries = 32 sectors of 512 bytes)
-        // Let's just build it in a 16KB buffer
-        uint8_t part_array[16384];
         memset8(part_array, 0, 16384);
         GptPartitionEntry* entry = (GptPartitionEntry*)part_array;
         entry->partition_type_guid = esp_guid;
@@ -179,19 +187,25 @@ extern "C" {
         entry->ending_lba = partition_end;
         entry->attributes = 0;
         
-        // Name: "EFI System"
-        const CHAR16* name = (const CHAR16*)L"EFI System";
+        const CHAR16* name = (const CHAR16*)L"BlankOS EFI";
         for (int i=0; name[i]; i++) entry->partition_name[i] = name[i];
 
         uint32_t part_array_crc = calculate_crc32(part_array, 16384);
 
-        if (!write_blocks(BlockIo, 2, 16384, part_array)) return false;
+        // Write Primary Partition Array (LBA 2..33)
+        if (!write_blocks(BlockIo, 2, 16384, part_array)) {
+            SystemTable->BootServices->FreePages(scratch_phys, 8);
+            return false;
+        }
+
+        // Write Backup Partition Array (last_lba - 32 .. last_lba - 1)
+        write_blocks(BlockIo, last_lba - 32, 16384, part_array);
 
         // ----------------------------------------------------
-        // 3. GPT Header (LBA 1)
+        // 3. Primary GPT Header (LBA 1) & Backup GPT Header (LBA last_lba)
         // ----------------------------------------------------
-        memset8(buffer, 0, 512);
-        GptHeader* gpt = (GptHeader*)buffer;
+        memset8(sector_buf, 0, 512);
+        GptHeader* gpt = (GptHeader*)sector_buf;
         gpt->signature = 0x5452415020494645ULL; // "EFI PART"
         gpt->revision = 0x00010000;
         gpt->header_size = 92;
@@ -200,30 +214,33 @@ extern "C" {
         gpt->first_usable_lba = first_usable_lba;
         gpt->last_usable_lba = last_usable_lba;
         
-        // Disk GUID
         EFI_GUID disk_guid = {0x87654321, 0x4321, 0x4321, {0x21, 0x43, 0x21, 0x43, 0x65, 0x87, 0xA9, 0xCB}};
         gpt->disk_guid = disk_guid;
-        
         gpt->partition_entry_lba = 2;
         gpt->num_partition_entries = 128;
         gpt->size_of_partition_entry = 128;
         gpt->partition_entry_array_crc32 = part_array_crc;
-
-        // Calculate Header CRC
         gpt->header_crc32 = 0;
         gpt->header_crc32 = calculate_crc32((uint8_t*)gpt, 92);
         
-        if (!write_blocks(BlockIo, 1, 512, buffer)) return false;
+        if (!write_blocks(BlockIo, 1, 512, sector_buf)) {
+            SystemTable->BootServices->FreePages(scratch_phys, 8);
+            return false;
+        }
 
-        // (We skip writing the backup GPT at the end of the disk for simplicity in this demo)
+        // Write Backup GPT Header at last_lba
+        gpt->my_lba = last_lba;
+        gpt->alternate_lba = 1;
+        gpt->partition_entry_lba = last_lba - 32;
+        gpt->header_crc32 = 0;
+        gpt->header_crc32 = calculate_crc32((uint8_t*)gpt, 92);
+        write_blocks(BlockIo, last_lba, 512, sector_buf);
 
         // ----------------------------------------------------
-        // 4. FAT32 Formatting (Starts at partition_start)
+        // 4. FAT32 Boot Sector (Starts at partition_start)
         // ----------------------------------------------------
-        memset8(buffer, 0, 512);
-        Fat32BootSector* vbr = (Fat32BootSector*)buffer;
-        
-        // JMP short 0x58, NOP
+        memset8(sector_buf, 0, 512);
+        Fat32BootSector* vbr = (Fat32BootSector*)sector_buf;
         vbr->jmp_boot[0] = 0xEB; vbr->jmp_boot[1] = 0x58; vbr->jmp_boot[2] = 0x90;
         
         const char* oem = "MSWIN4.1";
@@ -238,7 +255,6 @@ extern "C" {
         vbr->total_sectors_32 = partition_size_lba;
         
         uint32_t usable_sectors = partition_size_lba - vbr->reserved_sector_count;
-        // Approximation of FAT size:
         uint32_t fat_size = (usable_sectors / vbr->sectors_per_cluster) * 4 / 512 + 1;
         vbr->fat_size_32 = fat_size;
         
@@ -247,7 +263,7 @@ extern "C" {
         vbr->backup_boot_sector = 6;
         vbr->drive_number = 0x80;
         vbr->boot_signature = 0x29;
-        vbr->volume_id = 0x12345678;
+        vbr->volume_id = 0x544E414C; // "BLAN"
         
         const char* vol_label = "BLANKOS    ";
         for(int i=0; i<11; i++) vbr->volume_label[i] = vol_label[i];
@@ -257,59 +273,59 @@ extern "C" {
         
         vbr->boot_sector_signature = 0xAA55;
         
-        // Write Main VBR
-        if (!write_blocks(BlockIo, partition_start + 0, 512, buffer)) return false;
-        // Write Backup VBR
-        if (!write_blocks(BlockIo, partition_start + 6, 512, buffer)) return false;
+        write_blocks(BlockIo, partition_start + 0, 512, sector_buf); // Main VBR
+        write_blocks(BlockIo, partition_start + 6, 512, sector_buf); // Backup VBR
 
         // ----------------------------------------------------
         // 5. FAT32 FSInfo Sector
         // ----------------------------------------------------
-        memset8(buffer, 0, 512);
-        Fat32FsInfo* fsinfo = (Fat32FsInfo*)buffer;
+        memset8(sector_buf, 0, 512);
+        Fat32FsInfo* fsinfo = (Fat32FsInfo*)sector_buf;
         fsinfo->lead_sig = 0x41615252;
         fsinfo->struc_sig = 0x61417272;
-        fsinfo->free_count = 0xFFFFFFFF; // Unknown
-        fsinfo->nxt_free = 0xFFFFFFFF; // Unknown
+        fsinfo->free_count = 0xFFFFFFFF;
+        fsinfo->nxt_free = 0xFFFFFFFF;
         fsinfo->trail_sig = 0xAA550000;
         
-        if (!write_blocks(BlockIo, partition_start + 1, 512, buffer)) return false;
-        if (!write_blocks(BlockIo, partition_start + 7, 512, buffer)) return false;
+        write_blocks(BlockIo, partition_start + 1, 512, sector_buf);
+        write_blocks(BlockIo, partition_start + 7, 512, sector_buf);
 
         // ----------------------------------------------------
         // 6. FAT Tables
         // ----------------------------------------------------
-        // We only write the first sector of the FATs to initialize clusters 0, 1, and 2
-        memset8(buffer, 0, 512);
-        uint32_t* fat_entries = (uint32_t*)buffer;
+        memset8(sector_buf, 0, 512);
+        uint32_t* fat_entries = (uint32_t*)sector_buf;
         fat_entries[0] = 0x0FFFFFF8; // Cluster 0: Media type
         fat_entries[1] = 0x0FFFFFFF; // Cluster 1: EOF (reserved)
-        fat_entries[2] = 0x0FFFFFFF; // Cluster 2: Root Directory (EOF for now)
+        fat_entries[2] = 0x0FFFFFFF; // Cluster 2: Root Directory (EOF)
 
         uint64_t fat1_start = partition_start + vbr->reserved_sector_count;
         uint64_t fat2_start = fat1_start + fat_size;
         
-        // Zero out the FAT sectors (only the first few to be safe and fast)
-        uint8_t zeros[512];
-        memset8(zeros, 0, 512);
-        for(uint32_t i = 1; i < 32; i++) {
+        // Zero out initial FAT sectors
+        for(uint32_t i = 1; i < 16; i++) {
             write_blocks(BlockIo, fat1_start + i, 512, zeros);
             write_blocks(BlockIo, fat2_start + i, 512, zeros);
         }
 
-        // Write initialized FAT start
-        if (!write_blocks(BlockIo, fat1_start, 512, buffer)) return false;
-        if (!write_blocks(BlockIo, fat2_start, 512, buffer)) return false;
+        write_blocks(BlockIo, fat1_start, 512, sector_buf);
+        write_blocks(BlockIo, fat2_start, 512, sector_buf);
 
         // ----------------------------------------------------
         // 7. Root Directory (Cluster 2)
         // ----------------------------------------------------
         uint64_t data_start = fat2_start + fat_size;
-        // Zero out the first cluster of the root directory
         for (int i = 0; i < vbr->sectors_per_cluster; i++) {
-            if (!write_blocks(BlockIo, data_start + i, 512, zeros)) return false;
+            write_blocks(BlockIo, data_start + i, 512, zeros);
         }
 
+        // Flush hardware block cache
+        if (BlockIo->FlushBlocks) {
+            BlockIo->FlushBlocks(BlockIo);
+        }
+
+        // Free scratch memory
+        SystemTable->BootServices->FreePages(scratch_phys, 8);
         return true;
     }
 }

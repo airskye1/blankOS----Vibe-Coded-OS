@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <stdint.h>
 #include <efi.h>
 
@@ -40,10 +41,29 @@ extern "C" {
         uint32_t year;
     } RTC_Time;
 
+    extern EFI_SYSTEM_TABLE *gSystemTable;
+
     void get_rtc_time(RTC_Time *time) {
-        uint8_t last_second, last_minute, last_hour, last_day, last_month, last_year, registerB;
-        
-        while (get_update_in_progress_flag());
+        if (!time) return;
+
+        // 1. Primary: Use UEFI RuntimeServices GetTime which is guaranteed not to lock up
+        if (gSystemTable && gSystemTable->RuntimeServices && gSystemTable->RuntimeServices->GetTime) {
+            EFI_TIME efi_time;
+            EFI_STATUS status = gSystemTable->RuntimeServices->GetTime(&efi_time, NULL);
+            if (status == EFI_SUCCESS) {
+                time->second = efi_time.Second;
+                time->minute = efi_time.Minute;
+                time->hour = efi_time.Hour;
+                time->day = efi_time.Day;
+                time->month = efi_time.Month;
+                time->year = efi_time.Year;
+                return;
+            }
+        }
+
+        // 2. Fallback: CMOS RTC read with strict iteration bounds (max 100 iterations)
+        int timeout = 100;
+        while (get_update_in_progress_flag() && --timeout > 0);
         
         time->second = rtc_read_register(0x00);
         time->minute = rtc_read_register(0x02);
@@ -51,28 +71,8 @@ extern "C" {
         time->day = rtc_read_register(0x07);
         time->month = rtc_read_register(0x08);
         time->year = rtc_read_register(0x09);
-        
-        do {
-            last_second = time->second;
-            last_minute = time->minute;
-            last_hour = time->hour;
-            last_day = time->day;
-            last_month = time->month;
-            last_year = time->year;
-            
-            while (get_update_in_progress_flag());
-            
-            time->second = rtc_read_register(0x00);
-            time->minute = rtc_read_register(0x02);
-            time->hour = rtc_read_register(0x04);
-            time->day = rtc_read_register(0x07);
-            time->month = rtc_read_register(0x08);
-            time->year = rtc_read_register(0x09);
-        } while ((last_second != time->second) || (last_minute != time->minute) || (last_hour != time->hour) ||
-                 (last_day != time->day) || (last_month != time->month) || (last_year != time->year));
 
-        registerB = rtc_read_register(0x0B);
-
+        uint8_t registerB = rtc_read_register(0x0B);
         if (!(registerB & 0x04)) {
             time->second = bcd_to_binary(time->second);
             time->minute = bcd_to_binary(time->minute);

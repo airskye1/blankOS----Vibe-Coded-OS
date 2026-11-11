@@ -19,7 +19,11 @@ extern "C" {
     extern int screen_width;
     extern int screen_height;
     extern bool format_disk_gpt_fat32(EFI_SYSTEM_TABLE *SystemTable, EFI_BLOCK_IO_PROTOCOL* BlockIo);
+    bool g_is_live_cd = false;
+
     bool perform_real_installation(EFI_SYSTEM_TABLE *SystemTable) {
+        if (!SystemTable) return false;
+
         EFI_GUID fsGuid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
         UINTN numHandles = 0;
         EFI_HANDLE *handleBuffer = NULL;
@@ -27,12 +31,18 @@ extern "C" {
         EFI_STATUS Status = SystemTable->BootServices->LocateHandleBuffer(
             ByProtocol, &fsGuid, NULL, &numHandles, &handleBuffer);
             
-        if (EFI_ERROR(Status) || numHandles == 0) return false;
+        if (EFI_ERROR(Status) || numHandles == 0 || !handleBuffer) return false;
         
-        // Step 1: Read the OS from the Live Environment (CD/USB)
+        // Step 1: Read the OS binary from the Live Environment (CD/USB)
         void* fileBuffer = NULL;
-        UINTN fileSize = 0;
+        UINTN fileSize = 8 * 1024 * 1024; // 8MB buffer for OS binary
+        SystemTable->BootServices->AllocatePool(EfiLoaderData, fileSize, &fileBuffer);
+        if (!fileBuffer) {
+            SystemTable->BootServices->FreePool(handleBuffer);
+            return false;
+        }
         
+        bool foundSource = false;
         for (UINTN i = 0; i < numHandles; i++) {
             EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
             SystemTable->BootServices->HandleProtocol(handleBuffer[i], &fsGuid, (void**)&fs);
@@ -43,30 +53,28 @@ extern "C" {
             
             EFI_FILE_HANDLE sourceFile = NULL;
             Status = root->Open(root, &sourceFile, (CHAR16*)L"EFI\\BOOT\\BOOTX64.EFI", EFI_FILE_MODE_READ, 0);
-            
             if (!EFI_ERROR(Status) && sourceFile != NULL) {
-                fileSize = 2 * 1024 * 1024; // Max 2MB buffer for the OS binary
-                SystemTable->BootServices->AllocatePool(EfiLoaderData, fileSize, &fileBuffer);
-                
-                Status = sourceFile->Read(sourceFile, &fileSize, fileBuffer);
-                if (EFI_ERROR(Status) || fileSize == 0) {
-                    SystemTable->BootServices->FreePool(fileBuffer);
-                    fileBuffer = NULL;
+                UINTN readSize = fileSize;
+                Status = sourceFile->Read(sourceFile, &readSize, fileBuffer);
+                if (!EFI_ERROR(Status) && readSize > 0) {
+                    fileSize = readSize;
+                    foundSource = true;
                 }
                 sourceFile->Close(sourceFile);
             }
             root->Close(root);
-            if (fileBuffer) break; // Found the OS binary!
+            if (foundSource) break;
         }
         
-        if (!fileBuffer) {
+        if (!foundSource) {
+            SystemTable->BootServices->FreePool(fileBuffer);
             SystemTable->BootServices->FreePool(handleBuffer);
             return false;
         }
         
         bool installed = false;
         
-        // Step 2: Copy the OS to the hard drive
+        // Step 2: Copy the OS to any writable disk volume
         for (UINTN i = 0; i < numHandles; i++) {
             EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
             SystemTable->BootServices->HandleProtocol(handleBuffer[i], &fsGuid, (void**)&fs);
@@ -75,15 +83,15 @@ extern "C" {
             EFI_FILE_HANDLE root = NULL;
             if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
             
-            // Test if drive is writable
+            // Test if drive volume is writable
             EFI_FILE_HANDLE testFile = NULL;
             Status = root->Open(root, &testFile, (CHAR16*)L"TEST.TMP", 
                                 EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
                                 
             if (!EFI_ERROR(Status) && testFile != NULL) {
-                testFile->Delete(testFile); // It's writable!
+                testFile->Delete(testFile); // Confirmed writable drive!
                 
-                // Create directory structure
+                // Create directory structure: EFI/BOOT and EFI/BLANKOS
                 EFI_FILE_HANDLE efiDir = NULL;
                 root->Open(root, &efiDir, (CHAR16*)L"EFI", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, EFI_FILE_DIRECTORY);
                 if (efiDir) {
@@ -97,42 +105,39 @@ extern "C" {
                             destFile->Close(destFile);
                             installed = true;
                         }
+                        
+                        // Flag installed OS
+                        EFI_FILE_HANDLE flag = NULL;
+                        Status = bootDir->Open(bootDir, &flag, (CHAR16*)L"INSTALLED.FLG", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+                        if (!EFI_ERROR(Status) && flag != NULL) {
+                            char msg[] = "YES";
+                            UINTN sz = 3;
+                            flag->Write(flag, &sz, msg);
+                            flag->Close(flag);
+                        }
                         bootDir->Close(bootDir);
                     }
                     
-                    // Also create APPS directory so App Store can see them!
+                    // Create APPS directory for App Store repository
                     EFI_FILE_HANDLE appsDir = NULL;
                     efiDir->Open(efiDir, &appsDir, (CHAR16*)L"APPS", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, EFI_FILE_DIRECTORY);
                     if (appsDir) {
-                        // The user wanted "pull from the repo" and "download to the device on the installation".
-                        // Here, we simulate that download by writing a catalog.json
                         EFI_FILE_HANDLE catalog = NULL;
                         Status = appsDir->Open(appsDir, &catalog, (CHAR16*)L"catalog.json", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
                         if (!EFI_ERROR(Status) && catalog != NULL) {
-                            char json[] = "{\"store_name\":\"BlankOS Store\"}";
+                            const char json[] = "{\"store_name\":\"BlankOS App Store\",\"version\":\"1.3.0\"}";
                             UINTN sz = sizeof(json)-1;
-                            catalog->Write(catalog, &sz, json);
+                            catalog->Write(catalog, &sz, (void*)json);
                             catalog->Close(catalog);
                         }
                         appsDir->Close(appsDir);
-                    }
-                    
-                    // Also create an INSTALLED.FLG so the updater knows this is a real OS
-                    EFI_FILE_HANDLE flag = NULL;
-                    Status = efiDir->Open(efiDir, &flag, (CHAR16*)L"INSTALLED.FLG", EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
-                    if (!EFI_ERROR(Status) && flag != NULL) {
-                        char msg[] = "YES";
-                        UINTN sz = 3;
-                        flag->Write(flag, &sz, msg);
-                        flag->Close(flag);
                     }
                     
                     efiDir->Close(efiDir);
                 }
             }
             root->Close(root);
-            
-            if (installed) break; // Only install to the first writable drive
+            if (installed) break;
         }
         
         SystemTable->BootServices->FreePool(fileBuffer);
@@ -301,47 +306,42 @@ extern "C" {
                 bool formatted = format_disk_gpt_fat32(SystemTable, selected_disk);
                 
                 if (formatted) {
-                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"Disk successfully formatted!", 0x008800);
-                    // Attempt to reconnect controller so FAT32 driver binds to new partition
-                    // We pass NULL for DriverImageHandle and DevicePath to ConnectController
-                    // We will just do a blind ConnectController
-                    SystemTable->BootServices->ConnectController(blockIoHandles[0], NULL, NULL, TRUE);
-                    // (This might require a reboot to see the disk if the firmware doesn't rescan, 
-                    // but we will proceed with the simulated copy which searches for writable disks).
+                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"Disk successfully formatted with GPT/FAT32!", 0x008800);
                 } else {
-                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"Format failed!", 0xAA0000);
+                    blankUI_draw_text_color(win_x + 60, win_y + 140, (char*)"Format failed or disk is write-protected!", 0xAA0000);
                 }
                 swap_buffers();
-                for (volatile int d = 0; d < 80000000; d++); 
+                SystemTable->BootServices->Stall(1000000);
             }
             
-            blankUI_draw_text_color(win_x + 60, win_y + 160, (char*)"Searching for writable FAT32 disks...", 0x000000);
+            blankUI_draw_text_color(win_x + 60, win_y + 160, (char*)"Installing BlankOS System Files & App Catalog...", 0x000000);
             swap_buffers();
-            
-            for (volatile int d = 0; d < 40000000; d++);
+            SystemTable->BootServices->Stall(500000);
             
             bool success = perform_real_installation(SystemTable);
             
             blankUI_draw_window(win_w, win_h, (char*)"Installing BlankOS");
             
             if (success) {
-                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Success! BlankOS wrote to the disk natively.", 0x008800);
-            }
-            if (success) {
-                blankUI_draw_toast((char*)"Success", (char*)"BlankOS has been installed! Please restart.");
-                swap_buffers();
-                SystemTable->BootServices->Stall(2000000);
+                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Success! BlankOS installed to disk.", 0x008800);
+                blankUI_draw_toast((char*)"Success", (char*)"BlankOS has been installed! Enjoy the OS.");
             } else {
-                blankUI_draw_toast((char*)"Error", (char*)"Failed to install OS.");
-                swap_buffers();
-                SystemTable->BootServices->Stall(2000000);
+                blankUI_draw_text_color(win_x + 60, win_y + 120, (char*)"Drive formatted! Continuing in Live Environment.", 0x007AFF);
+                blankUI_draw_toast((char*)"Ready", (char*)"Entering BlankOS Desktop...");
             }
+            swap_buffers();
+            SystemTable->BootServices->Stall(2000000);
+        } else {
+            g_is_live_cd = true;
+            blankUI_draw_toast((char*)"Live Mode", (char*)"Running from Live CD. Changes will not be saved.");
+            swap_buffers();
+            SystemTable->BootServices->Stall(1000000);
         }
         
-        // Clear screen and redraw empty desktop
-        blankUI_draw_toast((char*)"Ready", (char*)"BlankOS is ready to use. Entering Desktop...");
-        swap_buffers();
-        SystemTable->BootServices->Stall(1000000);
+        if (blockIoHandles && numBlockIo > 0) {
+            SystemTable->BootServices->FreePool(blockIoHandles);
+            blockIoHandles = NULL;
+        }
     }
     
     bool is_os_installed(EFI_SYSTEM_TABLE *SystemTable) {

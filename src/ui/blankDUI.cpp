@@ -372,40 +372,124 @@ extern "C" {
         return (scale == 1) ? 16 : ((scale == 2) ? 24 : 32);
     }
 
-    // --- Programmatic Icons ---
+    // --- High Fidelity Programmatic Icons ---
     void dui_icon_folder(int x, int y, int size) {
-        dui_rect_rounded(x + size/10, y + size/10, size*8/10, size*7/10, size/10, 0x007AFF, 255);
+        // macOS style friendly Finder face folder
+        int tab_w = size * 4 / 10;
+        int tab_h = size / 5;
+        dui_rect_rounded(x + size/10, y + size/10, tab_w, tab_h, 4, 0x0A84FF, 255);
+        dui_rect_rounded(x + size/10, y + size/5, size * 8 / 10, size * 7 / 10, 6, 0x007AFF, 255);
+        dui_rect_rounded(x + size*3/20, y + size*7/20, size * 7 / 10, size / 2, 4, 0x64D2FF, 255);
+        // Eyes and smile
+        int cx = x + size/2;
+        int cy = y + size*3/5;
+        dui_rect(cx - size/7, cy - size/10, 2, 4, 0x004080, 255);
+        dui_rect(cx + size/7, cy - size/10, 2, 4, 0x004080, 255);
+        dui_line(cx - size/8, cy + size/12, cx + size/8, cy + size/12, 0x004080, 2);
     }
+
     void dui_icon_gear(int x, int y, int size) {
-        dui_circle(x + size/2, y + size/2, size/3, 0x8E8E93, 255);
-        dui_circle(x + size/2, y + size/2, size/6, 0xFFFFFF, 255);
+        // Interlocking dual gears
+        int cx = x + size/2;
+        int cy = y + size/2;
+        int r = size * 3 / 10;
+        // Teeth
+        for (int a = 0; a < 8; a++) {
+            int tx = cx + ((a % 2 == 0) ? (r + 2) : -(r + 2));
+            int ty = cy + ((a / 2 % 2 == 0) ? (r + 2) : -(r + 2));
+            dui_rect(tx - 2, ty - 2, 4, 4, 0x8E8E93, 255);
+        }
+        dui_circle(cx, cy, r, 0xAEAEB2, 255);
+        dui_circle(cx, cy, r / 2, 0x48484A, 255);
+        dui_circle(cx, cy, r / 4, 0xE5E5EA, 255);
     }
+
     void dui_icon_globe(int x, int y, int size) {
-        dui_circle(x + size/2, y + size/2, size/3, 0x5AC8FA, 255);
-        dui_line(x + size/2, y + size/6, x + size/2, y + size*5/6, 0xFFFFFF, 2);
-        dui_line(x + size/6, y + size/2, x + size*5/6, y + size/2, 0xFFFFFF, 2);
+        // Safari style compass
+        int cx = x + size/2;
+        int cy = y + size/2;
+        int r = size * 7 / 20;
+        dui_circle(cx, cy, r, 0x007AFF, 255);
+        dui_circle(cx, cy, r - 2, 0xFFFFFF, 255);
+        dui_circle(cx, cy, r - 4, 0x1C1C1E, 255);
+        // Red and white needle
+        dui_line(cx, cy, cx + r/2, cy - r/2, 0xFF3B30, 2);
+        dui_line(cx, cy, cx - r/2, cy + r/2, 0xE5E5EA, 2);
+        dui_circle(cx, cy, 3, 0xFFFFFF, 255);
     }
+
     void dui_icon_store(int x, int y, int size) {
-        dui_rect_rounded(x + size/5, y + size/3, size*3/5, size/2, size/10, 0x007AFF, 255);
-        dui_circle_outline(x + size/2, y + size/3, size/6, 0x007AFF, 2);
+        // App Store iconic blue tile with stylized geometric 'A'
+        dui_rect_rounded(x + size/10, y + size/10, size*8/10, size*8/10, 8, 0x0A84FF, 255);
+        // Draw the white 'A' tripod
+        int cx = x + size/2;
+        int cy = y + size/2;
+        dui_line(cx - size/5, cy + size/4, cx, cy - size/4, 0xFFFFFF, 3);
+        dui_line(cx + size/5, cy + size/4, cx, cy - size/4, 0xFFFFFF, 3);
+        dui_line(cx - size/6, cy + size/16, cx + size/6, cy + size/16, 0xFFFFFF, 3);
     }
+
     void dui_icon_terminal(int x, int y, int size) {
-        dui_rect_rounded(x + size/10, y + size/10, size*8/10, size*8/10, size/10, 0x1C1C1E, 255);
-        dui_text(x + size/4, y + size/3, ">_", 0xFFFFFF, size/20 > 0 ? size/20 : 1);
+        // Sleek dark terminal window
+        dui_rect_rounded(x + size/10, y + size/10, size*8/10, size*8/10, 8, 0x1E1E2E, 255);
+        dui_rect(x + size/10, y + size/10, size*8/10, size/5, 0x313244, 255);
+        // Traffic dots
+        dui_circle(x + size/6, y + size/5 - 3, 2, 0xFF5F56, 255);
+        dui_circle(x + size/6 + 6, y + size/5 - 3, 2, 0xFFBD2E, 255);
+        dui_circle(x + size/6 + 12, y + size/5 - 3, 2, 0x27C93F, 255);
+        // Prompt >_
+        dui_text(x + size/5, y + size*2/5, ">_", 0xA6E3A1, 1);
     }
+
     void dui_icon_trash(int x, int y, int size) {
-        dui_rect(x + size/3, y + size/5, size/3, size*3/5, 0xE5E5EA, 255);
-        dui_rect(x + size/4, y + size/5, size/2, size/10, 0x333333, 255);
+        int cx = x + size/2;
+        int cy = y + size/2;
+        // Trash lid
+        dui_rect_rounded(cx - size/4, cy - size/3, size/2, 4, 2, 0x8E8E93, 255);
+        dui_rect(cx - size/10, cy - size/3 - 3, size/5, 3, 0x8E8E93, 255);
+        // Can body
+        dui_rect_rounded(cx - size/5, cy - size/4, size*2/5, size/2, 4, 0xC7C7CC, 255);
+        // Fluted vertical ribs
+        dui_line(cx - size/10, cy - size/6, cx - size/10, cy + size/5, 0x8E8E93, 1);
+        dui_line(cx, cy - size/6, cx, cy + size/5, 0x8E8E93, 1);
+        dui_line(cx + size/10, cy - size/6, cx + size/10, cy + size/5, 0x8E8E93, 1);
     }
+
     void dui_icon_calculator(int x, int y, int size) {
-        dui_rect_rounded(x + size/5, y + size/5, size*3/5, size*3/5, size/10, 0xFF9500, 255);
+        dui_rect_rounded(x + size/10, y + size/10, size*8/10, size*8/10, 8, 0xFF9500, 255);
+        // Display bar
+        dui_rect_rounded(x + size/5, y + size/5, size*3/5, size/6, 3, 0x333333, 255);
+        // 4 Keypad buttons (+, -, *, =)
+        int bx = x + size/4;
+        int by = y + size*9/20;
+        dui_rect(bx, by, size/7, size/7, 0xFFFFFF, 255);
+        dui_rect(bx + size/4, by, size/7, size/7, 0xFFFFFF, 255);
+        dui_rect(bx, by + size/4, size/7, size/7, 0xFFFFFF, 255);
+        dui_rect(bx + size/4, by + size/4, size/7, size/7, 0xFFFFFF, 255);
     }
+
     void dui_icon_weather(int x, int y, int size) {
-        dui_circle(x + size/2, y + size/2, size/4, 0xFFD60A, 255);
+        int cx = x + size/2;
+        int cy = y + size/2;
+        // Radiant golden sun
+        dui_circle(cx + size/10, cy - size/10, size/5, 0xFFCC00, 255);
+        // Fluffy white cloud overlapping
+        dui_circle(cx - size/8, cy + size/10, size/7, 0xFFFFFF, 255);
+        dui_circle(cx + size/12, cy + size/10, size/6, 0xFFFFFF, 255);
+        dui_rect_rounded(cx - size/6, cy + size/10, size/2, size/6, 4, 0xFFFFFF, 255);
     }
+
     void dui_icon_updater(int x, int y, int size) {
-        dui_line(x + size/2, y + size/4, x + size/2, y + size*3/4, 0xFFFFFF, 2);
+        int cx = x + size/2;
+        int cy = y + size/2;
+        dui_circle(cx, cy, size*7/20, 0x34C759, 255);
+        // Download arrow pointing down
+        dui_line(cx, cy - size/6, cx, cy + size/8, 0xFFFFFF, 3);
+        dui_line(cx - size/8, cy, cx, cy + size/8, 0xFFFFFF, 3);
+        dui_line(cx + size/8, cy, cx, cy + size/8, 0xFFFFFF, 3);
+        dui_line(cx - size/6, cy + size/4, cx + size/6, cy + size/4, 0xFFFFFF, 2);
     }
+
     void dui_icon_close(int x, int y, int size) {
         dui_line(x+size/4, y+size/4, x+size*3/4, y+size*3/4, 0x333333, 2);
         dui_line(x+size*3/4, y+size/4, x+size/4, y+size*3/4, 0x333333, 2);
@@ -417,7 +501,9 @@ extern "C" {
         dui_rect_outline(x+size/4, y+size/4, size/2, size/2, 0x333333, 2);
     }
 
-    // --- Wallpaper ---
+    // --- Dynamic Wallpaper Theme Engine ---
+    int g_wallpaper_theme = 0; // 0 = Ventura Indigo, 1 = Sunset Orange, 2 = Cyberpunk Neon, 3 = Slate Dark
+
     void dui_draw_wallpaper() {
         if (!backbuffer) return;
         for (int y = 0; y < screen_height; y++) {
@@ -425,10 +511,29 @@ extern "C" {
                 float fx = (float)x / screen_width;
                 float fy = (float)y / screen_height;
                 
-                uint32_t top_left = 0x1E1B4B; // Deep indigo
-                uint32_t top_right = 0x5B21B6; // Purple
-                uint32_t bot_left = 0xBE123C; // Rose
-                uint32_t bot_right = 0xF59E0B; // Amber
+                uint32_t top_left, top_right, bot_left, bot_right;
+
+                if (g_wallpaper_theme == 1) { // Sunset Horizon
+                    top_left  = 0x4A0E4E; // Deep Plum
+                    top_right = 0xC2185B; // Magenta
+                    bot_left  = 0xE65100; // Deep Orange
+                    bot_right = 0xFDD835; // Golden Yellow
+                } else if (g_wallpaper_theme == 2) { // Cyberpunk Neon
+                    top_left  = 0x0D1B2A; // Midnight Navy
+                    top_right = 0x1B263B; // Deep Slate
+                    bot_left  = 0x0077B6; // Ocean Blue
+                    bot_right = 0x00F5D4; // Neon Aqua
+                } else if (g_wallpaper_theme == 3) { // Minimalist Slate
+                    top_left  = 0x1C1C1E; // Space Grey
+                    top_right = 0x2C2C2E; // Dark Slate
+                    bot_left  = 0x3A3A3C; // Mid Grey
+                    bot_right = 0x1C1C1E; // Space Grey
+                } else { // 0 = Ventura Indigo & Warm Rose (Default)
+                    top_left  = 0x1E1B4B; // Deep indigo
+                    top_right = 0x5B21B6; // Purple
+                    bot_left  = 0xBE123C; // Rose
+                    bot_right = 0xF59E0B; // Amber
+                }
                 
                 uint32_t top = dui_color_lerp(top_left, top_right, fx);
                 uint32_t bot = dui_color_lerp(bot_left, bot_right, fx);
