@@ -130,7 +130,7 @@ static void set_status(const char* msg, uint32_t color) {
 static void render_overview(int px, int py, int pw, int ph, const BlankInputState* in) {
     probe_fw_vendor();
     dui_text(px, py, "System Overview", THEME_TEXT_PRIMARY, 2);
-    dui_text(px, py + 26, "BlankOS Horizon v2.0 (x86_64-uefi) - Bare-Metal Spatial Workspace", THEME_TEXT_SECONDARY, 1);
+    dui_text(px, py + 26, "BlankOS Horizon v3.0.0 (x86_64-uefi) - Bare-Metal Spatial Workspace", THEME_TEXT_SECONDARY, 1);
 
     int card_y = py + 52;
     int left_w = (pw * 62) / 100;

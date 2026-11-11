@@ -662,7 +662,7 @@ static bool stp_run_real_installation(
                                                prog, 0.92f, 0.94f, false);
         }
         if (!copied_cat) {
-            const char json[] = "{\"store_name\":\"BlankOS App Store\",\"version\":\"2.0.0\"}";
+            const char json[] = "{\"store_name\":\"BlankOS App Store\",\"version\":\"3.0.0\"}";
             if (stp_write_small_file(dst_apps, (CHAR16*)L"catalog.json", json, sizeof(json) - 1)) {
                 prog->files_copied++;
                 prog->bytes_copied += sizeof(json) - 1;

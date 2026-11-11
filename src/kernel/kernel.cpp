@@ -119,7 +119,7 @@ extern "C" void kernel_main(EFI_SYSTEM_TABLE *SystemTable, FramebufferInfo *fb_i
     gSystemTable = SystemTable;
     global_ST = SystemTable;
 
-    klog("[ KERNEL ] BlankOS Horizon Kernel v2.0 Booting...");
+    klog("[ KERNEL ] BlankOS Horizon Kernel v3.0.0 Booting...");
 
     // 1. Physical Memory Allocator
     memory_init_efi(SystemTable);
