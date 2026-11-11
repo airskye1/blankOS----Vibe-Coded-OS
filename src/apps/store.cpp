@@ -11,10 +11,10 @@
 #include "../kernel/input.h"
 #include "../kernel/net.h"
 #include "../kernel/audio.h"
+#include "../kernel/bloe_loader.h"
 
 extern "C" {
     extern EFI_SYSTEM_TABLE *gSystemTable;
-    extern bool load_and_run_elf(EFI_SYSTEM_TABLE *SystemTable, CHAR16* filename);
     extern void os_send_notification(const char* title, const char* message);
 }
 
@@ -31,6 +31,7 @@ typedef struct {
     char disk_path[96];
     uint32_t accent;
     bool is_elf;
+    bool is_bloe;
     bool installed;
     bool is_builtin_repo;
     uint32_t disk_bytes;
@@ -396,7 +397,8 @@ static void scan_dir_packages(EFI_FILE_PROTOCOL* root, const char* dir_rel) {
 
         bool is_elf = s_ends_with_i(fname, ".elf");
         bool is_pkg = s_ends_with_i(fname, ".pkg");
-        if (!is_elf && !is_pkg) continue;
+        bool is_bloe = s_ends_with_i(fname, ".bloe");
+        if (!is_elf && !is_pkg && !is_bloe) continue;
 
         char full_path[96];
         s_copy(full_path, dir_rel, sizeof(full_path));
@@ -416,15 +418,48 @@ static void scan_dir_packages(EFI_FILE_PROTOCOL* root, const char* dir_rel) {
         // Strip extension for clean display name
         s_copy(p->name, fname, sizeof(p->name));
         int nl = s_len(p->name);
-        if (nl > 4 && p->name[nl - 4] == '.') p->name[nl - 4] = '\0';
+        if (is_bloe && nl > 5 && p->name[nl - 5] == '.') p->name[nl - 5] = '\0';
+        else if (nl > 4 && p->name[nl - 4] == '.') p->name[nl - 4] = '\0';
 
-        s_copy(p->category, is_elf ? "ELF Binary" : "Package (.PKG)", sizeof(p->category));
-        s_copy(p->version, is_elf ? "ELF64" : "v1.0", sizeof(p->version));
-        s_copy(p->desc, is_elf ? "Native x86_64 ELF executable discovered on disk."
-                               : "BlankOS package manifest discovered on disk.", sizeof(p->desc));
+        s_copy(p->category, is_bloe ? "BLOE App" : (is_elf ? "ELF Binary" : "Package (.PKG)"), sizeof(p->category));
+        s_copy(p->version, is_bloe ? "v3.1" : (is_elf ? "ELF64" : "v1.0"), sizeof(p->version));
+        if (is_bloe) {
+            if (s_ieq(p->name, "discord")) {
+                s_copy(p->name, "Discord Horizon", sizeof(p->name));
+                s_copy(p->desc, "Lira obsidian team chat with channels and voice EQ.", sizeof(p->desc));
+                p->accent = THEME_ACCENT_IRIS;
+            } else if (s_ieq(p->name, "youtube")) {
+                s_copy(p->name, "YouTube Studio", sizeof(p->name));
+                s_copy(p->desc, "Bento video player with spectrum & seek scrub bar.", sizeof(p->desc));
+                p->accent = THEME_ACCENT_ROSE;
+            } else if (s_ieq(p->name, "x")) {
+                s_copy(p->name, "X Social", sizeof(p->name));
+                s_copy(p->desc, "Live timeline with composer, likes & reposts.", sizeof(p->desc));
+                p->accent = THEME_ACCENT_CYAN;
+            } else if (s_ieq(p->name, "settings")) {
+                s_copy(p->name, "Control Deck", sizeof(p->name));
+                s_copy(p->desc, "UEFI hardware inspector, Wi-Fi & acoustic sound lab.", sizeof(p->desc));
+                p->accent = THEME_ACCENT_TEAL;
+            } else if (s_ieq(p->name, "blankdrop")) {
+                s_copy(p->name, "BlankDrop AirShare", sizeof(p->name));
+                s_copy(p->desc, "Proximity radar share with FAT32 transfer receipts.", sizeof(p->desc));
+                p->accent = THEME_ACCENT_CYAN;
+            } else if (s_ieq(p->name, "blankbrowser")) {
+                s_copy(p->name, "MiniSurf Web", sizeof(p->name));
+                s_copy(p->desc, "Obsidian bento web reader with interactive SDK docs.", sizeof(p->desc));
+                p->accent = THEME_ACCENT_GREEN;
+            } else {
+                s_copy(p->desc, "BlankOS .bloe application container discovered on disk.", sizeof(p->desc));
+                p->accent = THEME_ACCENT_IRIS;
+            }
+        } else {
+            s_copy(p->desc, is_elf ? "Native x86_64 ELF executable discovered on disk."
+                                   : "BlankOS package manifest discovered on disk.", sizeof(p->desc));
+            p->accent = is_elf ? THEME_ACCENT_TEAL : THEME_ACCENT_CYAN;
+        }
         s_copy(p->disk_path, full_path, sizeof(p->disk_path));
-        p->accent = is_elf ? THEME_ACCENT_TEAL : THEME_ACCENT_IRIS;
         p->is_elf = is_elf;
+        p->is_bloe = is_bloe;
         p->installed = true;
         p->is_builtin_repo = false;
         p->disk_bytes = (uint32_t)info->FileSize;
@@ -537,7 +572,21 @@ static bool install_pkg_entry(StorePkg* p) {
 
 static void launch_pkg_entry(StorePkg* p) {
     if (!p) return;
-    if (p->is_elf) {
+    if (p->is_bloe) {
+        if (!gSystemTable) return;
+        CHAR16 wpath[128];
+        ascii_to_wide(p->disk_path, wpath, 128);
+        play_system_sound((char*)"open");
+        char bloe_status[96] = {0};
+        bool ok = bloe_launch_file(gSystemTable, wpath, bloe_status, sizeof(bloe_status));
+        input_refresh_bounds((int)screen_width, (int)screen_height);
+        if (ok) {
+            set_status(bloe_status[0] ? bloe_status : "BLOE app exited cleanly", THEME_ACCENT_GREEN);
+        } else {
+            play_system_sound((char*)"error");
+            set_status(bloe_status[0] ? bloe_status : "Unable to launch .bloe file", THEME_ACCENT_AMBER);
+        }
+    } else if (p->is_elf) {
         if (!gSystemTable) return;
         CHAR16 wpath[128];
         ascii_to_wide(p->disk_path, wpath, 128);
@@ -598,12 +647,12 @@ static void render_downloads_tab(int px, int py, int pw, int ph, const BlankInpu
         start_http_fetch();
     }
 
-    // Curated HTTP Presets
-    const char* preset_labels[3] = { "Local :8000 .PKG", "Version Manifest", "HTTP Info Test" };
+    // Curated GitHub TLS 1.3 & App Store Presets
+    const char* preset_labels[3] = { "Store Catalog", "Discord .BLOE", "OS Version JSON" };
     const char* preset_urls[3] = {
-        "http://10.0.2.2:8000/hello.pkg",
-        "http://10.0.2.2:8000/version.json",
-        "http://info.cern.ch/"
+        "https://raw.githubusercontent.com/airskye1/blankOS-App-Store/main/catalog.json",
+        "https://raw.githubusercontent.com/airskye1/blankOS-App-Store/main/apps/discord.bloe",
+        "https://raw.githubusercontent.com/airskye1/blankOS----Vibe-Coded-OS/main/version.json"
     };
     for (int i = 0; i < 3; i++) {
         int bx = px + 16 + i * 146;

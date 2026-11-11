@@ -10,6 +10,7 @@
 #include "../ui/window_manager.h"
 #include "../kernel/input.h"
 #include "../kernel/audio.h"
+#include "../kernel/bloe_loader.h"
 
 extern "C" {
     extern EFI_SYSTEM_TABLE *gSystemTable;
@@ -216,7 +217,7 @@ static uint32_t bp_file_badge_color(const char* name) {
     if (bp_str_ends_with_nocase(name, ".ini") || bp_str_ends_with_nocase(name, ".json") || bp_str_ends_with_nocase(name, ".reg")) {
         return THEME_ACCENT_AMBER;
     }
-    if (bp_str_ends_with_nocase(name, ".md") || bp_str_ends_with_nocase(name, ".html") || bp_str_ends_with_nocase(name, ".htm")) {
+    if (bp_str_ends_with_nocase(name, ".md") || bp_str_ends_with_nocase(name, ".html") || bp_str_ends_with_nocase(name, ".htm") || bp_str_ends_with_nocase(name, ".bloe")) {
         return THEME_ACCENT_IRIS;
     }
     if (bp_str_ends_with_nocase(name, ".efi") || bp_str_ends_with_nocase(name, ".elf")) {
@@ -232,6 +233,7 @@ static const char* bp_file_badge_label(const char* name) {
     if (bp_str_ends_with_nocase(name, ".ini")) return "INI";
     if (bp_str_ends_with_nocase(name, ".json")) return "JSN";
     if (bp_str_ends_with_nocase(name, ".html") || bp_str_ends_with_nocase(name, ".htm")) return "HTM";
+    if (bp_str_ends_with_nocase(name, ".bloe")) return "BLOE";
     if (bp_str_ends_with_nocase(name, ".efi")) return "EFI";
     if (bp_str_ends_with_nocase(name, ".elf")) return "ELF";
     if (bp_str_ends_with_nocase(name, ".ttf")) return "TTF";
@@ -976,9 +978,12 @@ static void blankpad_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
 
     VfsEntry* active = (g_bp_selected >= 0 && g_bp_selected < g_vfs_count && g_vfs_files[g_bp_selected].used)
                        ? &g_vfs_files[g_bp_selected] : NULL;
+    bool is_run_bloe = (active && bp_str_ends_with_nocase(active->name, ".bloe"));
+    bool is_run_elf  = (active && bp_str_ends_with_nocase(active->name, ".elf"));
+    bool is_runnable = (is_run_bloe || is_run_elf);
 
     int name_x = ex + 82;
-    int name_w = ew - 240;
+    int name_w = ew - (is_runnable ? 302 : 240);
     if (name_w < 80) name_w = 80;
 
     if (active) {
@@ -1004,6 +1009,29 @@ static void blankpad_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
         dui_text(name_x + 6, ey + 13, "No File Selected", THEME_TEXT_MUTED, 1);
     }
 
+    if (is_runnable && dui_button_tactile(ex + ew - 206, ey + 9, 58, 24, "Run", THEME_ACCENT_GREEN, true, mx, my, down, click_avail)) {
+        click_avail = false;
+        if (active && active->on_disk && gSystemTable) {
+            char norm[VFS_NAME_MAX];
+            bp_normalize_path(active->name, norm, VFS_NAME_MAX);
+            CHAR16 wpath[VFS_NAME_MAX];
+            bp_ascii_to_wide(norm, wpath, VFS_NAME_MAX);
+            play_system_sound((char*)"open");
+            char st_msg[96] = {0};
+            bool ok = is_run_bloe ? bloe_launch_file(gSystemTable, wpath, st_msg, sizeof(st_msg))
+                                  : load_and_run_elf(gSystemTable, wpath);
+            input_refresh_bounds((int)screen_width, (int)screen_height);
+            if (ok) {
+                bp_str_copy(g_bp_status, st_msg[0] ? st_msg : "Application exited cleanly", sizeof(g_bp_status));
+            } else {
+                bp_str_copy(g_bp_status, st_msg[0] ? st_msg : "Launch failed (check binary)", sizeof(g_bp_status));
+                play_system_sound((char*)"error");
+            }
+        } else {
+            bp_str_copy(g_bp_status, "Save file to disk first to launch", sizeof(g_bp_status));
+            play_system_sound((char*)"error");
+        }
+    }
     if (dui_button_tactile(ex + ew - 142, ey + 9, 64, 24, "Save", THEME_ACCENT_CYAN, true, mx, my, down, click_avail)) {
         click_avail = false;
         bp_save_active_file();

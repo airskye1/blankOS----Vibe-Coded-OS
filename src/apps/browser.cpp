@@ -2151,7 +2151,7 @@ static void render_start_page(BrowserTab* t, int vx, int vy, int vw, int vh, con
     int side_w = (inner_w >= 620) ? (inner_w - gap) / 3 : 0;
     int hero_w = (side_w > 0) ? (inner_w - gap - side_w) : inner_w;
 
-    dui_bento_card(x0, sy + 18, hero_w, hero_h, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 224, true, false);
+    dui_bento_card(x0, sy + 18, hero_w, hero_h, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 224, true);
     dui_dot_grid_overlay(x0 + 6, sy + 24, hero_w - 12, hero_h - 12, 24, 0x94A3B8, 12);
     dui_rect_rounded(x0 + 20, sy + 38, 42, 42, THEME_RADIUS_MD, THEME_ACCENT_CYAN, 36);
     dui_rect_rounded_outline(x0 + 20, sy + 38, 42, 42, THEME_RADIUS_MD, THEME_ACCENT_CYAN, 110);
@@ -2165,15 +2165,15 @@ static void render_start_page(BrowserTab* t, int vx, int vy, int vw, int vh, con
     int pw = dui_text_width(net_lbl, 1) + 28;
     int px = x0 + hero_w - pw - 16;
     if (px > x0 + 260) {
-        dui_status_pill(px, sy + 28, net_lbl, pill_col, true);
+        dui_status_pill(px, sy + 28, pw, 24, net_lbl, pill_col, THEME_SURFACE_INPUT, ns.dhcp_bound);
     }
 
     if (side_w > 0) {
         int sx0 = x0 + hero_w + gap;
         bool hov_js_hero = allow_click && pt_in(in->mx, in->my, sx0, sy + 18, side_w, hero_h) && pt_in(in->mx, in->my, vx, vy, vw, vh);
         dui_bento_card(sx0, sy + 18, side_w, hero_h, THEME_RADIUS_CARD,
-                       hov_js_hero ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, 224, true, hov_js_hero);
-        dui_status_pill(sx0 + 16, sy + 30, "BlankJS Live", THEME_ACCENT_IRIS, true);
+                       hov_js_hero ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, 224, hov_js_hero);
+        dui_status_pill(sx0 + 16, sy + 30, 108, 24, "BlankJS Live", THEME_ACCENT_IRIS, THEME_SURFACE_INPUT, true);
         dui_text(sx0 + 16, sy + 62, "JS + DOM Sandbox", THEME_TEXT_PRIMARY, 1);
         dui_text_ellipsis(sx0 + 16, sy + 84, side_w - 32, "Interactive timers & Console ->", THEME_ACCENT_CYAN, 1);
         if (hov_js_hero && in->left_pressed) {
@@ -2216,7 +2216,7 @@ static void render_start_page(BrowserTab* t, int vx, int vy, int vw, int vh, con
         bool hov = allow_click && pt_in(in->mx, in->my, cx0, cy0, card_w, card_h) && pt_in(in->mx, in->my, vx, vy, vw, vh);
 
         dui_bento_card(cx0, cy0, card_w, card_h, THEME_RADIUS_LG,
-                       hov ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, hov ? 236 : 210, hov, hov);
+                       hov ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, hov ? 236 : 210, hov);
         dui_rect_rounded(cx0 + 14, cy0 + 22, 38, 38, THEME_RADIUS_MD, tiles[i].accent, 34);
         dui_rect_rounded_outline(cx0 + 14, cy0 + 22, 38, 38, THEME_RADIUS_MD, tiles[i].accent, 95);
         dui_draw_sys_icon(cx0 + 23, cy0 + 31, 20, tiles[i].icon_id, tiles[i].accent);
@@ -2235,7 +2235,7 @@ static void render_start_page(BrowserTab* t, int vx, int vy, int vw, int vh, con
 
     // Active / Recent Downloads Summary Strip
     int dl_cnt = net_download_count();
-    dui_bento_card(x0, foot_y, inner_w, 64, THEME_RADIUS_LG, THEME_SURFACE_INPUT, 215, false, false);
+    dui_bento_card(x0, foot_y, inner_w, 64, THEME_RADIUS_LG, THEME_SURFACE_INPUT, 215, false);
     dui_draw_sys_icon(x0 + 18, foot_y + 22, 20, 8, THEME_ACCENT_CYAN);
     if (dl_cnt == 0) {
         dui_text(x0 + 48, foot_y + 14, "Real FAT32 Download Engine + BlankJS Runtime Ready", THEME_TEXT_PRIMARY, 1);
@@ -2252,7 +2252,7 @@ static void render_start_page(BrowserTab* t, int vx, int vy, int vw, int vh, con
         dui_text(x0 + 48, foot_y + 34, "Click 'Downloads' to inspect or launch saved files", THEME_TEXT_SECONDARY, 1);
     }
     if (dui_button_tactile(x0 + inner_w - 134, foot_y + 16, 118, 32, "Downloads", THEME_ACCENT_CYAN, false,
-                           in->mx, in->my, allow_click && in->left_pressed && pt_in(in->mx, in->my, vx, vy, vw, vh))) {
+                           in->mx, in->my, in->left_down, allow_click && in->left_pressed && pt_in(in->mx, in->my, vx, vy, vw, vh))) {
         play_system_sound((char*)"open");
         navigate_tab(g_active_tab, "blank://downloads", true);
         return;
@@ -2565,7 +2565,7 @@ static void render_https_notice_page(BrowserTab* t, int vx, int vy, int vw, int 
     int card_h = 240;
     bool in_vp = allow_click && pt_in(in->mx, in->my, vx, vy, vw, vh);
 
-    dui_bento_card(card_x, card_y, card_w, card_h, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 230, true, false);
+    dui_bento_card(card_x, card_y, card_w, card_h, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 230, true);
     dui_rect_rounded(card_x + 24, card_y + 24, 44, 44, 12, THEME_ACCENT_AMBER, 38);
     dui_draw_sys_icon(card_x + 34, card_y + 34, 24, 19, THEME_ACCENT_AMBER);
 
@@ -2586,7 +2586,7 @@ static void render_https_notice_page(BrowserTab* t, int vx, int vy, int vw, int 
     }
 
     if (dui_button_tactile(card_x + 24, card_y + 180, 176, 34, "Try HTTP Instead", THEME_ACCENT_CYAN, true,
-                           in->mx, in->my, in_vp && in->left_pressed)) {
+                           in->mx, in->my, in->left_down, in_vp && in->left_pressed)) {
         play_system_sound((char*)"open");
         navigate_tab(g_active_tab, http_url, true);
         return;
@@ -2594,7 +2594,7 @@ static void render_https_notice_page(BrowserTab* t, int vx, int vy, int vw, int 
 
     if (t->hist_pos > 0) {
         if (dui_button_tactile(card_x + 212, card_y + 180, 110, 34, "Go Back", THEME_SURFACE_ELEVATED, false,
-                               in->mx, in->my, in_vp && in->left_pressed)) {
+                               in->mx, in->my, in->left_down, in_vp && in->left_pressed)) {
             play_system_sound((char*)"tab");
             t->hist_pos--;
             navigate_tab(g_active_tab, t->history[t->hist_pos], false);
@@ -2614,7 +2614,7 @@ static void render_error_page(BrowserTab* t, int vx, int vy, int vw, int vh, con
     int card_h = 224;
     bool in_vp = allow_click && pt_in(in->mx, in->my, vx, vy, vw, vh);
 
-    dui_bento_card(card_x, card_y, card_w, card_h, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 230, true, false);
+    dui_bento_card(card_x, card_y, card_w, card_h, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 230, true);
     dui_rect_rounded(card_x + 24, card_y + 24, 44, 44, 12, THEME_ACCENT_ROSE, 38);
     dui_draw_sys_icon(card_x + 34, card_y + 34, 24, 12, THEME_ACCENT_ROSE);
 
@@ -2626,13 +2626,13 @@ static void render_error_page(BrowserTab* t, int vx, int vy, int vw, int vh, con
                       t->error_msg[0] ? t->error_msg : "Network connection or HTTP response error.", THEME_ACCENT_ROSE, 1);
 
     if (dui_button_tactile(card_x + 24, card_y + 168, 120, 34, "Retry", THEME_ACCENT_CYAN, true,
-                           in->mx, in->my, in_vp && in->left_pressed)) {
+                           in->mx, in->my, in->left_down, in_vp && in->left_pressed)) {
         play_system_sound((char*)"tool");
         navigate_tab(g_active_tab, t->url, false);
         return;
     }
     if (dui_button_tactile(card_x + 156, card_y + 168, 150, 34, "Network Pulse", THEME_SURFACE_ELEVATED, false,
-                           in->mx, in->my, in_vp && in->left_pressed)) {
+                           in->mx, in->my, in->left_down, in_vp && in->left_pressed)) {
         play_system_sound((char*)"open");
         navigate_tab(g_active_tab, "blank://pulse", true);
         return;
@@ -2647,7 +2647,7 @@ static void render_http_document(BrowserTab* t, int vx, int vy, int vw, int vh, 
         int card_w = (vw > 460) ? 420 : (vw - 40);
         int card_x = vx + (vw - card_w) / 2;
         int card_y = vy + 56;
-        dui_bento_card(card_x, card_y, card_w, 156, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 225, true, false);
+        dui_bento_card(card_x, card_y, card_w, 156, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 225, true);
 
         const char* stage = "Preparing Request...";
         float prog = 0.15f;
@@ -2724,7 +2724,7 @@ static void render_http_document(BrowserTab* t, int vx, int vy, int vw, int vh, 
         if (sp->flags & SPAN_BTN) {
             bool press_ok = allow_click && in_vp && in->left_pressed;
             if (dui_button_tactile(sx, sy, sp->w, 28, txt, sp->color ? sp->color : THEME_ACCENT_CYAN, true,
-                                   in->mx, in->my, press_ok)) {
+                                   in->mx, in->my, in->left_down, press_ok)) {
                 play_system_sound((char*)"tool");
                 if (t->js_rt && sp->dom_id >= 0) {
                     js_dispatch_click(t->js_rt, sp->dom_id);
@@ -3228,7 +3228,7 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
                          g_console_open ? THEME_ACCENT_IRIS : (hov_js ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD),
                          g_console_open ? 78 : 210);
         if (g_console_open) dui_rect_rounded_outline(js_x, by, js_w, 28, 8, THEME_ACCENT_IRIS, 210);
-        dui_text(js_x + 11, by + 7, "JS", g_console_open ? THEME_ACCENT_IRIS : THEME_TEXT_CYAN_LIGHT, 1);
+        dui_text(js_x + 11, by + 7, "JS", g_console_open ? THEME_ACCENT_IRIS : THEME_ACCENT_CYAN, 1);
         if (hov_js && in->left_pressed) {
             g_console_open = !g_console_open;
             g_console_input_focused = g_console_open;
@@ -3434,7 +3434,7 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
             NetStatus ns;
             net_get_status(&ns);
             int card_y = vy + vh + console_h - 66;
-            dui_bento_card(cx + 10, card_y, sb_w - 20, 56, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 224, false, false);
+            dui_bento_card(cx + 10, card_y, sb_w - 20, 56, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 224, false);
             dui_circle(cx + 22, card_y + 18, 4, ns.dhcp_bound ? THEME_ACCENT_GREEN : (ns.link_up ? THEME_ACCENT_AMBER : THEME_ACCENT_ROSE), 255);
             dui_text(cx + 32, card_y + 11, ns.dhcp_bound ? "SNP Online" : (ns.link_up ? "Link Up" : "Offline"), THEME_TEXT_PRIMARY, 1);
             dui_text_ellipsis(cx + 20, card_y + 32, sb_w - 40, ns.dhcp_bound ? ns.ip_str : "No DHCP IP", THEME_TEXT_SECONDARY, 1);
@@ -3526,9 +3526,9 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
         int ax = vx + (vw - aw) / 2;
         int ay = vy + 14;
         dui_shadow(ax, ay, aw, 36, THEME_RADIUS_PILL, 6);
-        dui_bento_card(ax, ay, aw, 36, THEME_RADIUS_PILL, THEME_SURFACE_ELEVATED, 245, true, false);
-        dui_status_pill(ax + 8, ay + 6, "JS alert", THEME_ACCENT_AMBER, true);
-        dui_text_ellipsis(ax + 84, ay + 11, aw - 98, g_js_alert_banner, THEME_TEXT_PRIMARY, 1);
+        dui_bento_card(ax, ay, aw, 36, THEME_RADIUS_PILL, THEME_SURFACE_ELEVATED, 245, true);
+        dui_status_pill(ax + 8, ay + 6, 72, 24, "JS alert", THEME_ACCENT_AMBER, THEME_SURFACE_INPUT, true);
+        dui_text_ellipsis(ax + 88, ay + 11, aw - 102, g_js_alert_banner, THEME_TEXT_PRIMARY, 1);
     }
 
     dui_pop_clip();
@@ -3538,21 +3538,21 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
     // ========================================================================
     if (g_console_open) {
         int csy = vy + vh;
-        dui_rect(vx, csy, vw, console_h, THEME_BG_BASE, 244);
+        dui_rect(vx, csy, vw, console_h, THEME_BG_DEEP, 244);
         dui_line(vx, csy, vx + vw, csy, THEME_BORDER_SPECULAR, 210);
 
         // Drawer Header
         dui_rect(vx, csy, vw, 28, THEME_SURFACE_CARD, 220);
         dui_line(vx, csy + 27, vx + vw, csy + 27, THEME_BORDER_SUBTLE, 180);
-        dui_text(vx + 12, csy + 7, "BlankJS Console  (Ctrl+J)", THEME_TEXT_CYAN_LIGHT, 1);
+        dui_text(vx + 12, csy + 7, "BlankJS Console  (Ctrl+J)", THEME_ACCENT_CYAN, 1);
 
         if (dui_button_tactile(vx + vw - 134, csy + 3, 62, 22, "Clear", THEME_SURFACE_ELEVATED, false,
-                               in->mx, in->my, !overlay_blocks_bg && in->left_pressed)) {
+                               in->mx, in->my, in->left_down, !overlay_blocks_bg && in->left_pressed)) {
             if (active->js_rt) js_console_clear(active->js_rt);
             play_system_sound((char*)"tab");
         }
         if (dui_button_tactile(vx + vw - 66, csy + 3, 56, 22, "Close", THEME_SURFACE_ELEVATED, false,
-                               in->mx, in->my, !overlay_blocks_bg && in->left_pressed)) {
+                               in->mx, in->my, in->left_down, !overlay_blocks_bg && in->left_pressed)) {
             g_console_open = false;
             g_console_input_focused = false;
             play_system_sound((char*)"close");
@@ -3616,7 +3616,7 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
         }
 
         if (dui_button_tactile(vx + 16 + rw, ry, 62, 26, "Run", THEME_ACCENT_CYAN, true,
-                               in->mx, in->my, !overlay_blocks_bg && in->left_pressed)) {
+                               in->mx, in->my, in->left_down, !overlay_blocks_bg && in->left_pressed)) {
             g_console_input[g_console_input_len] = '\0';
             if (g_console_input_len > 0) {
                 if (!active->js_rt) active->js_rt = js_runtime_create();
@@ -3640,7 +3640,7 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
     // ========================================================================
     if (g_dl_popover_open) {
         dui_shadow(dl_pop_x, dl_pop_y, dl_pop_w, dl_pop_h, THEME_RADIUS_LG, 8);
-        dui_bento_card(dl_pop_x, dl_pop_y, dl_pop_w, dl_pop_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 245, true, false);
+        dui_bento_card(dl_pop_x, dl_pop_y, dl_pop_w, dl_pop_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 245, true);
 
         dui_text(dl_pop_x + 16, dl_pop_y + 14, "Downloads (\\DOWNLOADS\\)", THEME_TEXT_PRIMARY, 1);
 

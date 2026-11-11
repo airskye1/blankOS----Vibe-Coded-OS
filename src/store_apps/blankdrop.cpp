@@ -2,151 +2,115 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "../../src/kernel/os_api.h"
+#include "store_kit.h"
 
 extern "C" int main(OS_API* api) {
-    int win_w = 540;
-    int win_h = 420;
-    int win_x = (1024 - win_w) / 2;
-    int win_y = (768 - win_h) / 2;
+    SkInputCtx in;
+    sk_init_ctx(api, &in);
+    api->play_sound("open");
 
-    EFI_SIMPLE_POINTER_PROTOCOL* mouse = NULL;
-    EFI_GUID mouse_guid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
-    api->SystemTable->BootServices->LocateProtocol(&mouse_guid, NULL, (void**)&mouse);
-    if (mouse) mouse->Reset(mouse, TRUE);
+    int win_w = (in.sw >= 720) ? 620 : (in.sw - 36);
+    int win_h = (in.sh >= 560) ? 470 : (in.sh - 36);
+    int win_x = (in.sw - win_w) / 2;
+    int win_y = (in.sh - win_h) / 2;
 
-    int mouse_x = 512;
-    int mouse_y = 384;
-    bool mouse_click = false;
+    int state = 0; // 0=Scanning, 1=Ready, 2=Sending, 3=Sent
+    int timer = 0;
+    float progress = 0.0f;
+    int selected_dev = 0;
+    int payload_idx = 0;
+    bool receipt_saved = false;
     bool done = false;
 
-    // BlankDrop state: 0=Scanning, 1=Device Found, 2=Sending, 3=Sent
-    int state = 0;
-    int timer = 0;
-    float send_progress = 0.0f;
-    int selected_device = -1;
-
-    const char* devices[] = { "airskye's iPhone", "MacBook Pro", "iPad Pro" };
+    const char* devs[3] = { "Horizon Workstation", "Studio ProBook", "Mobile Node X" };
+    const char* files[3] = { "system_profile.json", "horizon_build_v3.1.log", "store_manifest.bloe" };
 
     while (!done) {
-        mouse_click = false;
-        if (mouse) {
-            EFI_SIMPLE_POINTER_STATE mstate;
-            if (mouse->GetState(mouse, &mstate) == EFI_SUCCESS) {
-                int dx = mstate.RelativeMovementX / 1000;
-                int dy = mstate.RelativeMovementY / 1000;
-                mouse_x += dx;
-                mouse_y += dy;
-                if (mouse_x < 0) mouse_x = 0;
-                if (mouse_x > 1023) mouse_x = 1023;
-                if (mouse_y < 0) mouse_y = 0;
-                if (mouse_y > 767) mouse_y = 767;
-                if (mstate.LeftButton) {
-                    mouse_click = true;
-                }
-            }
-        }
+        sk_poll_mouse(&in);
 
         EFI_INPUT_KEY key;
-        if (api->SystemTable->ConIn->ReadKeyStroke(api->SystemTable->ConIn, &key) == EFI_SUCCESS) {
-            if (key.ScanCode == 0x0017) { // Escape
+        while (api->SystemTable->ConIn->ReadKeyStroke(api->SystemTable->ConIn, &key) == EFI_SUCCESS) {
+            if (key.ScanCode == 0x0017) {
+                api->play_sound("close");
                 done = true;
             }
         }
 
-        // State Machine
         timer++;
-        if (state == 0) { // Scanning
-            if (timer > 40) {
-                state = 1; // Discover devices
-                timer = 0;
+        if (state == 0 && timer > 35) {
+            state = 1;
+            timer = 0;
+            api->play_sound("notify");
+        } else if (state == 2) {
+            progress += 0.025f;
+            if (progress >= 1.0f) {
+                progress = 1.0f;
+                state = 3;
+                const char log[] = "BlankDrop Transfer Complete - Horizon v3.1\r\n";
+                receipt_saved = api->write_file("DOWNLOADS\\blankdrop_log.txt", (void*)log, sizeof(log) - 1);
+                api->play_sound("success");
             }
         }
-        else if (state == 2) { // Sending
-            send_progress += 0.02f;
-            if (send_progress >= 1.0f) {
-                state = 3; // Sent
-                api->play_sound("startup"); // Done chime
-            }
-        }
 
-        // Draw system UI
-        api->draw_wallpaper();
-        api->draw_menubar();
-        api->draw_dock();
-
-        // Draw BlankDrop window
-        api->draw_window(win_x, win_y, win_w, win_h, "BlankDrop");
-
-        // Close window hit test
-        if (mouse_click && mouse_x >= win_x + 10 && mouse_x <= win_x + 22 && mouse_y >= win_y + 10 && mouse_y <= win_y + 22) {
+        if (sk_begin_app_frame(api, &in, win_x, win_y, win_w, win_h, "BlankDrop AirShare", "BLOE Share", SK_CYAN)) {
             done = true;
         }
 
-        int center_x = win_x + win_w / 2;
-        int center_y = win_y + 160;
+        int px = win_x + 16;
+        int py = win_y + 48;
+        int pw = win_w - 32;
 
-        if (state == 0) { // Scanning Animation
-            api->draw_text(win_x + 50, win_y + 60, "BlankDrop: Receiving or Sharing files...", 0x1C1C1E, 1);
-            api->draw_text(win_x + 50, win_y + 85, "Ensure your local Wi-Fi / Bluetooth drivers are active.", 0x8E8E93, 1);
+        // Radar Hero Card
+        sk_bento_card(api, px, py, pw, 126, 16, SK_SURFACE_CARD, true, SK_CYAN);
+        sk_dot_grid(api, px + 8, py + 8, pw - 16, 110, 18, SK_CYAN);
 
-            // Draw radar circles expanding
-            int r0 = (timer * 2) % 80;
-            int r1 = ((timer * 2) + 40) % 80;
-            api->draw_circle(center_x, center_y, r0, 0x007AFF, (uint8_t)(255 - r0 * 3));
-            api->draw_circle(center_x, center_y, r1, 0x007AFF, (uint8_t)(255 - r1 * 3));
-            api->draw_circle(center_x, center_y, 10, 0x007AFF, 255);
+        int rcx = px + 66;
+        int rcy = py + 63;
+        int ring_r = 16 + ((timer / 2) % 30);
+        api->draw_circle(rcx, rcy, 40, SK_SURFACE_INP, 230);
+        api->draw_circle(rcx, rcy, ring_r, SK_CYAN, 75);
+        api->draw_circle(rcx, rcy, 12, SK_CYAN, 255);
 
-            api->draw_text(center_x - 55, center_y + 110, "Searching for nearby devices...", 0x8E8E93, 1);
+        api->draw_text(px + 132, py + 24,
+                       (state == 0) ? "Scanning for nearby BlankOS nodes..." :
+                       (state == 1) ? "3 Nearby AirShare Devices Ready" :
+                       (state == 2) ? "Encrypting & beaming payload..." :
+                                      "Payload Delivered Successfully!",
+                       (state == 3) ? SK_GREEN : SK_TEXT_PRI, 2);
+
+        api->draw_text(px + 132, py + 56, "Active Payload:", SK_TEXT_MUT, 1);
+        if (sk_btn(api, px + 260, py + 50, 210, 26, files[payload_idx], SK_TEAL, false, &in)) {
+            payload_idx = (payload_idx + 1) % 3;
         }
-        else if (state == 1) { // Device selection list
-            api->draw_text(win_x + 50, win_y + 60, "Select a device below to send 'BlankOS_SDK.pdf':", 0x1C1C1E, 1);
-            
-            for (int i = 0; i < 3; i++) {
-                int item_y = win_y + 100 + i * 65;
-                api->draw_rect_rounded(win_x + 40, item_y, win_w - 80, 50, 8, 0xF2F2F7, 255);
-                
-                // Icon circle
-                api->draw_circle(win_x + 75, item_y + 25, 16, 0x007AFF, 255);
-                api->draw_text(win_x + 70, item_y + 17, "D", 0xFFFFFF, 1);
-
-                api->draw_text(win_x + 110, item_y + 17, devices[i], 0x1C1C1E, 1);
-                api->draw_text(win_x + 110, item_y + 35, "Tap to send", 0x8E8E93, 1);
-
-                if (mouse_click && mouse_x >= win_x + 40 && mouse_x <= win_x + win_w - 40 && mouse_y >= item_y && mouse_y <= item_y + 50) {
-                    selected_device = i;
-                    state = 2; // Transition to sending
-                    send_progress = 0.0f;
-                    api->play_sound("click");
-                }
-            }
+        if (state == 2 || state == 3) {
+            sk_progress_bar(api, px + 132, py + 90, pw - 156, 10, progress, (state == 3) ? SK_GREEN : SK_CYAN);
+        } else {
+            api->draw_text(px + 132, py + 88, receipt_saved ? "Saved \\DOWNLOADS\\blankdrop_log.txt" : "Click a device below to transfer", SK_CYAN, 1);
         }
-        else if (state == 2) { // Sending files animation
-            api->draw_text(win_x + 50, win_y + 60, "Sending file to device:", 0x1C1C1E, 1);
-            api->draw_text(win_x + 50, win_y + 85, devices[selected_device], 0x007AFF, 2);
 
-            // Progress bar
-            int progress_y = win_y + 180;
-            api->draw_rect_rounded(win_x + 50, progress_y, win_w - 100, 14, 7, 0xE5E5EA, 255);
-            api->draw_rect_rounded(win_x + 50, progress_y, (int)((win_w - 100) * send_progress), 14, 7, 0x34C759, 255);
-
-            api->draw_text(win_x + 50, progress_y + 30, "File: BlankOS_SDK.pdf (4.2 MB)", 0x8E8E93, 1);
-        }
-        else if (state == 3) { // Send Complete
-            api->draw_circle(center_x, center_y, 40, 0x34C759, 255);
-            api->draw_text(center_x - 10, center_y - 10, "OK", 0xFFFFFF, 2);
-
-            api->draw_text(win_x + 50, center_y + 70, "File sent successfully!", 0x34C759, 2);
-            api->draw_text(win_x + 50, center_y + 105, devices[selected_device], 0x1C1C1E, 1);
-            
-            if (api->draw_button(win_x + (win_w - 160)/2, win_y + win_h - 70, 160, 36, "Send Another", mouse_x, mouse_y, mouse_click)) {
-                state = 1;
-                api->play_sound("click");
+        // Device Grid
+        int dy = py + 140;
+        for (int i = 0; i < 3; i++) {
+            int y = dy + i * 64;
+            bool sel = (selected_dev == i);
+            sk_bento_card(api, px, y, pw, 54, 14, sel ? SK_SURFACE_ELEV : SK_SURFACE_CARD, sel, SK_CYAN);
+            api->draw_circle(px + 28, y + 27, 14, sel ? SK_CYAN : SK_IRIS, 235);
+            api->draw_text(px + 54, y + 18, devs[i], SK_TEXT_PRI, 1);
+            if (state >= 1 && sk_btn(api, px + pw - 116, y + 11, 100, 32,
+                                     (state == 3 && sel) ? "Resend" : "Send File", SK_CYAN, sel, &in)) {
+                selected_dev = i;
+                progress = 0.0f;
+                state = 2;
+                api->play_sound("send");
             }
         }
 
-        // Draw cursor
-        api->draw_cursor(mouse_x, mouse_y);
-        api->swap_buffers();
+        if (state == 3 && receipt_saved) {
+            sk_pill(api, px, dy + 206, 290, 24, "Receipt saved to \\DOWNLOADS\\blankdrop_log.txt", SK_GREEN, SK_SURFACE_CARD);
+        }
+
+        sk_end_app_frame(api, &in);
     }
+
     return 0;
 }

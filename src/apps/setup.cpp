@@ -219,7 +219,7 @@ static int stp_scan_physical_disks(EFI_SYSTEM_TABLE* st, SetupDiskInfo* out_disk
         out_disks[count].size_mb = size_mb;
         out_disks[count].block_size = blk->Media->BlockSize;
         out_disks[count].removable = (blk->Media->RemovableMedia != 0);
-        out_disks[count].gpt_compatible = (blk->Media->BlockSize == 512 && blk->Media->LastBlock >= 100000);
+        out_disks[count].gpt_compatible = (blk->Media->BlockSize == 512 && blk->Media->LastBlock >= 80000);
         count++;
     }
 
@@ -332,7 +332,10 @@ static void stp_render_installing_frame(EFI_SYSTEM_TABLE* st, const SetupInstall
 static EFI_FILE_HANDLE stp_open_or_create_dir(EFI_FILE_HANDLE parent, const CHAR16* name) {
     if (!parent || !name) return NULL;
     EFI_FILE_HANDLE dir = NULL;
-    EFI_STATUS st = parent->Open(
+    // Try opening existing directory first; some UEFI FAT drivers reject CREATE on existing dirs
+    EFI_STATUS st = parent->Open(parent, &dir, (CHAR16*)name, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (!EFI_ERROR(st) && dir) return dir;
+    st = parent->Open(
         parent, &dir, (CHAR16*)name,
         EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE,
         EFI_FILE_DIRECTORY);
@@ -470,17 +473,32 @@ static bool stp_run_real_installation(
 
         bool formatted = format_disk_gpt_fat32(SystemTable, selected_blk);
         if (!formatted) {
-            stp_str_copy(error_out, "GPT/FAT32 format failed (requires 512B sectors & >= 50 MB).", error_max);
+            stp_str_copy(error_out, "GPT/FAT32 format failed (requires 512B sectors & >= 40 MB).", error_max);
             return false;
         }
 
         stp_str_copy(prog->status_line, "Reconnecting UEFI storage & mounting ESP...", sizeof(prog->status_line));
-        stp_str_copy(prog->current_file, "DisconnectController / ConnectController", sizeof(prog->current_file));
+        stp_str_copy(prog->current_file, "Remounting GPT + FAT32 partition driver", sizeof(prog->current_file));
         prog->progress = 0.16f;
         stp_render_installing_frame(SystemTable, prog);
 
         SystemTable->BootServices->DisconnectController(selected_disk_handle, NULL, NULL);
+        SystemTable->BootServices->Stall(100000);
         SystemTable->BootServices->ConnectController(selected_disk_handle, NULL, NULL, TRUE);
+        SystemTable->BootServices->Stall(200000);
+
+        // Explicitly bind PartitionDxe/FatDxe onto all newly created child BlockIo handles
+        EFI_GUID blk_guid_reconn = EFI_BLOCK_IO_PROTOCOL_GUID;
+        UINTN bcnt = 0;
+        EFI_HANDLE* bhandles = NULL;
+        if (!EFI_ERROR(SystemTable->BootServices->LocateHandleBuffer(ByProtocol, &blk_guid_reconn, NULL, &bcnt, &bhandles)) && bhandles) {
+            for (UINTN bi = 0; bi < bcnt; bi++) {
+                if (bhandles[bi] != selected_disk_handle && stp_dp_is_child(SystemTable, selected_disk_handle, bhandles[bi])) {
+                    SystemTable->BootServices->ConnectController(bhandles[bi], NULL, NULL, TRUE);
+                }
+            }
+            SystemTable->BootServices->FreePool(bhandles);
+        }
         SystemTable->BootServices->Stall(150000);
     }
 
@@ -569,6 +587,41 @@ static bool stp_run_real_installation(
         }
     }
 
+    if (!dst_fs && do_format && selected_disk_handle != NULL) {
+        // Retry once after connecting all handles in case PartitionDxe/FatDxe bound lazily
+        SystemTable->BootServices->FreePool(fs_handles);
+        fs_handles = NULL;
+        num_fs = 0;
+
+        UINTN all_cnt = 0;
+        EFI_HANDLE* all_handles = NULL;
+        if (!EFI_ERROR(SystemTable->BootServices->LocateHandleBuffer(AllHandles, NULL, NULL, &all_cnt, &all_handles)) && all_handles) {
+            for (UINTN ai = 0; ai < all_cnt; ai++) {
+                SystemTable->BootServices->ConnectController(all_handles[ai], NULL, NULL, TRUE);
+            }
+            SystemTable->BootServices->FreePool(all_handles);
+        }
+        SystemTable->BootServices->Stall(250000);
+
+        status = SystemTable->BootServices->LocateHandleBuffer(ByProtocol, &fs_guid, NULL, &num_fs, &fs_handles);
+        if (!EFI_ERROR(status) && fs_handles && num_fs > 0) {
+            for (UINTN i = 0; i < num_fs; i++) {
+                if (stp_is_handle_readonly_media(SystemTable, fs_handles[i])) continue;
+                if (!stp_dp_is_child(SystemTable, selected_disk_handle, fs_handles[i])) continue;
+                EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* fs = NULL;
+                if (EFI_ERROR(SystemTable->BootServices->HandleProtocol(fs_handles[i], &fs_guid, (void**)&fs)) || !fs) continue;
+                EFI_FILE_HANDLE root = NULL;
+                if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+                bool writable = stp_test_root_writable(root);
+                root->Close(root);
+                if (writable) {
+                    dst_fs = fs;
+                    break;
+                }
+            }
+        }
+    }
+
     if (!dst_fs && !do_format && !stp_is_handle_readonly_media(SystemTable, src_handle)) {
         EFI_FILE_HANDLE root = NULL;
         if (!EFI_ERROR(src_fs->OpenVolume(src_fs, &root)) && root) {
@@ -635,9 +688,13 @@ static bool stp_run_real_installation(
         stp_str_copy(prog->status_line, "Installing UEFI kernel image...", sizeof(prog->status_line));
         if (!stp_copy_file_chunked(SystemTable, src_boot, dst_boot, (CHAR16*)L"BOOTX64.EFI",
                                    "\\EFI\\BOOT\\BOOTX64.EFI", chunk_buf, SETUP_CHUNK_SIZE,
-                                   prog, 0.28f, 0.62f, true)) {
+                                   prog, 0.28f, 0.60f, true)) {
             ok = false;
             stp_str_copy(error_out, "Failed copying \\EFI\\BOOT\\BOOTX64.EFI.", error_max);
+        } else {
+            stp_copy_file_chunked(SystemTable, src_boot, dst_boot, (CHAR16*)L"BOOTIA32.EFI",
+                                  "\\EFI\\BOOT\\BOOTIA32.EFI", chunk_buf, SETUP_CHUNK_SIZE,
+                                  prog, 0.60f, 0.63f, false);
         }
     }
 
@@ -645,24 +702,46 @@ static bool stp_run_real_installation(
         stp_str_copy(prog->status_line, "Installing Horizon fonts & visual assets...", sizeof(prog->status_line));
         stp_copy_file_chunked(SystemTable, src_assets, dst_assets, (CHAR16*)L"font.ttf",
                               "\\assets\\font.ttf", chunk_buf, SETUP_CHUNK_SIZE,
-                              prog, 0.62f, 0.74f, false);
+                              prog, 0.63f, 0.72f, false);
         stp_copy_file_chunked(SystemTable, src_assets, dst_assets, (CHAR16*)L"logo.jpg",
                               "\\assets\\logo.jpg", chunk_buf, SETUP_CHUNK_SIZE,
-                              prog, 0.74f, 0.84f, false);
+                              prog, 0.72f, 0.78f, false);
         stp_copy_file_chunked(SystemTable, src_assets, dst_assets, (CHAR16*)L"nano_banana.jpg",
                               "\\assets\\nano_banana.jpg", chunk_buf, SETUP_CHUNK_SIZE,
-                              prog, 0.84f, 0.92f, false);
+                              prog, 0.78f, 0.84f, false);
     }
 
     if (ok && dst_apps) {
         bool copied_cat = false;
         if (src_apps) {
-            copied_cat = stp_copy_file_chunked(SystemTable, src_apps, dst_apps, (CHAR16*)L"catalog.json",
-                                               "\\EFI\\APPS\\catalog.json", chunk_buf, SETUP_CHUNK_SIZE,
-                                               prog, 0.92f, 0.94f, false);
+            stp_str_copy(prog->status_line, "Installing BLOE App Store packages...", sizeof(prog->status_line));
+            src_apps->SetPosition(src_apps, 0);
+            uint8_t dir_info_buf[512];
+            int guard = 0;
+            while (guard++ < 48) {
+                UINTN bsz = sizeof(dir_info_buf);
+                EFI_STATUS st_d = src_apps->Read(src_apps, &bsz, dir_info_buf);
+                if (EFI_ERROR(st_d) || bsz == 0) break;
+                EFI_FILE_INFO* fi = (EFI_FILE_INFO*)dir_info_buf;
+                if (fi->Attribute & EFI_FILE_DIRECTORY) continue;
+                if (fi->FileName[0] == L'.') continue;
+                char app_disp[64] = "\\EFI\\APPS\\";
+                int ap = 10;
+                for (int k = 0; fi->FileName[k] && ap < 62; k++) {
+                    app_disp[ap++] = (char)(fi->FileName[k] & 0x7F);
+                }
+                app_disp[ap] = '\0';
+                stp_copy_file_chunked(SystemTable, src_apps, dst_apps, fi->FileName,
+                                      app_disp, chunk_buf, SETUP_CHUNK_SIZE,
+                                      prog, 0.84f, 0.94f, false);
+                if ((fi->FileName[0] == L'c' || fi->FileName[0] == L'C') &&
+                    (fi->FileName[1] == L'a' || fi->FileName[1] == L'A')) {
+                    copied_cat = true;
+                }
+            }
         }
         if (!copied_cat) {
-            const char json[] = "{\"store_name\":\"BlankOS App Store\",\"version\":\"3.0.0\"}";
+            const char json[] = "{\"store_name\":\"BlankOS App Store\",\"version\":\"3.1.0\"}";
             if (stp_write_small_file(dst_apps, (CHAR16*)L"catalog.json", json, sizeof(json) - 1)) {
                 prog->files_copied++;
                 prog->bytes_copied += sizeof(json) - 1;

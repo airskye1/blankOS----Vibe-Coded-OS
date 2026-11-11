@@ -57,13 +57,23 @@ static uint32_t s_bak_crc = 0;
 static char s_status_msg[112] = "Initializing integrity verification...";
 static uint32_t s_status_color = THEME_TEXT_SECONDARY;
 
-// Optional HTTP manifest checker
-static char s_update_url[256] = "http://10.0.2.2:8000/version.json";
-static int s_url_len = 33;
+// GitHub OTA Manifest & Release Checker (TLS 1.3)
+#define RUNNING_VER_MAJOR 3
+#define RUNNING_VER_MINOR 1
+#define RUNNING_VER_PATCH 0
+
+static const char* k_gh_manifest_url = "https://raw.githubusercontent.com/airskye1/blankOS----Vibe-Coded-OS/main/version.json";
+static const char* k_gh_releases_url = "https://api.github.com/repos/airskye1/blankOS----Vibe-Coded-OS/releases/latest";
+
+static char s_update_url[256] = "https://raw.githubusercontent.com/airskye1/blankOS----Vibe-Coded-OS/main/version.json";
+static int s_url_len = (int)(sizeof("https://raw.githubusercontent.com/airskye1/blankOS----Vibe-Coded-OS/main/version.json") - 1);
 static bool s_url_focused = false;
 static int s_xfer_id = -1;
-static char s_http_result[128] = "Optional: enter an http:// manifest URL and click Check Updates";
-static uint32_t s_http_color = THEME_TEXT_MUTED;
+static int s_iso_xfer_id = -1;
+static bool s_update_available = false;
+static char s_iso_dl_url[256] = "https://github.com/airskye1/blankOS----Vibe-Coded-OS/releases/latest/download/blankOS.iso";
+static char s_http_result[160] = "Installed v3.1.0 | Click Check GitHub to check for OTA updates";
+static uint32_t s_http_color = THEME_TEXT_SECONDARY;
 static float s_http_spin = 0.0f;
 
 static bool pt_in(int px, int py, int rx, int ry, int rw, int rh) {
@@ -307,9 +317,169 @@ static bool create_bootx64_backup(void) {
     return wrote;
 }
 
+static void set_update_url(const char* url) {
+    s_copy(s_update_url, url, sizeof(s_update_url));
+    int i = 0;
+    while (s_update_url[i]) i++;
+    s_url_len = i;
+}
+
+static bool json_find_key_val(const char* body, int body_len, const char* key, int* out_val_pos) {
+    if (!body || !key || body_len <= 0) return false;
+    int klen = 0;
+    while (key[klen]) klen++;
+    for (int i = 0; i + klen + 2 < body_len; i++) {
+        if (body[i] != '"') continue;
+        bool match = true;
+        for (int k = 0; k < klen; k++) {
+            if (body[i + 1 + k] != key[k]) { match = false; break; }
+        }
+        if (!match || body[i + 1 + klen] != '"') continue;
+        int j = i + 2 + klen;
+        while (j < body_len && (body[j] == ' ' || body[j] == '\t' || body[j] == '\r' || body[j] == '\n')) j++;
+        if (j < body_len && body[j] == ':') {
+            j++;
+            while (j < body_len && (body[j] == ' ' || body[j] == '\t' || body[j] == '\r' || body[j] == '\n')) j++;
+            *out_val_pos = j;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool json_extract_int(const char* body, int body_len, const char* key, int* out_val) {
+    int j = 0;
+    if (!json_find_key_val(body, body_len, key, &j)) return false;
+    if (j >= body_len || body[j] < '0' || body[j] > '9') return false;
+    int val = 0;
+    while (j < body_len && body[j] >= '0' && body[j] <= '9') {
+        val = val * 10 + (body[j] - '0');
+        j++;
+    }
+    *out_val = val;
+    return true;
+}
+
+static bool json_extract_str(const char* body, int body_len, const char* key, char* out, int out_max) {
+    int j = 0;
+    if (!json_find_key_val(body, body_len, key, &j)) return false;
+    if (j >= body_len || body[j] != '"') return false;
+    j++;
+    int o = 0;
+    while (j < body_len && body[j] != '"' && o < out_max - 1) {
+        if (body[j] == '\\' && j + 1 < body_len) {
+            j++;
+        }
+        out[o++] = body[j++];
+    }
+    out[o] = '\0';
+    return o > 0;
+}
+
+static bool parse_semver_str(const char* s, int* maj, int* min, int* pat) {
+    if (!s || !s[0]) return false;
+    int i = 0;
+    while (s[i] && (s[i] < '0' || s[i] > '9')) i++;
+    if (!s[i]) return false;
+    int parts[3] = {0, 0, 0};
+    for (int p = 0; p < 3 && s[i]; p++) {
+        while (s[i] >= '0' && s[i] <= '9') {
+            parts[p] = parts[p] * 10 + (s[i] - '0');
+            i++;
+        }
+        if (s[i] == '.') i++;
+        else break;
+    }
+    *maj = parts[0];
+    *min = parts[1];
+    *pat = parts[2];
+    return true;
+}
+
+static int compare_versions(int maj, int min, int pat) {
+    if (maj != RUNNING_VER_MAJOR) return (maj > RUNNING_VER_MAJOR) ? 1 : -1;
+    if (min != RUNNING_VER_MINOR) return (min > RUNNING_VER_MINOR) ? 1 : -1;
+    if (pat != RUNNING_VER_PATCH) return (pat > RUNNING_VER_PATCH) ? 1 : -1;
+    return 0;
+}
+
+static void handle_github_manifest_response(const HttpTransfer* tr) {
+    s_update_available = false;
+    if (!tr || !tr->body_buf || tr->bytes_received <= 0) {
+        s_copy(s_http_result, "Empty response from GitHub", sizeof(s_http_result));
+        s_http_color = THEME_ACCENT_AMBER;
+        return;
+    }
+
+    int maj = -1, min = -1, pat = 0;
+    char ver_str[32] = {0};
+    char dl_url[256] = {0};
+    char logs[96] = {0};
+
+    if (json_extract_int(tr->body_buf, tr->bytes_received, "version_major", &maj) &&
+        json_extract_int(tr->body_buf, tr->bytes_received, "version_minor", &min)) {
+        json_extract_int(tr->body_buf, tr->bytes_received, "version_patch", &pat);
+        json_extract_str(tr->body_buf, tr->bytes_received, "update_logs", logs, sizeof(logs));
+    } else if (json_extract_str(tr->body_buf, tr->bytes_received, "tag_name", ver_str, sizeof(ver_str))) {
+        parse_semver_str(ver_str, &maj, &min, &pat);
+    }
+    if (json_extract_str(tr->body_buf, tr->bytes_received, "browser_download_url", dl_url, sizeof(dl_url))) {
+        s_copy(s_iso_dl_url, dl_url, sizeof(s_iso_dl_url));
+    }
+
+    if (maj >= 0 && min >= 0) {
+        char mb[8], nb[8], pb[8];
+        u64_to_str((uint64_t)maj, mb, sizeof(mb));
+        u64_to_str((uint64_t)min, nb, sizeof(nb));
+        u64_to_str((uint64_t)pat, pb, sizeof(pb));
+        int cmp = compare_versions(maj, min, pat);
+        if (cmp > 0) {
+            s_update_available = true;
+            s_copy(s_http_result, "Update Available: v", sizeof(s_http_result));
+            s_cat(s_http_result, mb, sizeof(s_http_result));
+            s_cat(s_http_result, ".", sizeof(s_http_result));
+            s_cat(s_http_result, nb, sizeof(s_http_result));
+            s_cat(s_http_result, ".", sizeof(s_http_result));
+            s_cat(s_http_result, pb, sizeof(s_http_result));
+            s_cat(s_http_result, " - click Get ISO!", sizeof(s_http_result));
+            s_http_color = THEME_ACCENT_CYAN;
+            os_send_notification("BlankOS Updater", "New GitHub release available!");
+        } else {
+            s_copy(s_http_result, "GitHub v", sizeof(s_http_result));
+            s_cat(s_http_result, mb, sizeof(s_http_result));
+            s_cat(s_http_result, ".", sizeof(s_http_result));
+            s_cat(s_http_result, nb, sizeof(s_http_result));
+            s_cat(s_http_result, ".", sizeof(s_http_result));
+            s_cat(s_http_result, pb, sizeof(s_http_result));
+            s_cat(s_http_result, " matches installed OS!", sizeof(s_http_result));
+            if (logs[0]) {
+                s_cat(s_http_result, " ", sizeof(s_http_result));
+                s_cat(s_http_result, logs, sizeof(s_http_result));
+            }
+            s_http_color = THEME_ACCENT_GREEN;
+        }
+    } else {
+        char code_b[12];
+        u64_to_str((uint64_t)tr->status_code, code_b, sizeof(code_b));
+        s_copy(s_http_result, "GitHub HTTP ", sizeof(s_http_result));
+        s_cat(s_http_result, code_b, sizeof(s_http_result));
+        s_cat(s_http_result, ": ", sizeof(s_http_result));
+        char snippet[80];
+        int sp = 0;
+        for (int k = 0; k < tr->bytes_received && sp < 76; k++) {
+            char c = tr->body_buf[k];
+            if (c >= 32 && c < 127) snippet[sp++] = c;
+            else if (c == '\n' || c == '\r') snippet[sp++] = ' ';
+        }
+        snippet[sp] = '\0';
+        s_cat(s_http_result, snippet, sizeof(s_http_result));
+        s_http_color = THEME_ACCENT_AMBER;
+    }
+}
+
 static void start_http_manifest_check(void) {
     if (!s_update_url[0]) {
-        s_copy(s_http_result, "Enter an http:// manifest URL first", sizeof(s_http_result));
+        s_copy(s_http_result, "Enter a GitHub or http(s):// manifest URL first", sizeof(s_http_result));
         s_http_color = THEME_ACCENT_AMBER;
         return;
     }
@@ -320,11 +490,28 @@ static void start_http_manifest_check(void) {
     s_xfer_id = net_http_start(s_update_url, NULL);
     if (s_xfer_id >= 0) {
         play_system_sound((char*)"tool");
-        s_copy(s_http_result, "Connecting to update manifest server...", sizeof(s_http_result));
+        s_copy(s_http_result, "Connecting to GitHub over TLS 1.3...", sizeof(s_http_result));
         s_http_color = THEME_ACCENT_CYAN;
     } else {
         play_system_sound((char*)"error");
-        s_copy(s_http_result, "Failed to initiate HTTP request (check URL / NIC)", sizeof(s_http_result));
+        s_copy(s_http_result, "Failed to initiate HTTPS request (check NIC / DHCP)", sizeof(s_http_result));
+        s_http_color = THEME_ACCENT_ROSE;
+    }
+}
+
+static void start_github_iso_download(void) {
+    if (s_iso_xfer_id >= 0) {
+        net_http_close(s_iso_xfer_id);
+        s_iso_xfer_id = -1;
+    }
+    s_iso_xfer_id = net_http_start(s_iso_dl_url, "blankOS-update.iso");
+    if (s_iso_xfer_id >= 0) {
+        play_system_sound((char*)"tool");
+        s_copy(s_http_result, "Downloading blankOS-update.iso from GitHub...", sizeof(s_http_result));
+        s_http_color = THEME_ACCENT_CYAN;
+    } else {
+        play_system_sound((char*)"error");
+        s_copy(s_http_result, "Failed to start GitHub ISO download", sizeof(s_http_result));
         s_http_color = THEME_ACCENT_ROSE;
     }
 }
@@ -457,22 +644,34 @@ static void updater_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, c
         }
     }
 
-    // Optional HTTP Manifest Update Check Card + Reboot Button
+    // GitHub OTA Update Checker + ISO Download + Reboot Button
     int http_y = list_y + 3 * (card_h + 7) + 2;
     int http_h = ch - (http_y - cy) - 10;
-    if (http_h < 92) http_h = 92;
+    if (http_h < 96) http_h = 96;
 
-    dui_bento_card(px, http_y, pw, http_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 230, s_url_focused || s_xfer_id >= 0);
-    dui_text(px + 14, http_y + 10, "OPTIONAL HTTP UPDATE MANIFEST CHECK", THEME_ACCENT_GREEN, 1);
-    dui_status_pill(px + pw - 114, http_y + 6, 100, 22,
-                    (s_xfer_id >= 0) ? "Fetching" : "HTTP/1.1",
-                    (s_xfer_id >= 0) ? THEME_ACCENT_CYAN : THEME_ACCENT_GREEN,
-                    THEME_SURFACE_ELEVATED, s_xfer_id >= 0);
+    dui_bento_card(px, http_y, pw, http_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 230, s_url_focused || s_xfer_id >= 0 || s_iso_xfer_id >= 0);
+    dui_text(px + 14, http_y + 10, "GITHUB OTA UPDATER (TLS 1.3)", THEME_ACCENT_GREEN, 1);
+
+    if (dui_button_tactile(px + pw - 310, http_y + 6, 94, 22, "version.json", THEME_SURFACE_ELEVATED, false,
+                           in->mx, in->my, in->left_down, in->left_pressed)) {
+        play_system_sound((char*)"click");
+        set_update_url(k_gh_manifest_url);
+    }
+    if (dui_button_tactile(px + pw - 210, http_y + 6, 92, 22, "Releases API", THEME_SURFACE_ELEVATED, false,
+                           in->mx, in->my, in->left_down, in->left_pressed)) {
+        play_system_sound((char*)"click");
+        set_update_url(k_gh_releases_url);
+    }
+    bool net_busy = (s_xfer_id >= 0 || s_iso_xfer_id >= 0);
+    dui_status_pill(px + pw - 112, http_y + 6, 98, 22,
+                    net_busy ? "TLS Active" : (s_update_available ? "Update!" : "GitHub"),
+                    net_busy ? THEME_ACCENT_CYAN : (s_update_available ? THEME_ACCENT_AMBER : THEME_ACCENT_GREEN),
+                    THEME_SURFACE_ELEVATED, net_busy || s_update_available);
 
     int inp_x = px + 14;
     int inp_y = http_y + 32;
-    int inp_w = pw - 266;
-    if (inp_w < 160) inp_w = 160;
+    int inp_w = pw - 340;
+    if (inp_w < 140) inp_w = 140;
     int inp_h = 30;
 
     if (in->left_pressed) {
@@ -482,7 +681,7 @@ static void updater_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, c
     dui_rect_rounded_outline(inp_x, inp_y, inp_w, inp_h, THEME_RADIUS_SM,
                              s_url_focused ? THEME_BORDER_FOCUS : THEME_BORDER_SUBTLE, 220);
     dui_text_ellipsis(inp_x + 8, inp_y + 7, inp_w - 16,
-                      s_url_len > 0 ? s_update_url : "http://...",
+                      s_url_len > 0 ? s_update_url : "https://...",
                       s_url_len > 0 ? THEME_TEXT_PRIMARY : THEME_TEXT_MUTED, 1);
 
     if (s_url_focused && in->has_key) {
@@ -496,17 +695,22 @@ static void updater_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, c
         }
     }
 
-    if (dui_button_tactile(inp_x + inp_w + 8, inp_y, 122, inp_h, "Check Updates", THEME_ACCENT_GREEN, true,
+    if (dui_button_tactile(inp_x + inp_w + 6, inp_y, 114, inp_h, "Check GitHub", THEME_ACCENT_GREEN, true,
                            in->mx, in->my, in->left_down, in->left_pressed)) {
         start_http_manifest_check();
     }
-    if (dui_button_tactile(px + pw - 114, inp_y, 100, inp_h, "Restart OS", THEME_SURFACE_ELEVATED, false,
+    if (dui_button_tactile(inp_x + inp_w + 126, inp_y, 88, inp_h, "Get ISO",
+                           s_update_available ? THEME_ACCENT_CYAN : THEME_SURFACE_ELEVATED, s_update_available,
+                           in->mx, in->my, in->left_down, in->left_pressed)) {
+        start_github_iso_download();
+    }
+    if (dui_button_tactile(px + pw - 108, inp_y, 94, inp_h, "Restart OS", THEME_SURFACE_ELEVATED, false,
                            in->mx, in->my, in->left_down, in->left_pressed)) {
         play_system_sound((char*)"close");
         os_restart();
     }
 
-    // Poll active HTTP manifest transfer non-blockingly
+    // Poll active GitHub manifest or ISO transfer non-blockingly
     if (s_xfer_id >= 0) {
         const HttpTransfer* tr = net_http_get(s_xfer_id);
         if (tr) {
@@ -515,31 +719,12 @@ static void updater_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, c
             dui_progress_ring(px + 26, http_y + 76, 10, 3, s_http_spin, THEME_SURFACE_INPUT, THEME_ACCENT_CYAN);
 
             if (tr->state == HTTP_DONE) {
-                char code_b[12], len_b[16];
-                u64_to_str((uint64_t)tr->status_code, code_b, sizeof(code_b));
-                u64_to_str((uint64_t)tr->bytes_received, len_b, sizeof(len_b));
-                s_copy(s_http_result, "HTTP ", sizeof(s_http_result));
-                s_cat(s_http_result, code_b, sizeof(s_http_result));
-                s_cat(s_http_result, " (", sizeof(s_http_result));
-                s_cat(s_http_result, len_b, sizeof(s_http_result));
-                s_cat(s_http_result, " B): ", sizeof(s_http_result));
-                if (tr->body_buf && tr->bytes_received > 0) {
-                    char snippet[64];
-                    int sp = 0;
-                    for (int k = 0; k < tr->bytes_received && sp < 60; k++) {
-                        char c = tr->body_buf[k];
-                        if (c >= 32 && c < 127) snippet[sp++] = c;
-                        else if (c == '\n' || c == '\r') snippet[sp++] = ' ';
-                    }
-                    snippet[sp] = '\0';
-                    s_cat(s_http_result, snippet, sizeof(s_http_result));
-                }
-                s_http_color = THEME_ACCENT_GREEN;
+                handle_github_manifest_response(tr);
                 play_system_sound((char*)"success");
                 net_http_close(s_xfer_id);
                 s_xfer_id = -1;
             } else if (tr->state == HTTP_ERROR) {
-                s_copy(s_http_result, tr->error_msg[0] ? tr->error_msg : "HTTP manifest check failed", sizeof(s_http_result));
+                s_copy(s_http_result, tr->error_msg[0] ? tr->error_msg : "GitHub check failed", sizeof(s_http_result));
                 s_http_color = THEME_ACCENT_ROSE;
                 play_system_sound((char*)"error");
                 net_http_close(s_xfer_id);
@@ -548,6 +733,40 @@ static void updater_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, c
             dui_text_ellipsis(px + 44, http_y + 68, pw - 58, s_http_result, s_http_color, 1);
         } else {
             s_xfer_id = -1;
+        }
+    } else if (s_iso_xfer_id >= 0) {
+        const HttpTransfer* tr = net_http_get(s_iso_xfer_id);
+        if (tr) {
+            s_http_spin += 0.04f;
+            if (s_http_spin > 1.0f) s_http_spin = 0.0f;
+            dui_progress_ring(px + 26, http_y + 76, 10, 3, s_http_spin, THEME_SURFACE_INPUT, THEME_ACCENT_CYAN);
+            if (tr->state == HTTP_DONE) {
+                char kb[16];
+                u64_to_str((uint64_t)(tr->bytes_received / 1024), kb, sizeof(kb));
+                s_copy(s_http_result, "Saved \\DOWNLOADS\\blankOS-update.iso (", sizeof(s_http_result));
+                s_cat(s_http_result, kb, sizeof(s_http_result));
+                s_cat(s_http_result, " KB)", sizeof(s_http_result));
+                s_http_color = THEME_ACCENT_GREEN;
+                play_system_sound((char*)"success");
+                net_http_close(s_iso_xfer_id);
+                s_iso_xfer_id = -1;
+            } else if (tr->state == HTTP_ERROR) {
+                s_copy(s_http_result, tr->error_msg[0] ? tr->error_msg : "ISO download failed", sizeof(s_http_result));
+                s_http_color = THEME_ACCENT_ROSE;
+                play_system_sound((char*)"error");
+                net_http_close(s_iso_xfer_id);
+                s_iso_xfer_id = -1;
+            } else {
+                char kb[16];
+                u64_to_str((uint64_t)(tr->bytes_received / 1024), kb, sizeof(kb));
+                s_copy(s_http_result, "Downloading blankOS-update.iso: ", sizeof(s_http_result));
+                s_cat(s_http_result, kb, sizeof(s_http_result));
+                s_cat(s_http_result, " KB...", sizeof(s_http_result));
+                s_http_color = THEME_ACCENT_CYAN;
+            }
+            dui_text_ellipsis(px + 44, http_y + 68, pw - 58, s_http_result, s_http_color, 1);
+        } else {
+            s_iso_xfer_id = -1;
         }
     } else {
         dui_text_ellipsis(px + 14, http_y + 68, pw - 28, s_http_result, s_http_color, 1);
@@ -560,6 +779,10 @@ static void updater_on_close(BlankWindow* win) {
     if (s_xfer_id >= 0) {
         net_http_close(s_xfer_id);
         s_xfer_id = -1;
+    }
+    if (s_iso_xfer_id >= 0) {
+        net_http_close(s_iso_xfer_id);
+        s_iso_xfer_id = -1;
     }
 }
 

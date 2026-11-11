@@ -1,218 +1,151 @@
+#include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include "../../src/kernel/os_api.h"
-
-static bool str_eq(const char* a, const char* b) {
-    while (*a && *b) {
-        if (*a != *b) return false;
-        a++; b++;
-    }
-    return (*a == *b);
-}
-
-static void str_copy(char* dst, const char* src, int max_len) {
-    int i = 0;
-    while (src[i] && i < max_len - 1) {
-        dst[i] = src[i];
-        i++;
-    }
-    dst[i] = '\0';
-}
-
-static void int_to_str(int val, char* buf) {
-    if (val == 0) {
-        buf[0] = '0';
-        buf[1] = '\0';
-        return;
-    }
-    char temp[12];
-    int i = 0;
-    while (val > 0) {
-        temp[i++] = '0' + (val % 10);
-        val /= 10;
-    }
-    int j = 0;
-    while (i > 0) {
-        buf[j++] = temp[--i];
-    }
-    buf[j] = '\0';
-}
+#include "store_kit.h"
 
 extern "C" int main(OS_API* api) {
-    int win_w = 640;
-    int win_h = 680;
-    int win_x = (1024 - win_w) / 2;
-    int win_y = (768 - win_h) / 2;
+    SkInputCtx in;
+    sk_init_ctx(api, &in);
+    api->play_sound("open");
 
-    EFI_SIMPLE_POINTER_PROTOCOL* mouse = NULL;
-    EFI_GUID mouse_guid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
-    api->SystemTable->BootServices->LocateProtocol(&mouse_guid, NULL, (void**)&mouse);
-    if (mouse) mouse->Reset(mouse, TRUE);
+    int win_w = (in.sw >= 820) ? 740 : (in.sw - 36);
+    int win_h = (in.sh >= 680) ? 600 : (in.sh - 36);
+    int win_x = (in.sw - win_w) / 2;
+    int win_y = (in.sh - win_h) / 2;
 
-    int mouse_x = 512;
-    int mouse_y = 384;
-    bool mouse_click = false;
+    int tab = 0; // 0=For You, 1=Following, 2=Profile
+    bool compose_focus = true;
+    char compose_buf[72] = "";
+    int compose_len = 0;
+
+    const char* authors[3] = { "@blankos_dev", "@horizon_ui", "@lira_audio" };
+    const char* posts[3] = {
+        "Shipped TLS 1.3 X25519 + ChaCha20-Poly1305 natively in UEFI!",
+        "Tactile Obsidian Bento cards + zero neon glow = pure clarity.",
+        "48kHz stereo Intel HDA FM synthesis feels alive on every click."
+    };
+    int likes[3] = { 128, 84, 67 };
+    bool liked[3] = { false, false, false };
+    int reposts[3] = { 34, 19, 15 };
+    bool reposted[3] = { false, false, false };
+
+    char user_posts[3][72];
+    int user_cnt = 0;
     bool done = false;
 
-    // Interactive Tweeting system
-    bool compose_active = false;
-    char tweet_input[128] = "";
-    int tweet_len = 0;
-
-    // Feed items
-    const char* feed_handles[] = { "@airskye", "@developer", "@blankOS" };
-    const char* feed_texts[] = {
-        "Just finalized the monolithic UEFI graphics compositor! #OSDev",
-        "Writing dyn ELF loaders using position-independent wrappers.",
-        "Version 1.3.1 has landed. V-Sync locking is gorgeous."
-    };
-    int feed_likes[] = { 42, 18, 99 };
-    bool feed_liked[] = { false, false, false };
-
-    // Dynamic user tweets
-    char user_tweets[3][128];
-    int user_likes[3] = { 0, 0, 0 };
-    bool user_liked[3] = { false, false, false };
-    int user_tweet_count = 0;
-
     while (!done) {
-        mouse_click = false;
-        if (mouse) {
-            EFI_SIMPLE_POINTER_STATE mstate;
-            if (mouse->GetState(mouse, &mstate) == EFI_SUCCESS) {
-                int dx = mstate.RelativeMovementX / 1000;
-                int dy = mstate.RelativeMovementY / 1000;
-                mouse_x += dx;
-                mouse_y += dy;
-                if (mouse_x < 0) mouse_x = 0;
-                if (mouse_x > 1023) mouse_x = 1023;
-                if (mouse_y < 0) mouse_y = 0;
-                if (mouse_y > 767) mouse_y = 767;
-                if (mstate.LeftButton) {
-                    mouse_click = true;
-                }
-            }
-        }
+        sk_poll_mouse(&in);
 
         EFI_INPUT_KEY key;
-        if (api->SystemTable->ConIn->ReadKeyStroke(api->SystemTable->ConIn, &key) == EFI_SUCCESS) {
-            if (key.ScanCode == 0x0017) { // Escape
+        while (api->SystemTable->ConIn->ReadKeyStroke(api->SystemTable->ConIn, &key) == EFI_SUCCESS) {
+            if (key.ScanCode == 0x0017) {
+                api->play_sound("close");
                 done = true;
-            }
-
-            if (compose_active) {
-                if (key.UnicodeChar == 8 || key.UnicodeChar == 127) { // Backspace
-                    if (tweet_len > 0) {
-                        tweet_len--;
-                        tweet_input[tweet_len] = '\0';
+            } else if (compose_focus) {
+                if (key.UnicodeChar == 8 || key.UnicodeChar == 127) {
+                    if (compose_len > 0) compose_buf[--compose_len] = '\0';
+                } else if (key.UnicodeChar == 13 || key.UnicodeChar == 10) {
+                    if (compose_len > 0) {
+                        int slot = (user_cnt < 3) ? user_cnt++ : 2;
+                        if (user_cnt == 3 && slot == 2) {
+                            sk_scpy(user_posts[0], user_posts[1], 72);
+                            sk_scpy(user_posts[1], user_posts[2], 72);
+                        }
+                        sk_scpy(user_posts[slot], compose_buf, 72);
+                        compose_buf[0] = '\0';
+                        compose_len = 0;
+                        api->play_sound("send");
                     }
-                } else if (key.UnicodeChar == 13 || key.UnicodeChar == 10) { // Enter
-                    if (tweet_len > 0 && user_tweet_count < 3) {
-                        str_copy(user_tweets[user_tweet_count], tweet_input, 128);
-                        user_likes[user_tweet_count] = 0;
-                        user_liked[user_tweet_count] = false;
-                        user_tweet_count++;
-                        
-                        // Clear input
-                        tweet_input[0] = '\0';
-                        tweet_len = 0;
-                        compose_active = false;
-                        api->play_sound("startup");
-                    }
-                } else if (key.UnicodeChar >= 32 && key.UnicodeChar <= 126 && tweet_len < 127) {
-                    tweet_input[tweet_len++] = (char)key.UnicodeChar;
-                    tweet_input[tweet_len] = '\0';
+                } else if (key.UnicodeChar >= 32 && key.UnicodeChar < 127 && compose_len < 68) {
+                    compose_buf[compose_len++] = (char)key.UnicodeChar;
+                    compose_buf[compose_len] = '\0';
                 }
             }
         }
 
-        // Draw system UI
-        api->draw_wallpaper();
-        api->draw_menubar();
-        api->draw_dock();
-
-        // Draw X window
-        api->draw_window(win_x, win_y, win_w, win_h, "X");
-
-        // Close window hit test
-        if (mouse_click && mouse_x >= win_x + 10 && mouse_x <= win_x + 22 && mouse_y >= win_y + 10 && mouse_y <= win_y + 22) {
+        if (sk_begin_app_frame(api, &in, win_x, win_y, win_w, win_h, "X Horizon", "BLOE Feed", SK_CYAN)) {
             done = true;
         }
 
-        // Header and branding
-        api->draw_rect(win_x + 1, win_y + 33, win_w - 2, 45, 0x15202B, 255);
-        api->draw_line(win_x + 1, win_y + 78, win_x + win_w - 2, win_y + 78, 0x38444D, 1);
-        api->draw_text(win_x + 20, win_y + 46, "Home / X Feed", 0xFFFFFF, 2);
+        int px = win_x + 14;
+        int py = win_y + 46;
+        int pw = win_w - 28;
 
-        // Compose Trigger Button
-        if (api->draw_button(win_x + win_w - 140, win_y + 40, 120, 28, "Post Tweet", mouse_x, mouse_y, mouse_click)) {
-            compose_active = !compose_active;
-            api->play_sound("click");
-        }
-
-        int feed_y = win_y + 90;
-
-        if (compose_active) {
-            // Typing box
-            api->draw_rect_rounded(win_x + 20, feed_y, win_w - 40, 100, 8, 0x192734, 255);
-            api->draw_text(win_x + 35, feed_y + 15, "What's happening? (Press Enter to share)", 0x8899A6, 1);
-            api->draw_text(win_x + 35, feed_y + 45, tweet_input, 0xFFFFFF, 1);
-            
-            feed_y += 115;
-        }
-
-        // Render dynamic user-sent tweets
-        for (int i = user_tweet_count - 1; i >= 0; i--) {
-            api->draw_rect_rounded(win_x + 20, feed_y, win_w - 40, 85, 8, 0x192734, 255);
-            api->draw_text(win_x + 35, feed_y + 12, "@admin", 0x1DA1F2, 1);
-            api->draw_text(win_x + 35, feed_y + 32, user_tweets[i], 0xFFFFFF, 1);
-
-            // Likes button
-            char l_lbl[32] = "Likes: ";
-            char l_num[16];
-            int_to_str(user_likes[i], l_num);
-            char* ptr = l_lbl + 7;
-            const char* n_ptr = l_num;
-            while (*n_ptr) *ptr++ = *n_ptr++;
-            *ptr = '\0';
-
-            if (api->draw_button(win_x + 35, feed_y + 55, 100, 20, user_liked[i] ? "Liked!" : l_lbl, mouse_x, mouse_y, mouse_click)) {
-                user_liked[i] = !user_liked[i];
-                user_likes[i] += user_liked[i] ? 1 : -1;
-                api->play_sound("click");
+        // Top Navigation Pills
+        const char* tab_lbl[3] = { "For You", "Following", "My Posts" };
+        for (int t = 0; t < 3; t++) {
+            if (sk_btn(api, px + t * 124, py, 114, 32, tab_lbl[t], SK_CYAN, tab == t, &in)) {
+                tab = t;
             }
-            
-            feed_y += 95;
         }
+        sk_pill(api, px + pw - 110, py + 4, 110, 24, "Live Stream", SK_GREEN, SK_SURFACE_CARD);
 
-        // Render standard mock feed
-        for (int i = 0; i < 3; i++) {
-            if (feed_y < win_y + win_h - 100) {
-                api->draw_rect_rounded(win_x + 20, feed_y, win_w - 40, 85, 8, 0x192734, 255);
-                api->draw_text(win_x + 35, feed_y + 12, feed_handles[i], 0x1DA1F2, 1);
-                api->draw_text(win_x + 35, feed_y + 32, feed_texts[i], 0xFFFFFF, 1);
+        // Composer Card
+        int cy = py + 42;
+        sk_bento_card(api, px, cy, pw, 84, 16, SK_SURFACE_CARD, compose_focus, SK_CYAN);
+        if (in.left_pressed && sk_pt_in(in.mx, in.my, px + 14, cy + 12, pw - 130, 34)) {
+            compose_focus = true;
+        }
+        sk_bento_card(api, px + 14, cy + 12, pw - 134, 34, 10, SK_SURFACE_INP, compose_focus, SK_BORDER_SPEC);
+        api->draw_text(px + 26, cy + 21,
+                       compose_len > 0 ? compose_buf : "What's building on bare metal?",
+                       compose_len > 0 ? SK_TEXT_PRI : SK_TEXT_MUT, 1);
 
-                char l_lbl[32] = "Likes: ";
-                char l_num[16];
-                int_to_str(feed_likes[i], l_num);
-                char* ptr = l_lbl + 7;
-                const char* n_ptr = l_num;
-                while (*n_ptr) *ptr++ = *n_ptr++;
-                *ptr = '\0';
+        if (sk_btn(api, px + pw - 108, cy + 12, 94, 34, "Post", SK_CYAN, true, &in) && compose_len > 0) {
+            int slot = (user_cnt < 3) ? user_cnt++ : 2;
+            sk_scpy(user_posts[slot], compose_buf, 72);
+            compose_buf[0] = '\0';
+            compose_len = 0;
+            api->play_sound("send");
+        }
+        api->draw_text(px + 18, cy + 56, "Horizon BLOE Social  -  Connected via BlankNet", SK_TEXT_MUT, 1);
 
-                if (api->draw_button(win_x + 35, feed_y + 55, 100, 20, feed_liked[i] ? "Liked!" : l_lbl, mouse_x, mouse_y, mouse_click)) {
-                    feed_liked[i] = !feed_liked[i];
-                    feed_likes[i] += feed_liked[i] ? 1 : -1;
-                    api->play_sound("click");
+        // Feed Cards
+        int fy = cy + 96;
+        if (tab < 2) {
+            for (int i = 0; i < 3; i++) {
+                int y = fy + i * 118;
+                sk_bento_card(api, px, y, pw, 108, 16, SK_SURFACE_CARD, false, SK_BORDER_SUB);
+                api->draw_circle(px + 30, y + 32, 16, (i == 0) ? SK_CYAN : ((i == 1) ? SK_IRIS : SK_TEAL), 240);
+                api->draw_text(px + 58, y + 14, authors[i], SK_CYAN, 1);
+                api->draw_text(px + 58, y + 38, posts[i], SK_TEXT_PRI, 1);
+
+                char lbuf[24] = "Like ";
+                char nb[12];
+                sk_int_to_str(likes[i], nb);
+                sk_scat(lbuf, nb, sizeof(lbuf));
+                if (sk_btn(api, px + 58, y + 66, 98, 28, lbuf, liked[i] ? SK_ROSE : SK_SURFACE_ELEV, liked[i], &in)) {
+                    liked[i] = !liked[i];
+                    likes[i] += liked[i] ? 1 : -1;
+                    api->play_sound(liked[i] ? "success" : "click");
                 }
-                
-                feed_y += 95;
+
+                char rbuf[24] = "Repost ";
+                sk_int_to_str(reposts[i], nb);
+                sk_scat(rbuf, nb, sizeof(rbuf));
+                if (sk_btn(api, px + 166, y + 66, 110, 28, rbuf, reposted[i] ? SK_GREEN : SK_SURFACE_ELEV, reposted[i], &in)) {
+                    reposted[i] = !reposted[i];
+                    reposts[i] += reposted[i] ? 1 : -1;
+                    api->play_sound("notify");
+                }
+            }
+        } else {
+            if (user_cnt == 0) {
+                sk_bento_card(api, px, fy, pw, 120, 16, SK_SURFACE_CARD, false, SK_BORDER_SUB);
+                api->draw_text(px + 24, fy + 48, "No posts yet. Write in the composer above and click Post!", SK_TEXT_SEC, 1);
+            } else {
+                for (int i = 0; i < user_cnt; i++) {
+                    int y = fy + i * 96;
+                    sk_bento_card(api, px, y, pw, 86, 16, SK_SURFACE_ELEV, true, SK_TEAL);
+                    api->draw_text(px + 20, y + 14, "@horizon_user  -  Just now", SK_TEAL, 1);
+                    api->draw_text(px + 20, y + 40, user_posts[i], SK_TEXT_PRI, 1);
+                }
             }
         }
 
-        // Draw cursor
-        api->draw_cursor(mouse_x, mouse_y);
-        api->swap_buffers();
+        sk_end_app_frame(api, &in);
     }
+
     return 0;
 }

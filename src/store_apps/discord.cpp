@@ -2,249 +2,207 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "../../src/kernel/os_api.h"
-
-// Simple string operations
-static bool str_eq(const char* a, const char* b) {
-    while (*a && *b) {
-        if (*a != *b) return false;
-        a++; b++;
-    }
-    return (*a == *b);
-}
-
-static void str_copy(char* dst, const char* src, int max_len) {
-    int i = 0;
-    while (src[i] && i < max_len - 1) {
-        dst[i] = src[i];
-        i++;
-    }
-    dst[i] = '\0';
-}
+#include "store_kit.h"
 
 extern "C" int main(OS_API* api) {
-    int win_w = 800;
-    int win_h = 580;
-    int win_x = (1024 - win_w) / 2;
-    int win_y = (768 - win_h) / 2;
+    SkInputCtx in;
+    sk_init_ctx(api, &in);
+    api->play_sound("open");
 
-    EFI_SIMPLE_POINTER_PROTOCOL* mouse = NULL;
-    EFI_GUID mouse_guid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
-    api->SystemTable->BootServices->LocateProtocol(&mouse_guid, NULL, (void**)&mouse);
-    if (mouse) mouse->Reset(mouse, TRUE);
+    int win_w = (in.sw >= 900) ? 840 : (in.sw - 40);
+    int win_h = (in.sh >= 660) ? 570 : (in.sh - 40);
+    int win_x = (in.sw - win_w) / 2;
+    int win_y = (in.sh - win_h) / 2;
 
-    int mouse_x = 512;
-    int mouse_y = 384;
-    bool mouse_click = false;
+    int active_srv = 0; // 0=BlankOS, 1=Kernel, 2=Audio
+    int active_ch = 0;  // 0=#general, 1=#horizon-ui, 2=#kernel-dev, 3=#releases
+    bool voice_joined = false;
+    bool input_focus = true;
+    int frame = 0;
+
+    char user_msgs[4][8][72];
+    int user_msg_cnt[4] = {0, 0, 0, 0};
+    for (int c = 0; c < 4; c++) {
+        for (int m = 0; m < 8; m++) user_msgs[c][m][0] = '\0';
+    }
+
+    char draft[72] = "";
+    int draft_len = 0;
     bool done = false;
 
-    // App state: 0=Authentication Screen, 1=Chat Screen
-    int state = 0; 
-    char username_input[32] = "admin";
-    int username_len = 5;
-    bool username_active = false;
-
-    // Chat room state
-    int active_channel = 0; // 0=#general, 1=#lounge, 2=#bot-spam
-    
-    // User custom messages
-    char user_messages[5][64];
-    int user_message_count = 0;
-    for (int i=0; i<5; i++) user_messages[i][0] = '\0';
-
-    char current_input[64] = "";
-    int current_input_len = 0;
-    bool input_active = false;
+    const char* srv_tags[3] = { "BL", "KN", "FX" };
+    const uint32_t srv_cols[3] = { SK_IRIS, SK_CYAN, SK_TEAL };
+    const char* ch_names[4] = { "# general", "# horizon-ui", "# kernel-dev", "# releases" };
 
     while (!done) {
-        mouse_click = false;
-        if (mouse) {
-            EFI_SIMPLE_POINTER_STATE mstate;
-            if (mouse->GetState(mouse, &mstate) == EFI_SUCCESS) {
-                int dx = mstate.RelativeMovementX / 1000;
-                int dy = mstate.RelativeMovementY / 1000;
-                mouse_x += dx;
-                mouse_y += dy;
-                if (mouse_x < 0) mouse_x = 0;
-                if (mouse_x > 1023) mouse_x = 1023;
-                if (mouse_y < 0) mouse_y = 0;
-                if (mouse_y > 767) mouse_y = 767;
-                if (mstate.LeftButton) {
-                    mouse_click = true;
-                }
-            }
-        }
+        frame++;
+        sk_poll_mouse(&in);
 
-        // Keyboard handler for typing
         EFI_INPUT_KEY key;
-        if (api->SystemTable->ConIn->ReadKeyStroke(api->SystemTable->ConIn, &key) == EFI_SUCCESS) {
-            if (key.ScanCode == 0x0017) { // Escape
+        while (api->SystemTable->ConIn->ReadKeyStroke(api->SystemTable->ConIn, &key) == EFI_SUCCESS) {
+            if (key.ScanCode == 0x0017) {
+                api->play_sound("close");
                 done = true;
-            }
-            
-            // Handle typing based on active input field
-            if (username_active && state == 0) {
-                if (key.UnicodeChar == 8 || key.UnicodeChar == 127) { // Backspace
-                    if (username_len > 0) {
-                        username_len--;
-                        username_input[username_len] = '\0';
+            } else if (input_focus) {
+                if (key.UnicodeChar == 8 || key.UnicodeChar == 127) {
+                    if (draft_len > 0) draft[--draft_len] = '\0';
+                } else if (key.UnicodeChar == 13 || key.UnicodeChar == 10) {
+                    if (draft_len > 0) {
+                        int idx = user_msg_cnt[active_ch];
+                        if (idx >= 8) {
+                            for (int k = 0; k < 7; k++) sk_scpy(user_msgs[active_ch][k], user_msgs[active_ch][k + 1], 72);
+                            idx = 7;
+                        } else {
+                            user_msg_cnt[active_ch]++;
+                        }
+                        sk_scpy(user_msgs[active_ch][idx], draft, 72);
+                        draft[0] = '\0';
+                        draft_len = 0;
+                        api->play_sound("send");
                     }
-                } else if (key.UnicodeChar >= 32 && key.UnicodeChar <= 126 && username_len < 31) {
-                    username_input[username_len++] = (char)key.UnicodeChar;
-                    username_input[username_len] = '\0';
-                }
-            }
-            else if (input_active && state == 1) {
-                if (key.UnicodeChar == 8 || key.UnicodeChar == 127) { // Backspace
-                    if (current_input_len > 0) {
-                        current_input_len--;
-                        current_input[current_input_len] = '\0';
-                    }
-                } else if (key.UnicodeChar == 13 || key.UnicodeChar == 10) { // Enter
-                    if (current_input_len > 0 && user_message_count < 5) {
-                        str_copy(user_messages[user_message_count], current_input, 64);
-                        user_message_count++;
-                        current_input[0] = '\0';
-                        current_input_len = 0;
-                        api->play_sound("startup"); // Play discord notification tone
-                    }
-                } else if (key.UnicodeChar >= 32 && key.UnicodeChar <= 126 && current_input_len < 63) {
-                    current_input[current_input_len++] = (char)key.UnicodeChar;
-                    current_input[current_input_len] = '\0';
+                } else if (key.UnicodeChar >= 32 && key.UnicodeChar < 127 && draft_len < 68) {
+                    draft[draft_len++] = (char)key.UnicodeChar;
+                    draft[draft_len] = '\0';
                 }
             }
         }
 
-        // Render wallpaper and system components
-        api->draw_wallpaper();
-        api->draw_menubar();
-        api->draw_dock();
-
-        // Draw Discord main window
-        api->draw_window(win_x, win_y, win_w, win_h, "Discord");
-
-        // Close window hit test
-        if (mouse_click && mouse_x >= win_x + 10 && mouse_x <= win_x + 22 && mouse_y >= win_y + 10 && mouse_y <= win_y + 22) {
+        if (sk_begin_app_frame(api, &in, win_x, win_y, win_w, win_h, "Discord Horizon", "BLOE Chat", SK_IRIS)) {
             done = true;
         }
 
-        if (state == 0) { // Auth Screen
-            // Centered Discord Login Form
-            api->draw_rect_rounded(win_x + 200, win_y + 100, 400, 380, 12, 0x2F3136, 255);
-            api->draw_text(win_x + 300, win_y + 140, "Welcome back!", 0xFFFFFF, 2);
-            api->draw_text(win_x + 260, win_y + 180, "We're so excited to see you again!", 0xB9BBBE, 1);
+        int bx = win_x + 12;
+        int by = win_y + 44;
+        int bh = win_h - 56;
 
-            // Input: USERNAME
-            api->draw_text(win_x + 230, win_y + 230, "USERNAME", 0xB9BBBE, 1);
-            api->draw_rect_rounded(win_x + 230, win_y + 250, 340, 40, 6, username_active ? 0x007AFF : 0x202225, 255);
-            api->draw_text(win_x + 245, win_y + 262, username_input, 0xFFFFFF, 1);
-
-            // Toggle active input field on click
-            if (mouse_click) {
-                username_active = (mouse_x >= win_x + 230 && mouse_x <= win_x + 570 && mouse_y >= win_y + 250 && mouse_y <= win_y + 290);
+        // 1. Server Rail
+        int rail_w = 56;
+        sk_bento_card(api, bx, by, rail_w, bh, 14, SK_SURFACE_CARD, false, SK_BORDER_SUB);
+        for (int s = 0; s < 3; s++) {
+            int sy = by + 14 + s * 56;
+            bool sel = (s == active_srv);
+            if (sel) api->draw_rect_rounded(bx + 2, sy + 10, 4, 24, 2, srv_cols[s], 255);
+            if (sk_btn(api, bx + 10, sy + 2, 36, 36, srv_tags[s], srv_cols[s], sel, &in)) {
+                active_srv = s;
             }
+        }
+        api->draw_circle(bx + 28, by + bh - 26, 6, SK_GREEN, 255);
 
-            // Fake label
-            api->draw_text(win_x + 230, win_y + 310, "PASSWORD / TOKEN (AUTOLOGIN)", 0xB9BBBE, 1);
-            api->draw_rect_rounded(win_x + 230, win_y + 330, 340, 40, 6, 0x202225, 255);
-            api->draw_text(win_x + 245, win_y + 342, "â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢", 0x8E9297, 1);
+        // 2. Channels Sidebar
+        int ch_x = bx + rail_w + 10;
+        int ch_w = 178;
+        sk_bento_card(api, ch_x, by, ch_w, bh, 14, SK_SURFACE_CARD, false, SK_BORDER_SUB);
+        api->draw_text(ch_x + 14, by + 14, "HORIZON STUDIO", SK_TEXT_PRI, 1);
+        api->draw_text(ch_x + 14, by + 34, "CHANNELS", SK_TEXT_MUT, 1);
 
-            // Login Button
-            if (api->draw_button(win_x + 230, win_y + 400, 340, 45, "Log In", mouse_x, mouse_y, mouse_click)) {
-                state = 1; // Transition to main chat app
-                api->play_sound("startup"); // Play join sound
-            }
-        } 
-        else if (state == 1) { // Chat Screen
-            // Guilds bar on far left
-            api->draw_rect(win_x + 1, win_y + 33, 70, win_h - 34, 0x202225, 255);
-            api->draw_circle(win_x + 35, win_y + 68, 22, 0x5865F2, 255); // Discord Icon
-            api->draw_text(win_x + 23, win_y + 60, "OS", 0xFFFFFF, 2);
-
-            api->draw_circle(win_x + 35, win_y + 128, 22, 0x35393E, 255);
-            api->draw_text(win_x + 23, win_y + 120, "AC", 0x8E9297, 2);
-
-            // Channel Sidebar
-            int side_x = win_x + 71;
-            api->draw_rect(side_x, win_y + 33, 170, win_h - 34, 0x2F3136, 255);
-            api->draw_text(side_x + 15, win_y + 55, "TEXT CHANNELS", 0x8E9297, 1);
-
-            // Draw Channels List
-            for (int ch = 0; ch < 3; ch++) {
-                int ch_y = win_y + 80 + ch * 40;
-                bool is_active = (active_channel == ch);
-                if (is_active) {
-                    api->draw_rect_rounded(side_x + 8, ch_y, 154, 30, 4, 0x393C43, 255);
-                } else {
-                    if (mouse_click && mouse_x >= side_x + 8 && mouse_x <= side_x + 162 && mouse_y >= ch_y && mouse_y <= ch_y + 30) {
-                        active_channel = ch;
-                        api->play_sound("click");
-                    }
-                }
-                const char* ch_name = (ch == 0) ? "# general" : ((ch == 1) ? "# lounge" : "# bot-spam");
-                uint32_t text_color = is_active ? 0xFFFFFF : 0x8E9297;
-                api->draw_text(side_x + 18, ch_y + 8, ch_name, text_color, 1);
-            }
-
-            // Main chat area
-            int chat_x = win_x + 241;
-            api->draw_rect(chat_x, win_y + 33, win_w - 242, win_h - 34, 0x36393F, 255);
-            
-            // Header bar
-            api->draw_rect(chat_x, win_y + 33, win_w - 242, 48, 0x2F3136, 255);
-            api->draw_line(chat_x, win_y + 81, win_x + win_w - 1, win_y + 81, 0x202225, 1);
-            const char* header_title = (active_channel == 0) ? "# general" : ((active_channel == 1) ? "# lounge" : "# bot-spam");
-            api->draw_text(chat_x + 20, win_y + 48, header_title, 0xFFFFFF, 1);
-
-            // Render Message Feed (Static/Mocked + Dynamic User messages)
-            int msg_y = win_y + 100;
-            if (active_channel == 0) {
-                api->draw_text(chat_x + 20, msg_y, "@airskye", 0x5865F2, 1);
-                api->draw_text(chat_x + 20, msg_y + 20, "Ethernet networking is now active! Test ELFs can connect to the catalog.", 0xDCDDDE, 1);
-                
-                api->draw_text(chat_x + 20, msg_y + 55, "@developer", 0x34C759, 1);
-                api->draw_text(chat_x + 20, msg_y + 75, "The new monolithic UEFI syscall api works perfectly for custom binaries.", 0xDCDDDE, 1);
-            } else if (active_channel == 1) {
-                api->draw_text(chat_x + 20, msg_y, "@admin", 0xE5E5EA, 1);
-                api->draw_text(chat_x + 20, msg_y + 20, "Just chilled out. This OS has such a clean and premium layout.", 0xDCDDDE, 1);
-            } else {
-                api->draw_text(chat_x + 20, msg_y, "@bot", 0xFFCC00, 1);
-                api->draw_text(chat_x + 20, msg_y + 20, "uptime: 42 minutes | active sessions: 1 | RAM usage: 384 KB", 0xDCDDDE, 1);
-            }
-
-            // Draw dynamic user-sent messages
-            for (int m = 0; m < user_message_count; m++) {
-                int item_y = msg_y + 120 + m * 55;
-                if (item_y < win_y + win_h - 130) {
-                    char name_hdr[64] = "@";
-                    char* n_ptr = name_hdr + 1;
-                    const char* u_ptr = username_input;
-                    while (*u_ptr) *n_ptr++ = *u_ptr++;
-                    *n_ptr = '\0';
-                    
-                    api->draw_text(chat_x + 20, item_y, name_hdr, 0x34C759, 1);
-                    api->draw_text(chat_x + 20, item_y + 20, user_messages[m], 0xDCDDDE, 1);
-                }
-            }
-
-            // Message Input field at bottom
-            int input_y = win_y + win_h - 75;
-            api->draw_rect_rounded(chat_x + 20, input_y, win_w - 242 - 40, 42, 8, 0x40444B, 255);
-            
-            if (current_input_len == 0 && !input_active) {
-                api->draw_text(chat_x + 35, input_y + 14, "Message active channel (Click to type...)", 0x72767D, 1);
-            } else {
-                api->draw_text(chat_x + 35, input_y + 14, current_input, 0xFFFFFF, 1);
-            }
-
-            if (mouse_click) {
-                input_active = (mouse_x >= chat_x + 20 && mouse_x <= win_x + win_w - 20 && mouse_y >= input_y && mouse_y <= input_y + 42);
-                if (input_active) username_active = false;
+        for (int c = 0; c < 4; c++) {
+            int cy = by + 56 + c * 38;
+            bool sel = (c == active_ch);
+            if (sk_btn(api, ch_x + 10, cy, ch_w - 20, 32, ch_names[c], SK_IRIS, sel, &in)) {
+                active_ch = c;
             }
         }
 
-        // Draw cursor
-        api->draw_cursor(mouse_x, mouse_y);
-        api->swap_buffers();
+        // Voice Lounge Card at bottom of sidebar
+        int vc_y = by + bh - 92;
+        sk_bento_card(api, ch_x + 10, vc_y, ch_w - 20, 80, 12, SK_SURFACE_INP, voice_joined, SK_GREEN);
+        api->draw_text(ch_x + 20, vc_y + 10, voice_joined ? "Voice: Connected" : "Voice Lounge", voice_joined ? SK_GREEN : SK_TEXT_SEC, 1);
+        if (voice_joined) {
+            for (int b = 0; b < 5; b++) {
+                int bh_bar = 6 + ((frame / 4 + b * 5) % 14);
+                api->draw_rect_rounded(ch_x + 20 + b * 8, vc_y + 42 - bh_bar, 4, bh_bar, 2, SK_GREEN, 235);
+            }
+        }
+        if (sk_btn(api, ch_x + 20, vc_y + 46, ch_w - 40, 26, voice_joined ? "Disconnect" : "Join Audio", SK_GREEN, voice_joined, &in)) {
+            voice_joined = !voice_joined;
+            api->play_sound(voice_joined ? "notify" : "close");
+        }
+
+        // 3. Main Chat Bento Panel
+        int chat_x = ch_x + ch_w + 10;
+        int chat_w = win_x + win_w - 12 - chat_x - 160;
+        sk_bento_card(api, chat_x, by, chat_w, bh, 14, SK_SURFACE_BASE, true, SK_BORDER_SUB);
+        sk_dot_grid(api, chat_x, by, chat_w, 50, 16, SK_IRIS);
+
+        api->draw_text(chat_x + 16, by + 14, ch_names[active_ch], SK_TEXT_PRI, 2);
+        sk_pill(api, chat_x + chat_w - 104, by + 14, 90, 22, "TLS Online", SK_GREEN, SK_SURFACE_CARD);
+        api->draw_line(chat_x + 10, by + 48, chat_x + chat_w - 10, by + 48, SK_BORDER_SUB, 1);
+
+        // Seeded channel messages + live user messages
+        const char* seed_author[4][2] = {
+            { "Studio Bot", "Architect" },
+            { "UI Lead",    "Lira Kit"  },
+            { "Kernel",     "NetStack"  },
+            { "ReleaseBot", "Updater"   }
+        };
+        const char* seed_body[4][2] = {
+            { "Welcome to Horizon v3.1! Press Enter to send.", "BLOE apps now launch on relocated ELF64 segments." },
+            { "Zero-halo Obsidian bento cards look ultra clean.", "Tactile spring detents feel crisp at 60 FPS." },
+            { "TLS 1.3 X25519 + ChaCha20 connected to GitHub.", "GPT FAT32 adaptive cluster sizing is active." },
+            { "BlankOS Horizon v3.1 BLOE Suite ready for ISO.", "OTA manifest verified on github.com/airskye1." }
+        };
+
+        int msg_y = by + 62;
+        for (int i = 0; i < 2; i++) {
+            sk_bento_card(api, chat_x + 14, msg_y, chat_w - 28, 52, 12, SK_SURFACE_CARD, false, SK_BORDER_SUB);
+            api->draw_circle(chat_x + 34, msg_y + 26, 12, (i == 0) ? SK_IRIS : SK_CYAN, 235);
+            api->draw_text(chat_x + 56, msg_y + 8, seed_author[active_ch][i], (i == 0) ? SK_IRIS : SK_CYAN, 1);
+            api->draw_text(chat_x + 56, msg_y + 28, seed_body[active_ch][i], SK_TEXT_PRI, 1);
+            msg_y += 60;
+        }
+
+        int max_show = (bh - 246) / 48;
+        if (max_show < 1) max_show = 1;
+        int start_i = (user_msg_cnt[active_ch] > max_show) ? (user_msg_cnt[active_ch] - max_show) : 0;
+        for (int i = start_i; i < user_msg_cnt[active_ch]; i++) {
+            sk_bento_card(api, chat_x + 14, msg_y, chat_w - 28, 42, 10, SK_SURFACE_ELEV, true, SK_TEAL);
+            api->draw_text(chat_x + 26, msg_y + 6, "You  -  Just now", SK_TEAL, 1);
+            api->draw_text(chat_x + 26, msg_y + 22, user_msgs[active_ch][i], SK_TEXT_PRI, 1);
+            msg_y += 48;
+        }
+
+        // Message Composer Bar
+        int comp_y = by + bh - 50;
+        int comp_w = chat_w - 108;
+        if (in.left_pressed) {
+            input_focus = sk_pt_in(in.mx, in.my, chat_x + 14, comp_y, comp_w, 36);
+        }
+        sk_bento_card(api, chat_x + 14, comp_y, comp_w, 36, 10, SK_SURFACE_INP, input_focus, SK_IRIS);
+        api->draw_text(chat_x + 26, comp_y + 10,
+                       draft_len > 0 ? draft : "Type a message and press Enter...",
+                       draft_len > 0 ? SK_TEXT_PRI : SK_TEXT_MUT, 1);
+
+        if (sk_btn(api, chat_x + 14 + comp_w + 8, comp_y, 72, 36, "Send", SK_IRIS, true, &in) && draft_len > 0) {
+            int idx = user_msg_cnt[active_ch];
+            if (idx >= 8) {
+                for (int k = 0; k < 7; k++) sk_scpy(user_msgs[active_ch][k], user_msgs[active_ch][k + 1], 72);
+                idx = 7;
+            } else {
+                user_msg_cnt[active_ch]++;
+            }
+            sk_scpy(user_msgs[active_ch][idx], draft, 72);
+            draft[0] = '\0';
+            draft_len = 0;
+            api->play_sound("send");
+        }
+
+        // 4. Online Members Drawer
+        int mem_x = chat_x + chat_w + 10;
+        int mem_w = win_x + win_w - 12 - mem_x;
+        sk_bento_card(api, mem_x, by, mem_w, bh, 14, SK_SURFACE_CARD, false, SK_BORDER_SUB);
+        api->draw_text(mem_x + 12, by + 14, "ONLINE - 4", SK_TEXT_MUT, 1);
+        const char* members[4] = { "HorizonBot", "KernelDev", "LiraSynth", "You" };
+        const uint32_t mcols[4] = { SK_IRIS, SK_CYAN, SK_TEAL, SK_GREEN };
+        for (int m = 0; m < 4; m++) {
+            int my = by + 44 + m * 42;
+            api->draw_rect_rounded(mem_x + 8, my, mem_w - 16, 34, 8, SK_SURFACE_INP, 220);
+            api->draw_circle(mem_x + 22, my + 17, 5, mcols[m], 255);
+            api->draw_text(mem_x + 36, my + 9, members[m], SK_TEXT_PRI, 1);
+        }
+
+        api->draw_text(mem_x + 12, by + bh - 26, "ESC: Exit", SK_TEXT_MUT, 1);
+        sk_end_app_frame(api, &in);
     }
+
     return 0;
 }

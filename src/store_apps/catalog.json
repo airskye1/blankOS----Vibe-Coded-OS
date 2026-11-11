@@ -1,0 +1,55 @@
+{
+  "store_name": "BlankOS BLOE App Store",
+  "repository_url": "https://github.com/airskye1/blankOS-App-Store",
+  "version": "3.1.0",
+  "apps": [
+    {
+      "id": "com.blankos.discord",
+      "name": "Discord Horizon",
+      "version": "3.1.0",
+      "author": "BlankOS Studio",
+      "description": "Lira obsidian team chat with channels, voice EQ telemetry, and live messaging.",
+      "download_url": "https://raw.githubusercontent.com/airskye1/blankOS-App-Store/main/apps/discord.bloe"
+    },
+    {
+      "id": "com.blankos.youtube",
+      "name": "YouTube Studio",
+      "version": "3.1.0",
+      "author": "BlankOS Studio",
+      "description": "Bento video player with animated visualizer, seek scrub bar, and OSDev library.",
+      "download_url": "https://raw.githubusercontent.com/airskye1/blankOS-App-Store/main/apps/youtube.bloe"
+    },
+    {
+      "id": "com.blankos.x",
+      "name": "X Social",
+      "version": "3.1.0",
+      "author": "BlankOS Studio",
+      "description": "Live micro-blogging timeline with post composer, likes, and reposts.",
+      "download_url": "https://raw.githubusercontent.com/airskye1/blankOS-App-Store/main/apps/x.bloe"
+    },
+    {
+      "id": "com.blankos.settings",
+      "name": "Control Deck",
+      "version": "3.1.0",
+      "author": "BlankOS Studio",
+      "description": "UEFI hardware inspector, wireless toggles, and interactive acoustic sound tester.",
+      "download_url": "https://raw.githubusercontent.com/airskye1/blankOS-App-Store/main/apps/settings.bloe"
+    },
+    {
+      "id": "com.blankos.blankdrop",
+      "name": "BlankDrop",
+      "version": "3.1.0",
+      "author": "BlankOS Studio",
+      "description": "Proximity AirShare peer transfer with live radar animation and receipt logging.",
+      "download_url": "https://raw.githubusercontent.com/airskye1/blankOS-App-Store/main/apps/blankdrop.bloe"
+    },
+    {
+      "id": "com.blankos.blankbrowser",
+      "name": "MiniSurf Web",
+      "version": "3.1.0",
+      "author": "BlankOS Studio",
+      "description": "Obsidian bento web reader with interactive documentation cards and bookmarks.",
+      "download_url": "https://raw.githubusercontent.com/airskye1/blankOS-App-Store/main/apps/blankbrowser.bloe"
+    }
+  ]
+}

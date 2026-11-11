@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "net.h"
+#include "tls.h"
 
 extern "C" {
     void* kmalloc(uint64_t size);
@@ -187,6 +188,8 @@ typedef struct {
     int              chunk_line_len;
     EFI_FILE_HANDLE  disk_file;
     int              dl_entry_idx;
+    TlsClientCtx*    tls;
+    bool             tls_get_sent;
 } HttpSlot;
 
 static EFI_SYSTEM_TABLE*          g_st = NULL;
@@ -211,6 +214,8 @@ static uint16_t  g_ephemeral_port = 49152;
 
 static ArpEntry  g_arp_cache[ARP_CACHE_SIZE];
 static DnsEntry  g_dns_cache[DNS_CACHE_SIZE];
+static uint8_t   g_tls_plain_buf[65536];
+static uint8_t   g_tls_tx_buf[4096];
 
 // DHCP state
 static uint32_t  g_dhcp_xid = 0;
@@ -1252,6 +1257,11 @@ static void close_slot_disk_file(HttpSlot* s) {
 
 static void http_fail_slot(HttpSlot* s, const char* err) {
     close_slot_disk_file(s);
+    if (s->tls) {
+        tls_client_destroy(s->tls);
+        s->tls = NULL;
+    }
+    s->tls_get_sent = false;
     s->pub.state = HTTP_ERROR;
     s->tcp_phase = TCP_CLOSED;
     n_strcpy(s->pub.error_msg, err ? err : "Transfer error", 128);
@@ -1266,6 +1276,12 @@ static void http_complete_slot(HttpSlot* s) {
         s->snd_nxt++;
         s->fin_sent = true;
     }
+
+    if (s->tls) {
+        tls_client_destroy(s->tls);
+        s->tls = NULL;
+    }
+    s->tls_get_sent = false;
 
     bool saved_ok = false;
     if (s->pub.save_to_disk) {
@@ -1479,20 +1495,23 @@ static bool http_begin_redirect(HttpSlot* s) {
         s->fin_sent = true;
     }
 
+    if (s->tls) {
+        tls_client_destroy(s->tls);
+        s->tls = NULL;
+    }
+    s->tls_get_sent = false;
+
     char next_url[512];
-    if (n_starts_with_ci(s->redirect_location, "https://")) {
-        s->pub.is_https = true;
-        http_fail_slot(s, "HTTPS requires TLS; use HTTP mirror");
-        return true;
-    } else if (n_starts_with_ci(s->redirect_location, "http://")) {
+    if (n_starts_with_ci(s->redirect_location, "https://") || n_starts_with_ci(s->redirect_location, "http://")) {
         n_strcpy(next_url, s->redirect_location, 512);
     } else if (s->redirect_location[0] == '/') {
         int p = 0;
-        n_strcpy(next_url, "http://", 512);
+        n_strcpy(next_url, s->pub.is_https ? "https://" : "http://", 512);
         p = n_strlen(next_url);
         n_strcpy(next_url + p, s->pub.host, 512 - p);
         p = n_strlen(next_url);
-        if (s->pub.port != 80 && p < 500) {
+        uint16_t def_port = s->pub.is_https ? 443 : 80;
+        if (s->pub.port != def_port && p < 500) {
             next_url[p++] = ':';
             int_to_ascii((int)s->pub.port, next_url + p, 512 - p);
             p = n_strlen(next_url);
@@ -1502,15 +1521,16 @@ static bool http_begin_redirect(HttpSlot* s) {
         return false;
     }
 
-    bool dummy_https = false;
+    bool next_https = false;
     char host[128];
     char path[384];
     uint16_t port = 80;
-    if (!parse_http_url(next_url, &dummy_https, host, 128, &port, path, 384)) {
+    if (!parse_http_url(next_url, &next_https, host, 128, &port, path, 384)) {
         return false;
     }
 
     s->redirect_count++;
+    s->pub.is_https = next_https;
     n_strcpy(s->pub.url, next_url, 512);
     n_strcpy(s->pub.host, host, 128);
     n_strcpy(s->pub.path, path, 384);
@@ -1552,6 +1572,21 @@ static bool http_begin_redirect(HttpSlot* s) {
     return true;
 }
 
+static bool tcp_send_payload_chunked(HttpSlot* s, const uint8_t* data, int len) {
+    int off = 0;
+    while (off < len) {
+        int chunk = len - off;
+        if (chunk > 1440) chunk = 1440;
+        uint8_t fl = TCP_ACK | ((off + chunk >= len) ? TCP_PSH : 0);
+        if (!tcp_send_segment(s->remote_ip, s->local_port, s->pub.port, s->snd_nxt, s->rcv_nxt, fl, false, data + off, chunk)) {
+            return false;
+        }
+        s->snd_nxt += (uint32_t)chunk;
+        off += chunk;
+    }
+    return true;
+}
+
 static void http_send_get_request(HttpSlot* s) {
     char req[768];
     int p = 0;
@@ -1560,23 +1595,81 @@ static void http_send_get_request(HttpSlot* s) {
     n_strcpy(req + p, s->pub.path[0] ? s->pub.path : "/", 768 - p); p = n_strlen(req);
     n_strcpy(req + p, " HTTP/1.1\r\nHost: ", 768 - p); p = n_strlen(req);
     n_strcpy(req + p, s->pub.host, 768 - p); p = n_strlen(req);
-    if (s->pub.port != 80 && p < 740) {
+    uint16_t def_port = s->pub.is_https ? 443 : 80;
+    if (s->pub.port != def_port && p < 740) {
         req[p++] = ':';
         int_to_ascii((int)s->pub.port, req + p, 768 - p);
         p = n_strlen(req);
     }
-    n_strcpy(req + p, "\r\nUser-Agent: BlankOS-Horizon/1.0\r\nAccept: */*\r\nConnection: close\r\n\r\n", 768 - p);
+    n_strcpy(req + p, "\r\nUser-Agent: BlankOS-Horizon/3.1\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n", 768 - p);
     p = n_strlen(req);
 
-    tcp_send_segment(s->remote_ip, s->local_port, s->pub.port, s->snd_una, s->rcv_nxt, TCP_PSH | TCP_ACK, false, (const uint8_t*)req, p);
-    if (!s->request_sent) {
-        s->snd_nxt = s->snd_una + (uint32_t)p;
-        s->request_sent = true;
-        s->transfer_start_ms = now_ms();
+    if (s->pub.is_https) {
+        int enc_len = tls_client_encrypt_app(s->tls, (const uint8_t*)req, p, g_tls_tx_buf, (int)sizeof(g_tls_tx_buf));
+        if (enc_len <= 0) {
+            http_fail_slot(s, "TLS encrypt GET failed");
+            return;
+        }
+        tcp_send_payload_chunked(s, g_tls_tx_buf, enc_len);
+        if (!s->request_sent) {
+            s->request_sent = true;
+            s->transfer_start_ms = now_ms();
+        }
+    } else {
+        tcp_send_segment(s->remote_ip, s->local_port, s->pub.port, s->snd_una, s->rcv_nxt, TCP_PSH | TCP_ACK, false, (const uint8_t*)req, p);
+        if (!s->request_sent) {
+            s->snd_nxt = s->snd_una + (uint32_t)p;
+            s->request_sent = true;
+            s->transfer_start_ms = now_ms();
+        }
     }
     s->pub.state = HTTP_SENDING;
     s->phase_start_ms = now_ms();
     s->last_activity_ms = s->phase_start_ms;
+}
+
+static void http_process_rx_bytes(HttpSlot* s, const uint8_t* data, int len);
+
+static void http_process_tls_rx(HttpSlot* s, const uint8_t* data, int len) {
+    if (!s || !data || len <= 0) return;
+    if (!s->tls) {
+        http_fail_slot(s, "TLS context missing");
+        return;
+    }
+
+    int plain_len = 0;
+    int send_len = 0;
+    char err_buf[128];
+    err_buf[0] = '\0';
+    int res = tls_client_feed_rx(
+        s->tls, data, len,
+        g_tls_plain_buf, (int)sizeof(g_tls_plain_buf), &plain_len,
+        g_tls_tx_buf, (int)sizeof(g_tls_tx_buf), &send_len,
+        err_buf, (int)sizeof(err_buf)
+    );
+
+    if (send_len > 0) {
+        tcp_send_payload_chunked(s, g_tls_tx_buf, send_len);
+    }
+    if (res < 0) {
+        http_fail_slot(s, err_buf[0] ? err_buf : "TLS handshake failed");
+        return;
+    }
+    if (tls_client_is_ready(s->tls) && !s->tls_get_sent) {
+        s->tls_get_sent = true;
+        sync_download_entry(s, "Requesting HTTPS...", false);
+        http_send_get_request(s);
+    }
+    if (plain_len > 0) {
+        http_process_rx_bytes(s, g_tls_plain_buf, plain_len);
+    }
+    if (res == 0 && s->pub.state != HTTP_DONE && s->pub.state != HTTP_ERROR) {
+        if (s->headers_parsed) {
+            http_complete_slot(s);
+        } else {
+            http_fail_slot(s, "TLS closed before HTTP headers");
+        }
+    }
 }
 
 static void http_process_rx_bytes(HttpSlot* s, const uint8_t* data, int len) {
@@ -1706,18 +1799,18 @@ static void http_tick_slot(HttpSlot* s) {
             }
         }
     } else if (s->tcp_phase == TCP_ESTABLISHED) {
-        if (s->pub.state == HTTP_SENDING && s->snd_una != s->snd_nxt && elapsed >= 600) {
+        if (!s->pub.is_https && s->pub.state == HTTP_SENDING && s->snd_una != s->snd_nxt && elapsed >= 600) {
             if (s->retries < 3) {
                 s->retries++;
                 http_send_get_request(s);
             } else {
                 http_fail_slot(s, "HTTP request timed out");
             }
-        } else if (now - s->last_activity_ms >= 8000) {
+        } else if (now - s->last_activity_ms >= 14000) {
             if (s->headers_parsed && s->pub.bytes_received > 0 && s->pub.content_length < 0 && !s->is_chunked) {
                 http_complete_slot(s);
             } else {
-                http_fail_slot(s, "HTTP receive timed out");
+                http_fail_slot(s, s->pub.is_https ? "HTTPS receive timed out" : "HTTP receive timed out");
             }
         }
     }
@@ -1864,7 +1957,26 @@ static void handle_tcp_rx(uint32_t src_ip, uint32_t dst_ip, const uint8_t* paylo
             s->tcp_phase = TCP_ESTABLISHED;
             s->retries = 0;
             tcp_send_segment(s->remote_ip, s->local_port, s->pub.port, s->snd_nxt, s->rcv_nxt, TCP_ACK, false, NULL, 0);
-            http_send_get_request(s);
+            if (s->pub.is_https) {
+                s->tls = tls_client_create(s->pub.host, now_ms());
+                s->tls_get_sent = false;
+                if (!s->tls) {
+                    http_fail_slot(s, "TLS allocation failed");
+                    return;
+                }
+                int ch_len = tls_client_build_hello(s->tls, g_tls_tx_buf, (int)sizeof(g_tls_tx_buf));
+                if (ch_len <= 0) {
+                    http_fail_slot(s, "TLS ClientHello failed");
+                    return;
+                }
+                tcp_send_payload_chunked(s, g_tls_tx_buf, ch_len);
+                s->pub.state = HTTP_CONNECTING;
+                s->phase_start_ms = now_ms();
+                s->last_activity_ms = s->phase_start_ms;
+                sync_download_entry(s, "TLS 1.3 Handshake...", false);
+            } else {
+                http_send_get_request(s);
+            }
         }
         return;
     }
@@ -1879,14 +1991,22 @@ static void handle_tcp_rx(uint32_t src_ip, uint32_t dst_ip, const uint8_t* paylo
         if (seq == s->rcv_nxt) {
             s->rcv_nxt += (uint32_t)data_len;
             tcp_send_segment(s->remote_ip, s->local_port, s->pub.port, s->snd_nxt, s->rcv_nxt, TCP_ACK, false, NULL, 0);
-            http_process_rx_bytes(s, data, data_len);
+            if (s->pub.is_https) {
+                http_process_tls_rx(s, data, data_len);
+            } else {
+                http_process_rx_bytes(s, data, data_len);
+            }
         } else if (SEQ_LT(seq, s->rcv_nxt)) {
             uint32_t overlap = s->rcv_nxt - seq;
             if (overlap < (uint32_t)data_len) {
                 int new_len = data_len - (int)overlap;
                 s->rcv_nxt += (uint32_t)new_len;
                 tcp_send_segment(s->remote_ip, s->local_port, s->pub.port, s->snd_nxt, s->rcv_nxt, TCP_ACK, false, NULL, 0);
-                http_process_rx_bytes(s, data + overlap, new_len);
+                if (s->pub.is_https) {
+                    http_process_tls_rx(s, data + overlap, new_len);
+                } else {
+                    http_process_rx_bytes(s, data + overlap, new_len);
+                }
             } else {
                 tcp_send_segment(s->remote_ip, s->local_port, s->pub.port, s->snd_nxt, s->rcv_nxt, TCP_ACK, false, NULL, 0);
             }
@@ -2364,11 +2484,6 @@ int net_http_start(const char* url, const char* save_filename) {
         }
     }
 
-    if (is_https) {
-        http_fail_slot(s, "HTTPS requires TLS; use HTTP mirror");
-        return idx;
-    }
-
     if (!g_initialized || !g_snp || !g_status.nic_present || !g_status.link_up || g_status.ip_addr == 0) {
         http_fail_slot(s, "No network link or DHCP IP");
         return idx;
@@ -2416,6 +2531,11 @@ void net_http_close(int transfer_id) {
     }
 
     close_slot_disk_file(s);
+    if (s->tls) {
+        tls_client_destroy(s->tls);
+        s->tls = NULL;
+    }
+    s->tls_get_sent = false;
     if (s->pub.body_buf) {
         kfree(s->pub.body_buf);
         s->pub.body_buf = NULL;
