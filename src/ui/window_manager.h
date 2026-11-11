@@ -1,7 +1,7 @@
 #ifndef BLANKOS_WINDOW_MANAGER_H
 #define BLANKOS_WINDOW_MANAGER_H
 
-#include "input.h"
+#include "../kernel/input.h"
 #include <efi.h>
 #include <stdint.h>
 #include <stdbool.h>
