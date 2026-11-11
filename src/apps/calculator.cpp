@@ -350,17 +350,17 @@ extern "C" {
                     cursor_y >= save_by && cursor_y <= save_by + 32) {
                     if (save_tape_to_fat32(SystemTable, history_tape, history_count)) {
                         c_strcpy(status_banner, "Saved tape to FAT32 \\CALCTAPE.TXT!", 48);
-                        play_system_sound("update");
+                        play_system_sound((char*)"update");
                     } else {
                         c_strcpy(status_banner, "FAT32 Write Error", 48);
-                        play_system_sound("error");
+                        play_system_sound((char*)"error");
                     }
                 }
                 if (cursor_x >= hpanel_x + 156 && cursor_x <= hpanel_x + 226 &&
                     cursor_y >= save_by && cursor_y <= save_by + 32) {
                     history_count = 0;
                     c_strcpy(status_banner, "History tape cleared", 48);
-                    play_system_sound("click");
+                    play_system_sound((char*)"click");
                 }
 
                 // Clicking any bit in the 16-bit binary inspector toggles that bit!
@@ -386,14 +386,14 @@ extern "C" {
                         current_val = (double)iv;
                         double_to_str(current_val, input_buf);
                         new_number = true;
-                        play_system_sound("click");
+                        play_system_sound((char*)"click");
                     }
                 }
             }
 
             // Execute Bitwise command if triggered
             if (bit_cmd >= 0) {
-                play_system_sound("click");
+                play_system_sound((char*)"click");
                 if (bit_cmd == 3) {
                     // NOT (~)
                     int64_t iv = (int64_t)current_val;
@@ -415,7 +415,7 @@ extern "C" {
 
             // Execute standard calculator command if triggered
             if (action_cmd != 0) {
-                play_system_sound("click");
+                play_system_sound((char*)"click");
                 if (action_cmd >= '0' && action_cmd <= '9') {
                     if (new_number) {
                         input_buf[0] = action_cmd;

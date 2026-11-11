@@ -280,12 +280,12 @@ extern "C" {
                     active_city = Key.UnicodeChar - '1';
                     blankReg_set_int("weather.city_idx", active_city);
                     blankReg_set_string("weather.city_name", cities[active_city].name);
-                    play_system_sound("click");
+                    play_system_sound((char*)"click");
                 } else if (Key.UnicodeChar == 'c' || Key.UnicodeChar == 'C' ||
                            Key.UnicodeChar == 'f' || Key.UnicodeChar == 'F') {
                     use_celsius = !use_celsius;
                     blankReg_set_int("weather.celsius", use_celsius ? 1 : 0);
-                    play_system_sound("click");
+                    play_system_sound((char*)"click");
                 }
             }
 
@@ -325,18 +325,18 @@ extern "C" {
                         active_city = i;
                         blankReg_set_int("weather.city_idx", active_city);
                         blankReg_set_string("weather.city_name", cities[active_city].name);
-                        play_system_sound("click");
+                        play_system_sound((char*)"click");
                     }
                 }
 
-                // Check °F / °C Toggle Pill
+                // Check Â°F / Â°C Toggle Pill
                 int unit_x = win_x + 12;
                 int unit_y = win_y + win_h - 46;
                 if (cursor_x >= unit_x && cursor_x <= unit_x + 200 &&
                     cursor_y >= unit_y && cursor_y <= unit_y + 34) {
                     use_celsius = !use_celsius;
                     blankReg_set_int("weather.celsius", use_celsius ? 1 : 0);
-                    play_system_sound("click");
+                    play_system_sound((char*)"click");
                 }
             }
 
@@ -391,7 +391,7 @@ extern "C" {
                 dui_text(win_x + 200 - tw, cy + 16, t_str, 0xFFFFFF, 2);
             }
 
-            // Unit Toggle Button (°F / °C persisted in BlankReg)
+            // Unit Toggle Button (Â°F / Â°C persisted in BlankReg)
             int unit_x = win_x + 12;
             int unit_y = win_y + win_h - 46;
             dui_rect_rounded(unit_x, unit_y, 200, 34, 10, 0x1E293B, 220);

@@ -261,7 +261,7 @@ static StoreApp store_catalog[6] = {
         "Productivity",
         "Rich text & code editor with live FAT32 Finder VFS.",
         "v2.4",
-        L"EFI\\APPS\\BLANKPAD.PKG",
+        (const CHAR16*)L"EFI\\APPS\\BLANKPAD.PKG",
         0x0A84FF,
         false,
         0
@@ -272,7 +272,7 @@ static StoreApp store_catalog[6] = {
         "Developer",
         "Live CPUID, RDTSC, RAM, Block I/O & PCI inspector.",
         "v2.4",
-        L"EFI\\APPS\\ACTMON.PKG",
+        (const CHAR16*)L"EFI\\APPS\\ACTMON.PKG",
         0x30D158,
         false,
         0
@@ -283,7 +283,7 @@ static StoreApp store_catalog[6] = {
         "Utilities",
         "Kernel configuration & persistent registry editor.",
         "v2.1",
-        L"EFI\\APPS\\BLANKREG.PKG",
+        (const CHAR16*)L"EFI\\APPS\\BLANKREG.PKG",
         0xFF9F0A,
         false,
         0
@@ -294,7 +294,7 @@ static StoreApp store_catalog[6] = {
         "Games",
         "Playable brick-breaker arcade game with ball physics.",
         "v1.8",
-        L"EFI\\APPS\\NEONBRK.PKG",
+        (const CHAR16*)L"EFI\\APPS\\NEONBRK.PKG",
         0xFF2D55,
         false,
         0
@@ -305,7 +305,7 @@ static StoreApp store_catalog[6] = {
         "Creative",
         "Interactive pixel art studio with FAT32 file save/load.",
         "v1.5",
-        L"EFI\\APPS\\CANVAS.PKG",
+        (const CHAR16*)L"EFI\\APPS\\CANVAS.PKG",
         0x5856D6,
         false,
         0
@@ -316,7 +316,7 @@ static StoreApp store_catalog[6] = {
         "Creative",
         "8-pad polyphonic PIT & HDAudio chime synthesizer.",
         "v1.9",
-        L"EFI\\APPS\\SYNTHPAD.PKG",
+        (const CHAR16*)L"EFI\\APPS\\SYNTHPAD.PKG",
         0xAF52DE,
         false,
         0

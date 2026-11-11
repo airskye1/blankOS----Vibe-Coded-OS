@@ -705,12 +705,12 @@ extern "C" {
                             }
                         } else if (act == 24) {
                             apply_url_to_tab(SystemTable, active_tab_idx, tabs[active_tab_idx].url, false);
-                            play_system_sound("click");
+                            play_system_sound((char*)"click");
                         } else if (act == 30) {
                             active_input = 2;
                         } else if (act >= 100 && act < 105) {
                             docs_section = act - 100;
-                            play_system_sound("click");
+                            play_system_sound((char*)"click");
                         } else if (act == 200) {
                             // Real TSC/bus loopback latency benchmark + PCI re-probe
                             uint32_t lo1, hi1, lo2, hi2;
@@ -725,7 +725,7 @@ extern "C" {
                             ping_count++;
                             for (int k = 0; k < 7; k++) ping_history[k] = ping_history[k + 1];
                             ping_history[7] = ping_last_us;
-                            play_system_sound("notification");
+                            play_system_sound((char*)"notification");
                         } else if (act >= 300 && act < 306) {
                             int s_idx = act - 300;
                             last_synth_played = s_idx;
@@ -735,26 +735,26 @@ extern "C" {
                         } else if (act == 400) {
                             scratchpad_text[0] = '\0';
                             str_copy(notes_status_msg, "Buffer cleared", 64);
-                            play_system_sound("click");
+                            play_system_sound((char*)"click");
                         } else if (act == 401) {
                             // Real Save to FAT32 \NOTES.TXT
                             if (fat32_write_file(SystemTable, "\\NOTES.TXT", scratchpad_text, b_strlen(scratchpad_text))) {
                                 str_copy(notes_status_msg, "Saved to FAT32 \\NOTES.TXT!", 64);
-                                play_system_sound("update");
+                                play_system_sound((char*)"update");
                             } else {
                                 str_copy(notes_status_msg, "Error writing \\NOTES.TXT", 64);
-                                play_system_sound("error");
+                                play_system_sound((char*)"error");
                             }
                         } else if (act == 402) {
                             // Real Reload from FAT32 \NOTES.TXT
                             int rbytes = 0;
                             if (fat32_read_file(SystemTable, "\\NOTES.TXT", scratchpad_text, 512, &rbytes)) {
                                 str_copy(notes_status_msg, "Reloaded \\NOTES.TXT from FAT32", 64);
-                                play_system_sound("click");
+                                play_system_sound((char*)"click");
                             }
                         } else if (act == 403) {
                             scratchpad_theme = (scratchpad_theme + 1) % 3;
-                            play_system_sound("click");
+                            play_system_sound((char*)"click");
                         }
                         break;
                     }
@@ -894,7 +894,7 @@ extern "C" {
 
             if (ptype == 0) {
                 // =========================================================
-                // PAGE 0: blank://start — Speed Dial Start Page
+                // PAGE 0: blank://start â€” Speed Dial Start Page
                 // =========================================================
                 dui_gradient_v(content_x, content_y, content_w - 2, content_h - 2, 0x0F172A, 0x090D16);
 
@@ -979,7 +979,7 @@ extern "C" {
 
             } else if (ptype == 1) {
                 // =========================================================
-                // PAGE 1: blank://docs — Kernel & Driver Architecture Docs
+                // PAGE 1: blank://docs â€” Kernel & Driver Architecture Docs
                 // =========================================================
                 dui_rect(content_x, content_y, content_w - 2, content_h - 2, 0x0D1117, 255);
 
@@ -1069,7 +1069,7 @@ extern "C" {
 
             } else if (ptype == 2) {
                 // =========================================================
-                // PAGE 2: blank://pulse — Real Hardware & System Telemetry
+                // PAGE 2: blank://pulse â€” Real Hardware & System Telemetry
                 // =========================================================
                 dui_rect(content_x, content_y, content_w - 2, content_h - 2, 0x090D16, 255);
 
@@ -1079,7 +1079,7 @@ extern "C" {
                 int pci_cnt = pci_get_device_count();
                 if (pci_cnt == 0) pci_cnt = real_pci_count;
 
-                dui_text(content_x + 24, content_y + 18, "BLANK//PULSE  —  LIVE HARDWARE & SYSTEM TELEMETRY", 0x10B981, 2);
+                dui_text(content_x + 24, content_y + 18, "BLANK//PULSE  â€”  LIVE HARDWARE & SYSTEM TELEMETRY", 0x10B981, 2);
                 dui_text(content_x + 24, content_y + 42, cpu_brand, 0x38BDF8, 1);
 
                 int c_w = (content_w - 68) / 2;
@@ -1205,11 +1205,11 @@ extern "C" {
 
             } else if (ptype == 3) {
                 // =========================================================
-                // PAGE 3: blank://synth — Interactive Web Audio Soundboard
+                // PAGE 3: blank://synth â€” Interactive Web Audio Soundboard
                 // =========================================================
                 dui_rect(content_x, content_y, content_w - 2, content_h - 2, 0x0F111A, 255);
 
-                dui_text(content_x + 28, content_y + 20, "BLANK//SYNTH  —  KERNEL AUDIO SOUNDBOARD", 0xF59E0B, 2);
+                dui_text(content_x + 28, content_y + 20, "BLANK//SYNTH  â€”  KERNEL AUDIO SOUNDBOARD", 0xF59E0B, 2);
                 dui_text(content_x + 28, content_y + 46, "Click any pad below to trigger real-time kernel synthesizer cues via play_system_sound()", 0x94A3B8, 1);
 
                 const char* pad_names[6] = { "startup", "notification", "update", "click", "ambient", "error" };
@@ -1266,7 +1266,7 @@ extern "C" {
 
             } else if (ptype == 4) {
                 // =========================================================
-                // PAGE 4: blank://notes — Real FAT32 Persistent Scratchpad
+                // PAGE 4: blank://notes â€” Real FAT32 Persistent Scratchpad
                 // =========================================================
                 uint32_t bg_cols[3] = { 0x0D1117, 0x1C1917, 0x061E16 };
                 uint32_t card_cols[3] = { 0x161B22, 0x292524, 0x0B2E23 };
@@ -1274,7 +1274,7 @@ extern "C" {
 
                 dui_rect(content_x, content_y, content_w - 2, content_h - 2, bg_cols[scratchpad_theme], 255);
 
-                dui_text(content_x + 24, content_y + 18, "BLANK//NOTES  —  FAT32 PERSISTENT SCRATCHPAD", txt_cols[scratchpad_theme], 2);
+                dui_text(content_x + 24, content_y + 18, "BLANK//NOTES  â€”  FAT32 PERSISTENT SCRATCHPAD", txt_cols[scratchpad_theme], 2);
                 dui_text(content_x + 24, content_y + 42, notes_status_msg, 0x34D399, 1);
 
                 // Action buttons: Clear, Save \NOTES.TXT, Load \NOTES.TXT, Theme
@@ -1337,11 +1337,11 @@ extern "C" {
 
             } else if (ptype == 5) {
                 // =========================================================
-                // PAGE 5: file://... — Real FAT32 Volume & File Inspector
+                // PAGE 5: file://... â€” Real FAT32 Volume & File Inspector
                 // =========================================================
                 dui_rect(content_x, content_y, content_w - 2, content_h - 2, 0x090D16, 255);
 
-                dui_text(content_x + 24, content_y + 18, "FILE://  —  REAL UEFI FAT32 VOLUME INSPECTOR", 0x06B6D4, 2);
+                dui_text(content_x + 24, content_y + 18, "FILE://  â€”  REAL UEFI FAT32 VOLUME INSPECTOR", 0x06B6D4, 2);
                 char sub_info[96] = "Target Path: ";
                 str_append(sub_info, file_viewer_path, 96);
                 str_append(sub_info, "   |   Bytes Read: ", 96);

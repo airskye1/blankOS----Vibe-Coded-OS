@@ -34,6 +34,14 @@ if (Test-Path $Makefile) {
     if ($makeContent -notmatch '-j \.bss') {
         Report-Warning "Makefile is missing -j .bss in OBJCOPY! Global variables might cause memory faults." "YELLOW"
     }
+    if ($makeContent -match '--target(=|\s+)efi-app-x86_64') {
+        $makeContent = [regex]::Replace($makeContent, '--target(=|\s+)efi-app-x86_64', '--output-target$1efi-app-x86_64')
+        [System.IO.File]::WriteAllText((Resolve-Path $Makefile).Path, $makeContent)
+        Write-Host "[AUTO-FIX] Replaced '--target efi-app-x86_64' with '--output-target efi-app-x86_64' in Makefile (fixes Binutils 2.46+ boot.so 'file format not recognized')" -ForegroundColor Green
+    }
+    if ($makeContent -notmatch '--output-target(=|\s+)efi-app-x86_64') {
+        Report-Warning "Makefile must use --output-target efi-app-x86_64 in OBJCOPY! Using --target fails on Binutils 2.46+ with 'boot.so: file format not recognized'."
+    }
 
     # Verify that all source files are compiled and linked (prevent orphan files like compositor.cpp)
     $srcFiles = Get-ChildItem -Path $TargetDir -Recurse -Include *.cpp, *.c | Where-Object { $_.FullName -notmatch "boot.c" -and $_.FullName -notmatch "doom_src" -and $_.FullName -notmatch "store_apps" }
@@ -143,12 +151,25 @@ foreach ($file in $files) {
         $changed = $true
         Write-Host "[AUTO-FIX] Added CHAR16* cast to assignments in $relName" -ForegroundColor Green
     }
+
+    # G3. Check for uncast L"..." wide string literals in C++ files (causes wchar_t* to CHAR16* conversion warning)
+    if ($relName -like "*.cpp" -and $content -match '(?<=[,=({:\s])(?<!CHAR16\*\)\s*)(?<!wchar_t\*\)\s*)\bL"') {
+        $newContent = [regex]::Replace($content, '(?<=[,=({:\s])(?<!CHAR16\*\)\s*)(?<!wchar_t\*\)\s*)(\bL"[^"]*")', '(const CHAR16*)$1')
+        if ($newContent -ne $content) {
+            $content = $newContent
+            $changed = $true
+            Write-Host "[AUTO-FIX] Added (const CHAR16*) cast to wide string literal in $relName" -ForegroundColor Green
+        }
+    }
     
-    # H. Auto-fix missing (char*) cast for string literals in blankUI functions to prevent -Wwrite-strings (Safe version restricted to single line)
-    if ($content -match 'blankUI_[a-zA-Z0-9_]+\s*\([^)\r\n]*?"') {
-        $content = [regex]::Replace($content, '(blankUI_[a-zA-Z0-9_]+\s*\([^)\r\n]*?)("[^"]*")', '$1(char*)$2')
-        $changed = $true
-        Write-Host "[AUTO-FIX] Added (char*) cast to blankUI string arguments in $relName" -ForegroundColor Green
+    # H. Auto-fix missing (char*) cast for string literals in blankUI and play_system_sound functions to prevent -Wwrite-strings
+    if ($content -match '(blankUI_[a-zA-Z0-9_]+|play_system_sound)\s*\([^)\r\n]*?"') {
+        $newContent = [regex]::Replace($content, '((?:blankUI_[a-zA-Z0-9_]+|play_system_sound)\s*\([^)\r\n]*?)(?<!\(char\*\)\s*)(?<!\(const char\*\)\s*)("[^"]*")', '$1(char*)$2')
+        if ($newContent -ne $content) {
+            $content = $newContent
+            $changed = $true
+            Write-Host "[AUTO-FIX] Added (char*) cast to string arguments in $relName" -ForegroundColor Green
+        }
     }
 
     # Save if auto-fixes were applied
