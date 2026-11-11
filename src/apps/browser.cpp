@@ -683,6 +683,9 @@ static void cancel_tab_transfer(BrowserTab* t) {
     t->last_net_state = HTTP_IDLE;
 }
 
+static void navigate_tab(int idx, const char* raw_url, bool push_history);
+static bool extract_attr(const char* tag_inner, const char* attr_name, char* out, int max_len);
+
 static void js_handle_outputs(BrowserTab* t) {
     if (!t || !t->js_rt) return;
     char abuf[192];
