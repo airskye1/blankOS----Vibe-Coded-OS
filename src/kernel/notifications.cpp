@@ -62,25 +62,27 @@ void process_notifications(void) {
             continue;
         }
 
-        // Smooth slide-in / fade-out animation
-        float target_slide = (n->ticks_left < 20) ? 0.0f : 1.0f;
-        n->anim_slide = horizon_spring_step(n->anim_slide, target_slide, 0.22f);
+        // Asymmetric Lira reveal: fast damped enter, smooth swift exit
+        float target_slide = (n->ticks_left < 18) ? 0.0f : 1.0f;
+        float rate = (n->ticks_left < 18) ? 0.24f : 0.34f;
+        n->anim_slide = horizon_spring_step(n->anim_slide, target_slide, rate);
+        float ease = horizon_ease_lira(n->anim_slide);
 
         if (shown < 3) {
-            int card_w = 328;
-            int card_h = 66;
+            int card_w = 336;
+            int card_h = 68;
             int target_x = (int)screen_width - card_w - 18;
-            int start_x = (int)screen_width + 20;
-            int cur_x = start_x + (int)((target_x - start_x) * n->anim_slide);
+            int start_x = (int)screen_width + 24;
+            int cur_x = start_x + (int)((target_x - start_x) * ease);
 
-            dui_shadow(cur_x, y_offset, card_w, card_h, THEME_RADIUS_LG, 8);
-            dui_glass_card(cur_x, y_offset, card_w, card_h, THEME_RADIUS_LG, THEME_SURFACE_ELEVATED, 232, true);
+            dui_shadow(cur_x, y_offset, card_w, card_h, THEME_RADIUS_XL, 7);
+            dui_bento_card(cur_x, y_offset, card_w, card_h, THEME_RADIUS_XL, THEME_SURFACE_CARD, 240, true);
 
-            // Aurora indicator bar on left
-            dui_rect_rounded(cur_x + 10, y_offset + 12, 4, card_h - 24, 2, THEME_ACCENT_CYAN, 240);
+            // Crisp live pulse dot instead of sharp rectangle bar
+            dui_circle(cur_x + 18, y_offset + 22, 4, THEME_ACCENT_CYAN, 255);
 
-            dui_text_ellipsis(cur_x + 24, y_offset + 14, card_w - 40, n->title, THEME_TEXT_PRIMARY, 1);
-            dui_text_ellipsis(cur_x + 24, y_offset + 38, card_w - 40, n->message, THEME_TEXT_SECONDARY, 1);
+            dui_text_ellipsis(cur_x + 30, y_offset + 14, card_w - 46, n->title, THEME_TEXT_PRIMARY, 1);
+            dui_text_ellipsis(cur_x + 30, y_offset + 38, card_w - 46, n->message, THEME_TEXT_SECONDARY, 1);
 
             y_offset += card_h + 10;
             shown++;

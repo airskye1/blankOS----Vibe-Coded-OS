@@ -497,7 +497,7 @@ static void start_http_fetch(void) {
     extract_filename_from_url(s_url_buf, fname, sizeof(fname));
     s_active_xfer_id = net_http_start(s_url_buf, fname);
     if (s_active_xfer_id >= 0) {
-        play_system_sound((char*)"click");
+        play_system_sound((char*)"open");
         set_status("Fetching package over HTTP/1.1...", THEME_ACCENT_TEAL);
     } else {
         play_system_sound((char*)"error");
@@ -541,7 +541,7 @@ static void launch_pkg_entry(StorePkg* p) {
         if (!gSystemTable) return;
         CHAR16 wpath[128];
         ascii_to_wide(p->disk_path, wpath, 128);
-        play_system_sound((char*)"click");
+        play_system_sound((char*)"open");
         bool ok = load_and_run_elf(gSystemTable, wpath);
         input_refresh_bounds((int)screen_width, (int)screen_height);
         if (ok) {
@@ -551,29 +551,34 @@ static void launch_pkg_entry(StorePkg* p) {
             set_status("Failed to load ELF64 binary", THEME_ACCENT_ROSE);
         }
     } else if (p->mapped_app != APP_COUNT) {
+        play_system_sound((char*)"open");
         wm_open_app(p->mapped_app);
     } else {
+        play_system_sound((char*)"open");
         wm_request_open_file(p->disk_path);
     }
 }
 
 static void render_downloads_tab(int px, int py, int pw, int ph, const BlankInputState* in) {
-    // URL Input + Fetch Bar
-    dui_glass_card(px, py, pw, 114, THEME_RADIUS_MD, THEME_SURFACE_CARD, 225, false);
-    dui_text(px + 14, py + 12, "HTTP PACKAGE & MANIFEST FETCHER (SAVES TO \\DOWNLOADS\\)", THEME_ACCENT_TEAL, 1);
+    bool pointer_down = (in && in->left_down);
 
-    int inp_x = px + 14;
+    // Hero URL Input + Fetch Bento Card
+    dui_bento_card(px, py, pw, 118, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 232, s_url_focused);
+    dui_dot_grid_overlay(px + 12, py + 10, pw - 24, 98, 16, THEME_TEXT_PRIMARY, 12);
+    dui_text(px + 16, py + 12, "HTTP PACKAGE & MANIFEST FETCHER (SAVES TO \\DOWNLOADS\\)", THEME_ACCENT_TEAL, 1);
+
+    int inp_x = px + 16;
     int inp_y = py + 36;
-    int inp_w = pw - 124;
+    int inp_w = pw - 130;
     int inp_h = 34;
 
     if (in->left_pressed) {
         s_url_focused = pt_in(in->mx, in->my, inp_x, inp_y, inp_w, inp_h);
     }
-    dui_rect_rounded(inp_x, inp_y, inp_w, inp_h, THEME_RADIUS_SM, THEME_SURFACE_INPUT, 240);
-    dui_rect_rounded_outline(inp_x, inp_y, inp_w, inp_h, THEME_RADIUS_SM,
+    dui_rect_rounded(inp_x, inp_y, inp_w, inp_h, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 240);
+    dui_rect_rounded_outline(inp_x, inp_y, inp_w, inp_h, THEME_RADIUS_MD,
                              s_url_focused ? THEME_BORDER_FOCUS : THEME_BORDER_SUBTLE, 220);
-    dui_text_ellipsis(inp_x + 10, inp_y + 9, inp_w - 20,
+    dui_text_ellipsis(inp_x + 12, inp_y + 9, inp_w - 24,
                       s_url_len > 0 ? s_url_buf : "http://...",
                       s_url_len > 0 ? THEME_TEXT_PRIMARY : THEME_TEXT_MUTED, 1);
 
@@ -588,8 +593,8 @@ static void render_downloads_tab(int px, int py, int pw, int ph, const BlankInpu
         }
     }
 
-    if (dui_button(px + pw - 100, inp_y, 86, inp_h, "Fetch", THEME_ACCENT_TEAL, true,
-                   in->mx, in->my, in->left_pressed)) {
+    if (dui_button_tactile(px + pw - 104, inp_y, 88, inp_h, "Fetch", THEME_ACCENT_TEAL, true,
+                           in->mx, in->my, pointer_down, in->left_pressed)) {
         start_http_fetch();
     }
 
@@ -601,32 +606,33 @@ static void render_downloads_tab(int px, int py, int pw, int ph, const BlankInpu
         "http://info.cern.ch/"
     };
     for (int i = 0; i < 3; i++) {
-        int bx = px + 14 + i * 144;
-        if (dui_button(bx, py + 78, 136, 26, preset_labels[i], THEME_SURFACE_ELEVATED, false,
-                       in->mx, in->my, in->left_pressed)) {
+        int bx = px + 16 + i * 146;
+        if (dui_button_tactile(bx, py + 79, 138, 26, preset_labels[i], THEME_SURFACE_ELEVATED, false,
+                               in->mx, in->my, pointer_down, in->left_pressed)) {
             s_copy(s_url_buf, preset_urls[i], sizeof(s_url_buf));
             s_url_len = s_len(s_url_buf);
             s_url_focused = true;
-            play_system_sound((char*)"click");
+            play_system_sound((char*)"tab");
         }
     }
 
     // Poll active transfer if running
-    int list_y = py + 124;
+    int list_y = py + 128;
     if (s_active_xfer_id >= 0) {
         const HttpTransfer* tr = net_http_get(s_active_xfer_id);
         if (tr) {
-            dui_glass_card(px, list_y, pw, 60, THEME_RADIUS_MD, THEME_SURFACE_ELEVATED, 235, true);
+            dui_bento_card(px, list_y, pw, 64, THEME_RADIUS_LG, THEME_SURFACE_ELEVATED, 238, true);
             const char* st_txt = "Idle";
+            uint32_t pill_col = THEME_ACCENT_CYAN;
             if (tr->state == HTTP_RESOLVING_DNS) st_txt = "Resolving DNS...";
             else if (tr->state == HTTP_CONNECTING) st_txt = "Connecting TCP...";
             else if (tr->state == HTTP_SENDING) st_txt = "Sending HTTP GET...";
             else if (tr->state == HTTP_RECEIVING) st_txt = "Downloading...";
-            else if (tr->state == HTTP_DONE) st_txt = "Completed";
-            else if (tr->state == HTTP_ERROR) st_txt = tr->error_msg[0] ? tr->error_msg : "Transfer error";
+            else if (tr->state == HTTP_DONE) { st_txt = "Completed"; pill_col = THEME_ACCENT_GREEN; }
+            else if (tr->state == HTTP_ERROR) { st_txt = tr->error_msg[0] ? tr->error_msg : "Transfer error"; pill_col = THEME_ACCENT_ROSE; }
 
-            dui_text_ellipsis(px + 14, list_y + 10, pw - 140, tr->save_filename, THEME_TEXT_PRIMARY, 1);
-            dui_text_ellipsis(px + 14, list_y + 30, pw - 140, st_txt, THEME_ACCENT_CYAN, 1);
+            dui_text_ellipsis(px + 16, list_y + 12, pw - 210, tr->save_filename, THEME_TEXT_PRIMARY, 1);
+            dui_status_pill(px + 16, list_y + 34, 170, 22, st_txt, pill_col, THEME_SURFACE_INPUT, tr->state != HTTP_ERROR);
 
             float prog = 0.25f;
             if (tr->content_length > 0) {
@@ -635,10 +641,10 @@ static void render_downloads_tab(int px, int py, int pw, int ph, const BlankInpu
             } else if (tr->state == HTTP_DONE) {
                 prog = 1.0f;
             }
-            dui_progress_ring(px + pw - 36, list_y + 30, 18, 4, prog, THEME_SURFACE_INPUT, THEME_ACCENT_TEAL);
+            dui_progress_ring(px + pw - 36, list_y + 32, 18, 4, prog, THEME_SURFACE_INPUT, THEME_ACCENT_TEAL);
 
             if (tr->state == HTTP_DONE) {
-                play_system_sound((char*)"download");
+                play_system_sound((char*)"success");
                 os_send_notification("Software Hub", "Download saved to \\DOWNLOADS\\");
                 set_status("HTTP fetch complete - saved to \\DOWNLOADS\\", THEME_ACCENT_GREEN);
                 net_http_close(s_active_xfer_id);
@@ -650,7 +656,7 @@ static void render_downloads_tab(int px, int py, int pw, int ph, const BlankInpu
                 net_http_close(s_active_xfer_id);
                 s_active_xfer_id = -1;
             }
-            list_y += 70;
+            list_y += 74;
         } else {
             s_active_xfer_id = -1;
         }
@@ -660,28 +666,29 @@ static void render_downloads_tab(int px, int py, int pw, int ph, const BlankInpu
     int dl_cnt = net_download_count();
     int box_h = ph - (list_y - py);
     if (box_h < 80) box_h = 80;
-    dui_glass_card(px, list_y, pw, box_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 220, false);
-    dui_text(px + 14, list_y + 12, "DOWNLOADED FILES (\\DOWNLOADS\\)", THEME_TEXT_SECONDARY, 1);
+    dui_bento_card(px, list_y, pw, box_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 224, false);
+    dui_text(px + 16, list_y + 12, "DOWNLOADED FILES (\\DOWNLOADS\\)", THEME_TEXT_SECONDARY, 1);
 
     if (dl_cnt == 0) {
-        dui_text(px + 14, list_y + 44, "No HTTP downloads in this session yet.", THEME_TEXT_MUTED, 1);
-        dui_text(px + 14, list_y + 66, "Enter an http:// URL above and click Fetch to download real files.", THEME_TEXT_MUTED, 1);
+        dui_text(px + 16, list_y + 44, "No HTTP downloads in this session yet.", THEME_TEXT_MUTED, 1);
+        dui_text(px + 16, list_y + 66, "Enter an http:// URL above and click Fetch to download real files.", THEME_TEXT_MUTED, 1);
         return;
     }
 
-    int max_rows = (box_h - 46) / 48;
+    int max_rows = (box_h - 48) / 50;
     if (max_rows < 1) max_rows = 1;
     for (int i = 0; i < dl_cnt && i < max_rows; i++) {
         const DownloadEntry* de = net_get_download(i);
         if (!de) continue;
-        int ry = list_y + 38 + i * 48;
-        dui_rect_rounded(px + 10, ry, pw - 20, 42, THEME_RADIUS_SM, THEME_SURFACE_INPUT, 210);
-        dui_text_ellipsis(px + 20, ry + 6, pw - 240, de->filename, THEME_TEXT_PRIMARY, 1);
-        dui_text_ellipsis(px + 20, ry + 24, pw - 240, de->status_text, THEME_TEXT_SECONDARY, 1);
+        int ry = list_y + 38 + i * 50;
+        bool dl_ok = (de->state == HTTP_DONE && de->saved_ok);
+        dui_bento_card(px + 12, ry, pw - 24, 44, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 215, dl_ok);
+        dui_text_ellipsis(px + 24, ry + 7, pw - 250, de->filename, THEME_TEXT_PRIMARY, 1);
+        dui_text_ellipsis(px + 24, ry + 24, pw - 250, de->status_text, THEME_TEXT_SECONDARY, 1);
 
-        if (de->state == HTTP_DONE && de->saved_ok) {
-            if (dui_button(px + pw - 206, ry + 7, 114, 28, "Install App", THEME_ACCENT_TEAL, true,
-                           in->mx, in->my, in->left_pressed)) {
+        if (dl_ok) {
+            if (dui_button_tactile(px + pw - 212, ry + 8, 116, 28, "Install App", THEME_ACCENT_TEAL, true,
+                                   in->mx, in->my, pointer_down, in->left_pressed)) {
                 uint32_t max_copy = 4 * 1024 * 1024;
                 uint8_t* copy_buf = NULL;
                 if (gSystemTable && gSystemTable->BootServices &&
@@ -703,15 +710,18 @@ static void render_downloads_tab(int px, int py, int pw, int ph, const BlankInpu
                             set_status("Could not write to \\EFI\\APPS\\", THEME_ACCENT_ROSE);
                         }
                     } else {
+                        play_system_sound((char*)"error");
                         set_status("Downloaded file empty or unreadable", THEME_ACCENT_AMBER);
                     }
                     gSystemTable->BootServices->FreePool(copy_buf);
                 } else {
+                    play_system_sound((char*)"error");
                     set_status("Out of UEFI pool memory during install", THEME_ACCENT_ROSE);
                 }
             }
-            if (dui_button(px + pw - 84, ry + 7, 66, 28, "Open", THEME_SURFACE_ELEVATED, false,
-                           in->mx, in->my, in->left_pressed)) {
+            if (dui_button_tactile(px + pw - 88, ry + 8, 66, 28, "Open", THEME_SURFACE_ELEVATED, false,
+                                   in->mx, in->my, pointer_down, in->left_pressed)) {
+                play_system_sound((char*)"open");
                 wm_request_open_file(de->disk_path);
             }
         }
@@ -721,6 +731,8 @@ static void render_downloads_tab(int px, int py, int pw, int ph, const BlankInpu
 static void store_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, const BlankInputState* in) {
     (void)win;
     if (!s_scanned) scan_all_packages();
+
+    bool pointer_down = (in && in->left_down);
 
     int pad = 16;
     int px = cx + pad;
@@ -737,7 +749,7 @@ static void store_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, con
                           in->mx, in->my, in->left_pressed)) {
             s_active_tab = t;
             s_scroll_idx = 0;
-            play_system_sound((char*)"click");
+            play_system_sound((char*)"tab");
         }
         tx += tw + 8;
     }
@@ -745,19 +757,48 @@ static void store_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, con
     if (dui_icon_pill(px + pw - 122, top_y, 122, 32, "Rescan Disk", 16, false,
                       in->mx, in->my, in->left_pressed)) {
         scan_all_packages();
-        play_system_sound((char*)"click");
+        play_system_sound((char*)"tool");
         set_status("Scanned \\EFI\\APPS\\ and \\APPS\\ on UEFI volumes", THEME_ACCENT_CYAN);
     }
 
+    int inst_cnt = 0;
+    for (int i = 0; i < s_pkg_count; i++) if (s_pkgs[i].installed) inst_cnt++;
+    char cbuf[32], n1[12], n2[12];
+    u64_to_str((uint64_t)inst_cnt, n1, sizeof(n1));
+    u64_to_str((uint64_t)s_pkg_count, n2, sizeof(n2));
+    s_copy(cbuf, n1, sizeof(cbuf));
+    s_cat(cbuf, "/", sizeof(cbuf));
+    s_cat(cbuf, n2, sizeof(cbuf));
+    s_cat(cbuf, " Active", sizeof(cbuf));
+
     // Status strip at bottom
-    int foot_h = 26;
-    int body_y = top_y + 44;
+    int foot_h = 28;
+    int body_y = top_y + 42;
     int body_h = ch - (body_y - cy) - foot_h - 8;
     if (body_h < 100) body_h = 100;
 
     if (s_active_tab == 2) {
         render_downloads_tab(px, body_y, pw, body_h, in);
     } else {
+        // Lira Hero Header Bento Card
+        int hero_h = 58;
+        dui_bento_card(px, body_y, pw, hero_h, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 232, false);
+        dui_dot_grid_overlay(px + 12, body_y + 8, pw - 24, hero_h - 16, 14, THEME_TEXT_PRIMARY, 12);
+        dui_text_ellipsis(px + 18, body_y + 11, pw - 260, "BlankOS Software Hub", THEME_TEXT_PRIMARY, 1);
+        dui_text_ellipsis(px + 18, body_y + 31, pw - 260, "UEFI SimpleFileSystem & HTTP/1.1 Package Catalog", THEME_TEXT_SECONDARY, 1);
+
+        NetStatus ns;
+        net_get_status(&ns);
+        bool net_ok = (ns.nic_present && ns.link_up && ns.dhcp_bound);
+        dui_status_pill(px + pw - 228, body_y + 18, 102, 22, net_ok ? "Net Live" : "Offline",
+                        net_ok ? THEME_ACCENT_TEAL : THEME_ACCENT_AMBER, THEME_SURFACE_ELEVATED, net_ok);
+        dui_status_pill(px + pw - 118, body_y + 18, 102, 22, cbuf,
+                        inst_cnt > 0 ? THEME_ACCENT_GREEN : THEME_TEXT_MUTED, THEME_SURFACE_ELEVATED, inst_cnt > 0);
+
+        int grid_y = body_y + hero_h + 10;
+        int grid_h = body_h - hero_h - 10;
+        if (grid_h < 80) grid_h = 80;
+
         // Filter matching packages
         int vis_indices[MAX_STORE_PKGS];
         int vis_count = 0;
@@ -766,27 +807,27 @@ static void store_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, con
             vis_indices[vis_count++] = i;
         }
 
-        // Compact 2-column grid of Spatial Glass package cards
-        int card_h = 112;
+        // Compact 2-column grid of Lira Bento package cards
+        int card_h = 124;
         int gap = 12;
         int cols = (pw >= 520) ? 2 : 1;
         int card_w = (cols == 2) ? (pw - gap) / 2 : pw;
-        int rows_vis = (body_h - 32) / (card_h + gap);
+        int rows_vis = (grid_h - 32) / (card_h + gap);
         if (rows_vis < 1) rows_vis = 1;
         int total_rows = (vis_count + cols - 1) / cols;
         int max_scroll = total_rows - rows_vis;
         if (max_scroll < 0) max_scroll = 0;
 
-        if (pt_in(in->mx, in->my, px, body_y, pw, body_h) && in->scroll_y != 0) {
+        if (pt_in(in->mx, in->my, px, grid_y, pw, grid_h) && in->scroll_y != 0) {
             s_scroll_idx -= in->scroll_y;
         }
         if (s_scroll_idx < 0) s_scroll_idx = 0;
         if (s_scroll_idx > max_scroll) s_scroll_idx = max_scroll;
 
         if (vis_count == 0) {
-            dui_glass_card(px, body_y, pw, 120, THEME_RADIUS_MD, THEME_SURFACE_CARD, 220, false);
-            dui_text(px + 20, body_y + 32, "No installed .PKG or .ELF packages found on disk.", THEME_TEXT_SECONDARY, 1);
-            dui_text(px + 20, body_y + 56, "Switch to 'All Packages' to install or 'Downloads' to fetch via HTTP.", THEME_TEXT_MUTED, 1);
+            dui_bento_card(px, grid_y, pw, 120, THEME_RADIUS_LG, THEME_SURFACE_CARD, 224, false);
+            dui_text(px + 20, grid_y + 32, "No installed .PKG or .ELF packages found on disk.", THEME_TEXT_SECONDARY, 1);
+            dui_text(px + 20, grid_y + 56, "Switch to 'All Packages' to install or 'Downloads' to fetch via HTTP.", THEME_TEXT_MUTED, 1);
         } else {
             int start_idx = s_scroll_idx * cols;
             int max_draw = rows_vis * cols;
@@ -795,20 +836,21 @@ static void store_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, con
                 int r = v / cols;
                 int c = v % cols;
                 int kx = px + c * (card_w + gap);
-                int ky = body_y + r * (card_h + gap);
+                int ky = grid_y + r * (card_h + gap);
 
-                dui_glass_card(kx, ky, card_w, card_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 225, false);
+                dui_bento_card(kx, ky, card_w, card_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 232, p->installed);
 
-                // App badge
-                dui_rect_rounded(kx + 12, ky + 14, 42, 42, 10, p->accent, 235);
+                // App badge with crisp 1px specular border (no blurry halo)
+                dui_rect_rounded(kx + 14, ky + 14, 42, 42, THEME_RADIUS_MD, p->accent, 235);
+                dui_rect_rounded_outline(kx + 14, ky + 14, 42, 42, THEME_RADIUS_MD, THEME_BORDER_SPECULAR, 165);
                 if (p->mapped_app != APP_COUNT) {
-                    dui_draw_squircle_icon(kx + 15, ky + 17, 36, (int)p->mapped_app, false);
+                    dui_draw_squircle_icon(kx + 17, ky + 17, 36, (int)p->mapped_app, false);
                 } else {
-                    dui_draw_sys_icon(kx + 22, ky + 24, 22, p->is_elf ? 7 : 8, 0xFFFFFF);
+                    dui_draw_sys_icon(kx + 24, ky + 24, 22, p->is_elf ? 7 : 8, 0xFFFFFF);
                 }
 
-                // Title, badge & version
-                dui_text_ellipsis(kx + 64, ky + 14, card_w - 156, p->name, THEME_TEXT_PRIMARY, 1);
+                // Title, meta & description
+                dui_text_ellipsis(kx + 66, ky + 14, card_w - 166, p->name, THEME_TEXT_PRIMARY, 1);
                 char meta[48];
                 s_copy(meta, p->category, sizeof(meta));
                 s_cat(meta, " | ", sizeof(meta));
@@ -820,22 +862,27 @@ static void store_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, con
                     s_cat(meta, bstr, sizeof(meta));
                     s_cat(meta, "B)", sizeof(meta));
                 }
-                dui_text_ellipsis(kx + 64, ky + 34, card_w - 156, meta, THEME_TEXT_SECONDARY, 1);
-                dui_text_ellipsis(kx + 12, ky + 68, card_w - 24, p->desc, THEME_TEXT_MUTED, 1);
-                dui_text_ellipsis(kx + 12, ky + 88, card_w - 160, p->disk_path, THEME_ACCENT_TEAL, 1);
+                dui_text_ellipsis(kx + 66, ky + 34, card_w - 166, meta, THEME_TEXT_SECONDARY, 1);
+                dui_text_ellipsis(kx + 14, ky + 72, card_w - 28, p->desc, THEME_TEXT_MUTED, 1);
+                dui_text_ellipsis(kx + 14, ky + 96, card_w - 130, p->disk_path, THEME_ACCENT_TEAL, 1);
 
-                int bx = kx + card_w - 86;
+                dui_status_pill(kx + card_w - 108, ky + card_h - 30, 94, 22,
+                                p->installed ? "Installed" : "Available",
+                                p->installed ? THEME_ACCENT_GREEN : p->accent,
+                                THEME_SURFACE_ELEVATED, p->installed);
+
+                int bx = kx + card_w - 90;
                 if (p->installed) {
-                    if (dui_button(bx, ky + 14, 74, 28, "Launch", THEME_ACCENT_TEAL, true,
-                                   in->mx, in->my, in->left_pressed)) {
+                    if (dui_button_tactile(bx, ky + 14, 76, 28, "Launch", THEME_ACCENT_TEAL, true,
+                                           in->mx, in->my, pointer_down, in->left_pressed)) {
                         launch_pkg_entry(p);
                     }
-                    if (dui_button(bx, ky + 48, 74, 24, "Remove", THEME_SURFACE_ELEVATED, false,
-                                   in->mx, in->my, in->left_pressed)) {
+                    if (dui_button_tactile(bx, ky + 45, 76, 24, "Remove", THEME_SURFACE_ELEVATED, false,
+                                           in->mx, in->my, pointer_down, in->left_pressed)) {
                         if (fs_delete_file(p->disk_path)) {
                             p->installed = false;
                             p->disk_bytes = 0;
-                            play_system_sound((char*)"click");
+                            play_system_sound((char*)"close");
                             set_status("Removed package file from disk", THEME_TEXT_SECONDARY);
                             if (!p->is_builtin_repo) scan_all_packages();
                         } else {
@@ -844,8 +891,8 @@ static void store_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, con
                         }
                     }
                 } else {
-                    if (dui_button(bx, ky + 14, 74, 28, "Install", THEME_ACCENT_IRIS, true,
-                                   in->mx, in->my, in->left_pressed)) {
+                    if (dui_button_tactile(bx, ky + 14, 76, 28, "Install", THEME_ACCENT_IRIS, true,
+                                           in->mx, in->my, pointer_down, in->left_pressed)) {
                         install_pkg_entry(p);
                     }
                 }
@@ -853,14 +900,16 @@ static void store_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, con
 
             // Scroll controls if needed
             if (max_scroll > 0) {
-                int sy = body_y + body_h - 28;
-                if (dui_button(px, sy, 84, 24, "Scroll Up", THEME_SURFACE_ELEVATED, false,
-                               in->mx, in->my, in->left_pressed) && s_scroll_idx > 0) {
+                int sy = grid_y + grid_h - 28;
+                if (dui_button_tactile(px, sy, 86, 26, "Scroll Up", THEME_SURFACE_ELEVATED, false,
+                                       in->mx, in->my, pointer_down, in->left_pressed) && s_scroll_idx > 0) {
                     s_scroll_idx--;
+                    play_system_sound((char*)"tab");
                 }
-                if (dui_button(px + 92, sy, 94, 24, "Scroll Dn", THEME_SURFACE_ELEVATED, false,
-                               in->mx, in->my, in->left_pressed) && s_scroll_idx < max_scroll) {
+                if (dui_button_tactile(px + 94, sy, 94, 26, "Scroll Dn", THEME_SURFACE_ELEVATED, false,
+                                       in->mx, in->my, pointer_down, in->left_pressed) && s_scroll_idx < max_scroll) {
                     s_scroll_idx++;
+                    play_system_sound((char*)"tab");
                 }
             }
         }
@@ -868,18 +917,9 @@ static void store_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, con
 
     // Bottom status bar
     dui_line(cx + 8, cy + ch - foot_h - 4, cx + cw - 8, cy + ch - foot_h - 4, THEME_BORDER_SUBTLE, 180);
-    dui_text_ellipsis(px, cy + ch - foot_h + 2, pw - 120, s_status_msg, s_status_color, 1);
-
-    int inst_cnt = 0;
-    for (int i = 0; i < s_pkg_count; i++) if (s_pkgs[i].installed) inst_cnt++;
-    char cbuf[32], n1[12], n2[12];
-    u64_to_str((uint64_t)inst_cnt, n1, sizeof(n1));
-    u64_to_str((uint64_t)s_pkg_count, n2, sizeof(n2));
-    s_copy(cbuf, n1, sizeof(cbuf));
-    s_cat(cbuf, "/", sizeof(cbuf));
-    s_cat(cbuf, n2, sizeof(cbuf));
-    s_cat(cbuf, " Active", sizeof(cbuf));
-    dui_text(px + pw - 96, cy + ch - foot_h + 2, cbuf, THEME_TEXT_MUTED, 1);
+    dui_text_ellipsis(px, cy + ch - foot_h + 2, pw - 124, s_status_msg, s_status_color, 1);
+    dui_status_pill(px + pw - 106, cy + ch - foot_h, 106, 22, cbuf,
+                    inst_cnt > 0 ? THEME_ACCENT_GREEN : THEME_TEXT_MUTED, THEME_SURFACE_ELEVATED, inst_cnt > 0);
 }
 
 static void store_on_close(BlankWindow* win) {

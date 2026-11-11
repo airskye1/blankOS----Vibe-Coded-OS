@@ -33,6 +33,30 @@ static SeqNote g_seq[MAX_SEQ_NOTES];
 static int g_seq_count = 0;
 static int g_seq_idx = 0;
 static uint32_t g_active_freq = 0;
+static uint32_t g_audio_tick_counter = 0;
+static uint32_t g_last_cue_tick = 0;
+static char g_last_cue_name[24] = {0};
+static int g_eq_bands[4] = {0, 0, 0, 0};
+
+static void audio_pulse_eq(uint32_t freq) {
+    if (freq == 0 || audio_muted || master_volume <= 0) return;
+    int scale = master_volume;
+    if (scale < 25) scale = 25;
+    int b0 = (freq < 350) ? 92 : (freq < 520 ? 74 : 46);
+    int b1 = (freq >= 350 && freq < 620) ? 95 : 64;
+    int b2 = (freq >= 520 && freq < 760) ? 96 : (freq >= 760 ? 78 : 48);
+    int b3 = (freq >= 660) ? 98 : 44;
+    int vals[4] = {
+        (b0 * scale) / 100,
+        (b1 * scale) / 100,
+        (b2 * scale) / 100,
+        (b3 * scale) / 100
+    };
+    for (int i = 0; i < 4; i++) {
+        if (vals[i] > 100) vals[i] = 100;
+        if (vals[i] > g_eq_bands[i]) g_eq_bands[i] = vals[i];
+    }
+}
 
 static void speaker_set_freq(uint32_t freq) {
     if (audio_muted || master_volume <= 0 || freq == 0) {
@@ -41,6 +65,7 @@ static void speaker_set_freq(uint32_t freq) {
         g_active_freq = 0;
         return;
     }
+    audio_pulse_eq(freq);
     if (freq == g_active_freq) return;
     uint32_t div = 1193180 / freq;
     outb(0x43, 0xB6);
@@ -112,6 +137,22 @@ void init_audio_driver(EFI_SYSTEM_TABLE* st) {
 }
 
 void audio_tick(void) {
+    g_audio_tick_counter++;
+
+    // Smoothly decay or animate equalizer bands
+    for (int i = 0; i < 4; i++) {
+        if (g_seq_idx < g_seq_count && !audio_muted && master_volume > 0 && g_active_freq > 0) {
+            int jitter = (int)((g_audio_tick_counter * (uint32_t)(i + 3)) % 14) - 6;
+            int target = g_eq_bands[i] + jitter;
+            if (target < 18) target = 18;
+            if (target > 100) target = 100;
+            g_eq_bands[i] = (g_eq_bands[i] * 3 + target) / 4;
+        } else {
+            g_eq_bands[i] = (g_eq_bands[i] * 3) / 4;
+            if (g_eq_bands[i] < 2) g_eq_bands[i] = 0;
+        }
+    }
+
     if (g_seq_idx >= g_seq_count) {
         speaker_silence();
         return;
@@ -146,24 +187,46 @@ void play_beep(uint32_t freq, uint32_t duration_ms) {
 void play_system_sound(const char* name) {
     if (!name || audio_muted || master_volume <= 0) return;
 
-    if (str_eq_local(name, "startup")) {
-        // Warm Horizon 4-note ascending chime
-        SeqNote notes[4] = { { 440, 4 }, { 554, 4 }, { 659, 4 }, { 880, 9 } };
+    uint32_t elapsed = g_audio_tick_counter - g_last_cue_tick;
+    if (str_eq_local(name, g_last_cue_name)) {
+        if ((str_eq_local(name, "hover") || str_eq_local(name, "tab")) && elapsed < 14) return;
+        if ((str_eq_local(name, "tool") || str_eq_local(name, "click")) && elapsed < 3) return;
+        if (elapsed < 10) return;
+    }
+    copy_str_local(g_last_cue_name, name, 24);
+    g_last_cue_tick = g_audio_tick_counter;
+
+    if (str_eq_local(name, "startup") || str_eq_local(name, "reward")) {
+        // Lira reward / startup triad + octave (~64ms stagger)
+        SeqNote notes[4] = { { 440, 4 }, { 554, 4 }, { 659, 4 }, { 880, 8 } };
         enqueue_sequence(notes, 4);
-    } else if (str_eq_local(name, "click")) {
-        SeqNote notes[1] = { { 1480, 1 } };
+    } else if (str_eq_local(name, "send") || str_eq_local(name, "open")) {
+        // Lira send / window open rising two-tone
+        SeqNote notes[2] = { { 480, 4 }, { 620, 6 } };
+        enqueue_sequence(notes, 2);
+    } else if (str_eq_local(name, "reply") || str_eq_local(name, "notify")) {
+        // Lira reply / notification bright fifth-ish interval
+        SeqNote notes[2] = { { 620, 4 }, { 820, 7 } };
+        enqueue_sequence(notes, 2);
+    } else if (str_eq_local(name, "tool") || str_eq_local(name, "click")) {
+        // Lira crisp low-pitched tactile detent thock (never piercing)
+        SeqNote notes[1] = { { 420, 1 } };
         enqueue_sequence(notes, 1);
-    } else if (str_eq_local(name, "notify")) {
-        SeqNote notes[2] = { { 659, 3 }, { 987, 5 } };
-        enqueue_sequence(notes, 2);
+    } else if (str_eq_local(name, "hover") || str_eq_local(name, "tab")) {
+        // Subtle Lira UI hover / tab switch pip
+        SeqNote notes[1] = { { 520, 1 } };
+        enqueue_sequence(notes, 1);
     } else if (str_eq_local(name, "success") || str_eq_local(name, "download")) {
-        SeqNote notes[3] = { { 523, 3 }, { 659, 3 }, { 1046, 6 } };
-        enqueue_sequence(notes, 3);
+        // Brisk Lira harmonic completion flourish
+        SeqNote notes[4] = { { 440, 3 }, { 554, 3 }, { 659, 3 }, { 880, 7 } };
+        enqueue_sequence(notes, 4);
     } else if (str_eq_local(name, "error")) {
-        SeqNote notes[2] = { { 293, 4 }, { 220, 7 } };
+        // Warm muted descending bass cue
+        SeqNote notes[2] = { { 220, 4 }, { 180, 8 } };
         enqueue_sequence(notes, 2);
-    } else if (str_eq_local(name, "lock")) {
-        SeqNote notes[2] = { { 880, 2 }, { 587, 4 } };
+    } else if (str_eq_local(name, "close") || str_eq_local(name, "minimize") || str_eq_local(name, "lock")) {
+        // Symmetric Lira exit cadence paired with open/send
+        SeqNote notes[2] = { { 620, 3 }, { 480, 5 } };
         enqueue_sequence(notes, 2);
     }
 }
@@ -181,7 +244,12 @@ int get_master_volume(void) {
 
 void toggle_audio_mute(void) {
     audio_muted = !audio_muted;
-    if (audio_muted) speaker_silence();
+    if (audio_muted) {
+        speaker_silence();
+        for (int i = 0; i < 4; i++) g_eq_bands[i] = 0;
+    } else {
+        play_system_sound((char*)"tool");
+    }
 }
 
 void audio_set_hda_device(uintptr_t bar0) {
@@ -197,6 +265,19 @@ bool is_audio_muted(void) {
 
 const char* get_audio_device_name(void) {
     return audio_dev_name;
+}
+
+void audio_get_eq_bands(int* out_bands, int count) {
+    if (!out_bands || count <= 0) return;
+    int n = (count > 4) ? 4 : count;
+    for (int i = 0; i < n; i++) {
+        out_bands[i] = (audio_muted || master_volume <= 0) ? 0 : g_eq_bands[i];
+    }
+    for (int i = n; i < count; i++) out_bands[i] = 0;
+}
+
+bool audio_is_playing(void) {
+    return (!audio_muted && master_volume > 0 && (g_seq_idx < g_seq_count || g_eq_bands[0] > 4 || g_eq_bands[2] > 4));
 }
 
 } // extern "C"

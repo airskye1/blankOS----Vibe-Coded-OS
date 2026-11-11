@@ -113,7 +113,7 @@ static void pm_sample_network(uint64_t now_ms, const NetStatus* ns) {
 }
 
 static void pm_draw_memory_card(int x, int y, int w, int h) {
-    dui_glass_card(x, y, w, h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 220, false);
+    dui_bento_card(x, y, w, h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 232, false);
 
     uint64_t tot = memory_get_total_mb();
     uint64_t used = memory_get_used_mb();
@@ -129,8 +129,9 @@ static void pm_draw_memory_card(int x, int y, int w, int h) {
     char pb[16];
     pm_u64_str((uint64_t)pct, pb, sizeof(pb));
     pm_cat(pb, "%", sizeof(pb));
-    int pw = dui_text_width(pb, 1);
-    dui_text(x + w - 14 - pw, y + 10, pb, THEME_ACCENT_ROSE, 1);
+    dui_status_pill(x + w - 82, y + 7, 68, 22, pb,
+                    (pct > 80) ? THEME_ACCENT_ROSE : THEME_ACCENT_AMBER,
+                    THEME_SURFACE_ELEVATED, true);
 
     // Memory segmented bar
     int bar_x = x + 14;
@@ -160,14 +161,13 @@ static void pm_draw_memory_card(int x, int y, int w, int h) {
 }
 
 static void pm_draw_network_card(int x, int y, int w, int h, const NetStatus* ns,
-                                 int mx, int my, bool* click_avail) {
-    dui_glass_card(x, y, w, h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 220, false);
+                                 int mx, int my, bool down, bool* click_avail) {
+    dui_bento_card(x, y, w, h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 232, ns->dhcp_bound);
     dui_text(x + 14, y + 10, "Network I/O", THEME_TEXT_PRIMARY, 1);
 
     const char* st_txt = !ns->nic_present ? "No NIC" : (ns->dhcp_bound ? ns->ip_str : (ns->link_up ? "Link Up" : "Down"));
     uint32_t st_col = ns->dhcp_bound ? THEME_ACCENT_GREEN : (ns->link_up ? THEME_ACCENT_AMBER : THEME_ACCENT_ROSE);
-    int sw_t = dui_text_width(st_txt, 1);
-    dui_text(x + w - 14 - sw_t, y + 10, st_txt, st_col, 1);
+    dui_status_pill(x + w - 142, y + 7, 128, 22, st_txt, st_col, THEME_SURFACE_ELEVATED, ns->link_up);
 
     char b1[20], b2[20], line[96];
     pm_u64_str(ns->rx_packets, b1, sizeof(b1));
@@ -184,15 +184,19 @@ static void pm_draw_network_card(int x, int y, int w, int h, const NetStatus* ns
 
     dui_text_ellipsis(x + 14, y + 82, w - 110, ns->nic_present ? ns->adapter_name : "No Ethernet adapter", THEME_TEXT_MUTED, 1);
 
-    if (click_avail && dui_button(x + w - 92, y + 76, 80, 24, "DHCP", THEME_SURFACE_ELEVATED, false, mx, my, *click_avail)) {
+    if (click_avail && dui_button_tactile(x + w - 92, y + 76, 80, 24, "DHCP", THEME_SURFACE_ELEVATED, false, mx, my, down, *click_avail)) {
         *click_avail = false;
-        net_dhcp_renew();
-        play_system_sound((const char*)"click");
+        play_system_sound((char*)"tool");
+        if (net_dhcp_renew()) {
+            play_system_sound((char*)"success");
+        } else {
+            play_system_sound((char*)"error");
+        }
     }
 }
 
-static void pm_draw_windows_panel(int x, int y, int w, int h, int mx, int my, bool* click_avail, const BlankInputState* in) {
-    dui_glass_card(x, y, w, h, THEME_RADIUS_MD, THEME_SURFACE_BASE, 215, false);
+static void pm_draw_windows_panel(int x, int y, int w, int h, int mx, int my, bool down, bool* click_avail, const BlankInputState* in) {
+    dui_bento_card(x, y, w, h, THEME_RADIUS_LG, THEME_SURFACE_BASE, 225, false);
 
     int zc = wm_get_z_count();
     char hdr[48], nb[12];
@@ -229,21 +233,21 @@ static void pm_draw_windows_panel(int x, int y, int w, int h, int mx, int my, bo
                          is_foc ? THEME_SURFACE_ELEVATED : THEME_SURFACE_CARD, is_foc ? 235 : 190);
 
         dui_draw_squircle_icon(x + 14, ry + 4, 22, (int)target->app_id, false);
-        dui_text_ellipsis(x + 44, ry + 7, w - 295, target->title, THEME_TEXT_PRIMARY, 1);
+        dui_text_ellipsis(x + 44, ry + 7, w - 322, target->title, THEME_TEXT_PRIMARY, 1);
 
         const char* st = target->minimized ? "Minimized" : (is_foc ? "Focused" : "Background");
         uint32_t scol = target->minimized ? THEME_ACCENT_AMBER : (is_foc ? THEME_ACCENT_GREEN : THEME_TEXT_MUTED);
-        dui_text(x + w - 242, ry + 7, st, scol, 1);
+        dui_status_pill(x + w - 270, ry + 4, 98, 22, st, scol, THEME_SURFACE_ELEVATED, is_foc);
 
-        if (dui_button(x + w - 164, ry + 3, 62, 24, "Focus", THEME_ACCENT_CYAN, false, mx, my, *click_avail)) {
+        if (dui_button_tactile(x + w - 164, ry + 3, 62, 24, "Focus", THEME_ACCENT_CYAN, false, mx, my, down, *click_avail)) {
             *click_avail = false;
             wm_focus_window(target);
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"open");
         }
-        if (dui_button(x + w - 96, ry + 3, 80, 24, "Close Task", THEME_ACCENT_ROSE, true, mx, my, *click_avail)) {
+        if (dui_button_tactile(x + w - 96, ry + 3, 80, 24, "Close Task", THEME_ACCENT_ROSE, true, mx, my, down, *click_avail)) {
             *click_avail = false;
             wm_close_window(target);
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"close");
             break;
         }
     }
@@ -251,7 +255,7 @@ static void pm_draw_windows_panel(int x, int y, int w, int h, int mx, int my, bo
 }
 
 static void pm_draw_pci_panel(int x, int y, int w, int h, int mx, int my, const BlankInputState* in) {
-    dui_glass_card(x, y, w, h, THEME_RADIUS_MD, THEME_SURFACE_BASE, 215, false);
+    dui_bento_card(x, y, w, h, THEME_RADIUS_LG, THEME_SURFACE_BASE, 225, false);
 
     int cnt = pci_get_device_count();
     char hdr[64], nb[12];
@@ -313,6 +317,7 @@ static void task_manager_render(BlankWindow* win, int cx, int cy, int cw, int ch
     if (in) pm_sample_network(in->frame_ms, &ns);
 
     bool click_avail = (in && in->left_pressed);
+    bool down = (in && in->left_down);
     int mx = in ? in->mx : -1;
     int my = in ? in->my : -1;
 
@@ -324,11 +329,11 @@ static void task_manager_render(BlankWindow* win, int cx, int cy, int cw, int ch
     int tab_w = 104;
     for (int t = 0; t < 4; t++) {
         bool active = (g_pm_tab == t);
-        if (dui_button(cx + pad + t * (tab_w + 8), cy + 10, tab_w, 28, tabs[t],
-                       active ? THEME_ACCENT_ROSE : THEME_SURFACE_ELEVATED, active, mx, my, click_avail)) {
+        if (dui_button_tactile(cx + pad + t * (tab_w + 8), cy + 10, tab_w, 28, tabs[t],
+                               active ? THEME_ACCENT_ROSE : THEME_SURFACE_ELEVATED, active, mx, my, down, click_avail)) {
             click_avail = false;
             g_pm_tab = t;
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"tab");
         }
     }
 
@@ -353,22 +358,23 @@ static void task_manager_render(BlankWindow* win, int cx, int cy, int cw, int ch
         int top_h = 108;
         int col_w = (inner_w - 10) / 2;
         pm_draw_memory_card(cx + pad, body_y, col_w, top_h);
-        pm_draw_network_card(cx + pad + col_w + 10, body_y, col_w, top_h, &ns, mx, my, &click_avail);
+        pm_draw_network_card(cx + pad + col_w + 10, body_y, col_w, top_h, &ns, mx, my, down, &click_avail);
 
         int mid_y = body_y + top_h + 10;
         int rem_h = body_h - top_h - 20;
         int win_h = (rem_h * 52) / 100;
         int pci_h = rem_h - win_h;
-        pm_draw_windows_panel(cx + pad, mid_y, inner_w, win_h, mx, my, &click_avail, in);
+        pm_draw_windows_panel(cx + pad, mid_y, inner_w, win_h, mx, my, down, &click_avail, in);
         pm_draw_pci_panel(cx + pad, mid_y + win_h + 10, inner_w, pci_h, mx, my, in);
     } else if (g_pm_tab == 1) {
-        pm_draw_windows_panel(cx + pad, body_y, inner_w, body_h, mx, my, &click_avail, in);
+        pm_draw_windows_panel(cx + pad, body_y, inner_w, body_h, mx, my, down, &click_avail, in);
     } else if (g_pm_tab == 2) {
-        pm_draw_network_card(cx + pad, body_y, inner_w, 110, &ns, mx, my, &click_avail);
+        pm_draw_network_card(cx + pad, body_y, inner_w, 110, &ns, mx, my, down, &click_avail);
 
         int gy = body_y + 120;
         int gh = body_h - 120;
-        dui_glass_card(cx + pad, gy, inner_w, gh, THEME_RADIUS_MD, THEME_SURFACE_BASE, 215, false);
+        dui_bento_card(cx + pad, gy, inner_w, gh, THEME_RADIUS_LG, THEME_SURFACE_BASE, 225, ns.link_up);
+        dui_dot_grid_overlay(cx + pad + 4, gy + 4, inner_w - 8, 52, 14, THEME_BORDER_SPECULAR, 24);
 
         char rate_str[48], rb[16];
         pm_u64_str((uint64_t)g_pm_net_rate_kbps, rb, sizeof(rb));
@@ -376,6 +382,10 @@ static void task_manager_render(BlankWindow* win, int cx, int cy, int cw, int ch
         pm_cat(rate_str, rb, sizeof(rate_str));
         pm_cat(rate_str, " KB/s", sizeof(rate_str));
         dui_text(cx + pad + 14, gy + 12, rate_str, THEME_ACCENT_CYAN, 1);
+        dui_status_pill(cx + pad + inner_w - 118, gy + 8, 104, 22,
+                        (g_pm_net_rate_kbps > 0) ? "Active I/O" : "Idle",
+                        (g_pm_net_rate_kbps > 0) ? THEME_ACCENT_GREEN : THEME_TEXT_MUTED,
+                        THEME_SURFACE_ELEVATED, g_pm_net_rate_kbps > 0);
 
         char net_det[128];
         pm_copy(net_det, "MAC ", sizeof(net_det)); pm_cat(net_det, ns.mac_str, sizeof(net_det));

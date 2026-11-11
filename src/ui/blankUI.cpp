@@ -61,6 +61,8 @@ static int g_spotlight_len = 0;
 static float g_anim_cc = 0.0f;
 static float g_anim_spot = 0.0f;
 static float g_anim_pulse = 0.0f;
+static bool g_topbar_collapsed = false;
+static float g_anim_topbar = 1.0f;
 static float g_dock_scale[APP_COUNT] = {0};
 
 // 8x8 fallback bitmap font (exported for blankDUI.cpp)
@@ -262,15 +264,15 @@ void blankUI_draw_desktop_widgets(const BlankInputState* in) {
     int sw = (int)screen_width;
     int sh = (int)screen_height;
 
-    // Only draw subtle left-side workspace telemetry card when not crowded, positioned cleanly below top bar
+    // Lira-style Desktop Bento Telemetry Card (generous 24px corners + architectural dot lattice)
     int wx = 26;
-    int wy = THEME_TOPBAR_H + 30;
-    int ww = 248;
-    int wh = 128;
+    int wy = THEME_TOPBAR_H + 34;
+    int ww = 286;
+    int wh = 152;
     if (sw < 800 || sh < 560) return;
 
-    dui_shadow(wx, wy, ww, wh, THEME_RADIUS_LG, 5);
-    dui_glass_card(wx, wy, ww, wh, THEME_RADIUS_LG, THEME_SURFACE_BASE, 165, false);
+    dui_bento_card(wx, wy, ww, wh, THEME_RADIUS_CARD, THEME_SURFACE_BASE, 198, false);
+    dui_dot_grid_overlay(wx + 12, wy + 12, ww - 24, 58, 14, THEME_TEXT_PRIMARY, 14);
 
     RTC_Time now;
     get_rtc_time(&now);
@@ -281,41 +283,49 @@ void blankUI_draw_desktop_widgets(const BlankInputState* in) {
     fmt_two_digits(now.minute, time_buf + 3);
     time_buf[5] = 0;
 
-    dui_text(wx + 18, wy + 16, time_buf, THEME_TEXT_PRIMARY, 3);
-
-    char sub[48];
     NetStatus ns;
     net_get_status(&ns);
+
+    dui_text(wx + 20, wy + 18, time_buf, THEME_TEXT_PRIMARY, 3);
+    dui_status_pill(wx + ww - 94, wy + 20, 76, 22,
+                    ns.dhcp_bound ? "Online" : "Local",
+                    ns.dhcp_bound ? THEME_ACCENT_GREEN : THEME_ACCENT_CYAN,
+                    THEME_SURFACE_CARD, ns.dhcp_bound);
+
+    // Subtle hairline separator
+    dui_rect(wx + 20, wy + 66, ww - 40, 1, THEME_BORDER_SUBTLE, 140);
+
+    char sub[48];
     int used_mb = (int)memory_get_used_mb();
     int tot_mb = (int)memory_get_total_mb();
     if (tot_mb <= 0) tot_mb = 512;
 
-    // Format telemetry line cleanly
     int pos = 0;
-    const char* pfx = "RAM ";
+    const char* pfx = "Memory ";
     while (*pfx) sub[pos++] = *pfx++;
     int tmp = used_mb;
     char digits[12]; int dc = 0;
     if (tmp == 0) digits[dc++] = '0';
     else while (tmp > 0 && dc < 10) { digits[dc++] = (char)('0' + (tmp % 10)); tmp /= 10; }
     for (int k = dc - 1; k >= 0; k--) sub[pos++] = digits[k];
-    const char* mid = "MB  |  ";
+    const char* mid = " MB  |  ";
     while (*mid) sub[pos++] = *mid++;
     const char* ip = ns.dhcp_bound ? ns.ip_str : (ns.nic_present ? "Link Up" : "Offline");
     while (*ip && pos < 45) sub[pos++] = *ip++;
     sub[pos] = 0;
 
-    dui_text(wx + 18, wy + 68, sub, THEME_TEXT_SECONDARY, 1);
+    dui_text(wx + 20, wy + 78, sub, THEME_TEXT_SECONDARY, 1);
 
-    // Quick pill button to launch Browser or Files right from workspace card
+    // Tactile bevel pill buttons
     if (in) {
-        if (dui_button(wx + 18, wy + 90, 98, 26, "Open Web", THEME_ACCENT_CYAN, true, in->mx, in->my, in->left_pressed)) {
+        if (dui_button(wx + 20, wy + 106, 114, 32, "Open Browser", THEME_ACCENT_CYAN, true, in->mx, in->my, in->left_pressed)) {
             wm_open_app(APP_BROWSER);
         }
-        if (dui_button(wx + 124, wy + 90, 104, 26, "Quick Search", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed)) {
+        if (dui_button(wx + 144, wy + 106, 122, 32, "Search Ctrl+K", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed)) {
             g_spotlight_open = true;
             g_spotlight_len = 0;
             g_spotlight_query[0] = 0;
+            play_system_sound((char*)"open");
         }
     }
 }
@@ -331,6 +341,7 @@ static void close_all_popovers(void) {
 
 void blankUI_draw_shell(BlankInputState* in) {
     if (!in) return;
+    dui_set_pointer_down(in->left_down);
     int sw = (int)screen_width;
     int sh = (int)screen_height;
 
@@ -342,44 +353,20 @@ void blankUI_draw_shell(BlankInputState* in) {
             g_spotlight_open = !was;
             g_spotlight_len = 0;
             g_spotlight_query[0] = 0;
+            play_system_sound((char*)(g_spotlight_open ? "open" : "close"));
             input_consume_key(in);
         } else if (in->scan_code == BLANK_SCAN_ESC) {
             if (g_brand_menu_open || g_control_center_open || g_downloads_open || g_spotlight_open || rclick_menu_open || island_expanded) {
                 close_all_popovers();
+                play_system_sound((char*)"close");
                 input_consume_key(in);
             }
         }
     }
 
     // ------------------------------------------------------------------------
-    // 1. Floating Horizon Spatial Top Bar
+    // 1. Lira-Inspired Centered Collapsible Floating Pill Topbar
     // ------------------------------------------------------------------------
-    int bar_y = 8;
-    int left_x = 14;
-    int left_w = 216;
-    int bar_h = 34;
-
-    dui_shadow(left_x, bar_y, left_w, bar_h, THEME_RADIUS_PILL, 4);
-    dui_glass_card(left_x, bar_y, left_w, bar_h, THEME_RADIUS_PILL, THEME_SURFACE_BASE, 215, g_brand_menu_open);
-
-    // Brand orb + active window title
-    BlankWindow* focused = wm_get_focused_window();
-    bool hov_brand = pt_in(in->mx, in->my, left_x, bar_y, left_w, bar_h);
-    dui_circle(left_x + 17, bar_y + 17, 8, THEME_ACCENT_CYAN, 255);
-    dui_circle(left_x + 17, bar_y + 17, 4, THEME_BG_VOID, 255);
-    dui_text_ellipsis(left_x + 32, bar_y + 10, left_w - 44,
-                      focused ? focused->title : (g_is_live_cd ? "Horizon Live" : "BlankOS Horizon"),
-                      hov_brand ? THEME_ACCENT_CYAN : THEME_TEXT_PRIMARY, 1);
-
-    if (in->left_pressed && hov_brand) {
-        bool next = !g_brand_menu_open;
-        close_all_popovers();
-        g_brand_menu_open = next;
-        play_system_sound((char*)"click");
-        input_consume_mouse(in);
-    }
-
-    // Center Horizon Pulse Capsule (Clock + Active Download / Network Pulse)
     NetStatus ns;
     net_get_status(&ns);
     int dl_count = net_download_count();
@@ -399,108 +386,175 @@ void blankUI_draw_shell(BlankInputState* in) {
     fmt_two_digits(now.second, clk + 6);
     clk[8] = 0;
 
-    g_anim_pulse = horizon_spring_step(g_anim_pulse, island_expanded ? 1.0f : 0.0f, 0.25f);
-    int pill_w = 190 + (int)(g_anim_pulse * 120.0f);
-    int pill_x = (sw - pill_w) / 2;
-    if (pill_x < left_x + left_w + 10) pill_x = left_x + left_w + 10;
+    int eq_bands[4] = {0, 0, 0, 0};
+    audio_get_eq_bands(eq_bands, 4);
+    bool eq_live = audio_is_playing();
 
-    bool hov_pulse = pt_in(in->mx, in->my, pill_x, bar_y, pill_w, bar_h);
-    dui_shadow(pill_x, bar_y, pill_w, bar_h, THEME_RADIUS_PILL, 4);
-    dui_glass_card(pill_x, bar_y, pill_w, bar_h, THEME_RADIUS_PILL, THEME_SURFACE_CARD, 225, island_expanded || active_dl > 0);
+    g_anim_topbar = horizon_spring_step(g_anim_topbar, g_topbar_collapsed ? 0.0f : 1.0f, 0.34f);
+    float tb_ease = horizon_ease_lira(g_anim_topbar);
 
-    dui_circle(pill_x + 16, bar_y + 17, 4, (active_dl > 0) ? THEME_ACCENT_AMBER : (ns.dhcp_bound ? THEME_ACCENT_GREEN : THEME_ACCENT_CYAN), 255);
-    dui_text(pill_x + 28, bar_y + 10, clk, THEME_TEXT_PRIMARY, 1);
-    dui_text(pill_x + 102, bar_y + 10, (active_dl > 0) ? "Syncing..." : (ns.dhcp_bound ? "Online" : "Local"), THEME_TEXT_SECONDARY, 1);
+    int expanded_w = 780;
+    if (expanded_w > sw - 28) expanded_w = sw - 28;
+    int collapsed_w = 244;
+    int cap_w = collapsed_w + (int)((float)(expanded_w - collapsed_w) * tb_ease);
+    int bar_h = 40;
+    int bar_y = 10;
+    int bar_x = (sw - cap_w) / 2;
+    int left_x = bar_x + 6; // origin anchor for brand popover
 
-    if (in->left_pressed && hov_pulse) {
-        island_expanded = !island_expanded;
-        play_system_sound((char*)"click");
+    bool shell_active = g_brand_menu_open || g_control_center_open || g_downloads_open || g_spotlight_open || active_dl > 0;
+    dui_shadow(bar_x, bar_y, cap_w, bar_h, THEME_RADIUS_PILL, 7);
+    dui_glass_card(bar_x, bar_y, cap_w, bar_h, THEME_RADIUS_PILL, THEME_SURFACE_BASE, 232, shell_active);
+
+    // Brand Orb Pill Trigger (always visible)
+    BlankWindow* focused = wm_get_focused_window();
+    int brand_w = g_topbar_collapsed ? 118 : 168;
+    bool hov_brand = pt_in(in->mx, in->my, left_x, bar_y + 4, brand_w, 32);
+    if (hov_brand || g_brand_menu_open) {
+        dui_rect_rounded(left_x, bar_y + 4, brand_w, 32, 16, THEME_SURFACE_HOVER, 215);
+    }
+    dui_circle(left_x + 16, bar_y + 20, 8, THEME_ACCENT_CYAN, 255);
+    dui_circle(left_x + 16, bar_y + 20, 4, THEME_BG_VOID, 255);
+    dui_text_ellipsis(left_x + 30, bar_y + 12, brand_w - 36,
+                      focused ? focused->title : (g_is_live_cd ? "Horizon Live" : "Horizon"),
+                      (hov_brand || g_brand_menu_open) ? THEME_ACCENT_CYAN : THEME_TEXT_PRIMARY, 1);
+
+    if (in->left_pressed && hov_brand) {
+        bool next = !g_brand_menu_open;
+        close_all_popovers();
+        g_brand_menu_open = next;
+        play_system_sound((char*)(next ? "open" : "close"));
         input_consume_mouse(in);
     }
 
-    // Right Status Pill: Search + Downloads + Control Center
-    int right_w = 248;
-    int right_x = sw - right_w - 14;
-    dui_shadow(right_x, bar_y, right_w, bar_h, THEME_RADIUS_PILL, 4);
-    dui_glass_card(right_x, bar_y, right_w, bar_h, THEME_RADIUS_PILL, THEME_SURFACE_BASE, 215, g_control_center_open || g_downloads_open);
+    // Crisp vertical separator
+    int sep_x = left_x + brand_w + 6;
+    dui_rect(sep_x, bar_y + 10, 1, 20, THEME_BORDER_SUBTLE, 180);
 
-    // Search trigger
-    bool hov_search = pt_in(in->mx, in->my, right_x + 6, bar_y + 4, 72, 26);
-    if (hov_search || g_spotlight_open) dui_rect_rounded(right_x + 6, bar_y + 4, 72, 26, 13, THEME_SURFACE_HOVER, 210);
-    dui_draw_sys_icon(right_x + 14, bar_y + 9, 16, 0, THEME_TEXT_PRIMARY);
-    dui_text(right_x + 34, bar_y + 10, "Find", THEME_TEXT_PRIMARY, 1);
+    // Collapse / Expand Circular Pill Toggle (far right of floating bar)
+    int tog_x = bar_x + cap_w - 34;
+    int tog_y = bar_y + 6;
+    bool hov_tog = pt_in(in->mx, in->my, tog_x, tog_y, 28, 28);
+    int tog_dy = (hov_tog && in->left_down) ? 1 : 0;
+    dui_rect_rounded(tog_x, tog_y + tog_dy, 28, 28, 14, hov_tog ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, 225);
+    dui_rect_rounded_outline(tog_x, tog_y + tog_dy, 28, 28, 14, hov_tog ? THEME_BORDER_SPECULAR : THEME_BORDER_SUBTLE, 180);
+    // Draw clean '-' or '+' glyph
+    dui_rect(tog_x + 9, tog_y + tog_dy + 13, 10, 2, THEME_TEXT_PRIMARY, 240);
+    if (g_topbar_collapsed) {
+        dui_rect(tog_x + 13, tog_y + tog_dy + 9, 2, 10, THEME_ACCENT_CYAN, 240);
+    }
+    if (in->left_pressed && hov_tog) {
+        g_topbar_collapsed = !g_topbar_collapsed;
+        close_all_popovers();
+        play_system_sound((char*)(g_topbar_collapsed ? "close" : "open"));
+        input_consume_mouse(in);
+    }
 
-    // Downloads trigger
-    bool hov_dl = pt_in(in->mx, in->my, right_x + 84, bar_y + 4, 74, 26);
-    if (hov_dl || g_downloads_open) dui_rect_rounded(right_x + 84, bar_y + 4, 74, 26, 13, THEME_SURFACE_HOVER, 210);
-    dui_draw_sys_icon(right_x + 92, bar_y + 9, 16, 8, (active_dl > 0) ? THEME_ACCENT_AMBER : THEME_ACCENT_CYAN);
-    dui_text(right_x + 112, bar_y + 10, "Files", THEME_TEXT_SECONDARY, 1);
+    if (tb_ease > 0.55f) {
+        // Expanded navigation pills
+        int cur_x = sep_x + 10;
 
-    // Control Center trigger (Wifi + Vol + Gear)
-    bool hov_cc = pt_in(in->mx, in->my, right_x + 164, bar_y + 4, 78, 26);
-    if (hov_cc || g_control_center_open) dui_rect_rounded(right_x + 164, bar_y + 4, 78, 26, 13, THEME_SURFACE_HOVER, 210);
-    dui_draw_sys_icon(right_x + 174, bar_y + 9, 16, 1, ns.link_up ? THEME_ACCENT_GREEN : THEME_TEXT_MUTED);
-    dui_draw_sys_icon(right_x + 196, bar_y + 9, 16, 2, is_audio_muted() ? THEME_ACCENT_ROSE : THEME_TEXT_PRIMARY);
-    dui_draw_sys_icon(right_x + 218, bar_y + 9, 16, 4, THEME_TEXT_PRIMARY);
+        // Clock & Link Status Chip
+        int clk_w = 104;
+        dui_circle(cur_x + 8, bar_y + 20, 4, (active_dl > 0) ? THEME_ACCENT_AMBER : (ns.dhcp_bound ? THEME_ACCENT_GREEN : THEME_ACCENT_CYAN), 255);
+        dui_text(cur_x + 18, bar_y + 12, clk, THEME_TEXT_PRIMARY, 1);
+        cur_x += clk_w;
 
-    if (in->left_pressed) {
-        if (hov_search) {
+        // Vertical hairline before utility pills
+        dui_rect(cur_x, bar_y + 10, 1, 20, THEME_BORDER_SUBTLE, 170);
+        cur_x += 10;
+
+        // Search pill
+        if (dui_icon_pill(cur_x, bar_y + 6, 78, 28, "Find", 0, g_spotlight_open, in->mx, in->my, in->left_pressed)) {
             bool next = !g_spotlight_open;
             close_all_popovers();
             g_spotlight_open = next;
             g_spotlight_len = 0; g_spotlight_query[0] = 0;
-            play_system_sound((char*)"click");
+            play_system_sound((char*)(next ? "open" : "close"));
             input_consume_mouse(in);
-        } else if (hov_dl) {
+        }
+        cur_x += 84;
+
+        // Downloads / Files pill
+        if (dui_icon_pill(cur_x, bar_y + 6, 98, 28, (active_dl > 0) ? "Syncing" : "Downloads", 8, g_downloads_open, in->mx, in->my, in->left_pressed)) {
             bool next = !g_downloads_open;
             close_all_popovers();
             g_downloads_open = next;
-            play_system_sound((char*)"click");
-            input_consume_mouse(in);
-        } else if (hov_cc) {
-            bool next = !g_control_center_open;
-            close_all_popovers();
-            g_control_center_open = next;
-            play_system_sound((char*)"click");
+            play_system_sound((char*)(next ? "open" : "close"));
             input_consume_mouse(in);
         }
+        cur_x += 104;
+
+        // Live Lira Sound EQ Pill (click toggles mute cleanly)
+        int eq_x = cur_x;
+        int eq_w = 56;
+        bool hov_eq = pt_in(in->mx, in->my, eq_x, bar_y + 6, eq_w, 28);
+        int eq_dy = (hov_eq && in->left_down) ? 1 : 0;
+        dui_rect_rounded(eq_x, bar_y + 6 + eq_dy, eq_w, 28, 14,
+                         is_audio_muted() ? THEME_SURFACE_INPUT : (hov_eq ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD), 220);
+        dui_rect_rounded_outline(eq_x, bar_y + 6 + eq_dy, eq_w, 28, 14,
+                                 eq_live ? THEME_ACCENT_CYAN : (hov_eq ? THEME_BORDER_SPECULAR : THEME_BORDER_SUBTLE), 185);
+        dui_draw_sys_icon(eq_x + 8, bar_y + 13 + eq_dy, 14, 2, is_audio_muted() ? THEME_ACCENT_ROSE : THEME_TEXT_PRIMARY);
+        dui_eq_bars(eq_x + 25, bar_y + 11 + eq_dy, 24, 18, eq_bands, 4, THEME_ACCENT_CYAN, eq_live);
+        if (in->left_pressed && hov_eq) {
+            toggle_audio_mute();
+            input_consume_mouse(in);
+        }
+        cur_x += eq_w + 6;
+
+        // Control Center trigger pill (fits cleanly up to tog_x - 8)
+        int cc_w = (tog_x - 8) - cur_x;
+        if (cc_w > 78) cc_w = 104;
+        if (cc_w >= 64) {
+            if (dui_icon_pill(cur_x, bar_y + 6, cc_w, 28, "Controls", 4, g_control_center_open, in->mx, in->my, in->left_pressed)) {
+                bool next = !g_control_center_open;
+                close_all_popovers();
+                g_control_center_open = next;
+                play_system_sound((char*)(next ? "open" : "close"));
+                input_consume_mouse(in);
+            }
+        }
+    } else {
+        // Collapsed compact view: time + live EQ bars right inside compact pill
+        dui_text(sep_x + 10, bar_y + 12, clk, THEME_TEXT_PRIMARY, 1);
+        dui_eq_bars(tog_x - 28, bar_y + 11, 20, 18, eq_bands, 4, THEME_ACCENT_CYAN, eq_live);
     }
 
     // ------------------------------------------------------------------------
-    // 2. Floating Spatial Glass Dock (Bottom)
+    // 2. Floating Lira Capsule Dock (Bottom)
     // ------------------------------------------------------------------------
     int dock_count = APP_COUNT;
-    int slot_w = 50;
-    int dock_pad_x = 14;
+    int slot_w = 52;
+    int dock_pad_x = 16;
     int dock_w = dock_count * slot_w + dock_pad_x * 2;
-    int dock_h = 56;
+    int dock_h = 60;
     int dock_x = (sw - dock_w) / 2;
     int dock_y = sh - dock_h - 10;
 
-    dui_shadow(dock_x, dock_y, dock_w, dock_h, 18, 8);
-    dui_glass_card(dock_x, dock_y, dock_w, dock_h, 18, THEME_SURFACE_BASE, 224, false);
+    dui_shadow(dock_x, dock_y, dock_w, dock_h, dock_h / 2, 8);
+    dui_glass_card(dock_x, dock_y, dock_w, dock_h, dock_h / 2, THEME_SURFACE_BASE, 230, false);
 
     int hovered_dock = -1;
     for (int i = 0; i < dock_count; i++) {
-        int ix = dock_x + dock_pad_x + i * slot_w + 5;
-        int iy = dock_y + 8;
-        bool hov = pt_in(in->mx, in->my, ix - 4, iy - 12, slot_w - 2, dock_h + 10);
+        int ix = dock_x + dock_pad_x + i * slot_w + 6;
+        int iy = dock_y + 9;
+        bool hov = pt_in(in->mx, in->my, ix - 4, iy - 10, slot_w - 2, dock_h + 8);
         if (hov) hovered_dock = i;
 
-        g_dock_scale[i] = horizon_spring_step(g_dock_scale[i], hov ? 1.0f : 0.0f, 0.30f);
-        int lift = (int)(g_dock_scale[i] * 9.0f);
-        int isize = 38 + (int)(g_dock_scale[i] * 6.0f);
+        g_dock_scale[i] = horizon_spring_step(g_dock_scale[i], hov ? 1.0f : 0.0f, 0.34f);
+        int lift = (int)(g_dock_scale[i] * 7.0f);
+        int isize = 38 + (int)(g_dock_scale[i] * 5.0f);
         int draw_ix = ix - (isize - 38) / 2;
         int draw_iy = iy - lift;
 
         dui_draw_squircle_icon(draw_ix, draw_iy, isize, (int)g_dock_items[i].id, hov);
 
-        // Active running dot indicator beneath open/focused app
+        // Minimalist active dot indicator beneath open/focused app
         if (wm_is_app_open(g_dock_items[i].id)) {
             BlankWindow* w = wm_get_window(g_dock_items[i].id);
             bool is_top = (w && w == wm_get_focused_window());
-            dui_rect_rounded(ix + 12, dock_y + dock_h - 6, is_top ? 14 : 6, 3, 2,
-                             is_top ? THEME_ACCENT_CYAN : THEME_TEXT_SECONDARY, 240);
+            dui_circle(ix + 19, dock_y + dock_h - 6, is_top ? 3 : 2,
+                       is_top ? THEME_ACCENT_CYAN : THEME_TEXT_SECONDARY, 245);
         }
 
         if (hov && in->left_pressed) {
@@ -514,49 +568,49 @@ void blankUI_draw_shell(BlankInputState* in) {
         }
     }
 
-    // Tooltip above hovered dock item
+    // Pill tooltip above hovered dock item
     if (hovered_dock >= 0) {
         const char* tip = g_dock_items[hovered_dock].name;
-        int tw = dui_text_width(tip, 1) + 20;
-        int tx = dock_x + dock_pad_x + hovered_dock * slot_w + 25 - tw / 2;
+        int tw = dui_text_width(tip, 1) + 22;
+        int tx = dock_x + dock_pad_x + hovered_dock * slot_w + 26 - tw / 2;
         int ty = dock_y - 34;
-        dui_shadow(tx, ty, tw, 24, 8, 4);
-        dui_glass_card(tx, ty, tw, 24, 8, THEME_SURFACE_ELEVATED, 240, true);
-        dui_text(tx + 10, ty + 5, tip, THEME_TEXT_PRIMARY, 1);
+        dui_shadow(tx, ty, tw, 26, 13, 5);
+        dui_glass_card(tx, ty, tw, 26, 13, THEME_SURFACE_ELEVATED, 244, true);
+        dui_text(tx + 11, ty + 6, tip, THEME_TEXT_PRIMARY, 1);
     }
 
     // ------------------------------------------------------------------------
-    // 3. Popovers & Overlays (Z-layered above windows)
+    // 3. Origin-Aware Bento Popovers & Overlays
     // ------------------------------------------------------------------------
 
-    // A) Brand Menu Dropdown
+    // A) Brand Menu Dropdown (anchored cleanly under topbar capsule left)
     if (g_brand_menu_open) {
-        int mx0 = left_x;
-        int my0 = bar_y + bar_h + 8;
-        int mw = 224;
-        int mh = 238;
-        dui_shadow(mx0, my0, mw, mh, THEME_RADIUS_LG, 8);
-        dui_glass_card(mx0, my0, mw, mh, THEME_RADIUS_LG, THEME_SURFACE_CARD, 242, true);
+        int mx0 = bar_x;
+        int my0 = bar_y + bar_h + 10;
+        int mw = 236;
+        int mh = 242;
+        dui_shadow(mx0, my0, mw, mh, THEME_RADIUS_XL, 9);
+        dui_bento_card(mx0, my0, mw, mh, THEME_RADIUS_XL, THEME_SURFACE_CARD, 246, true);
 
         const char* labels[6] = {
             "About BlankOS Horizon",
-            "System Settings...",
+            "System Settings",
             "Quick Search (Ctrl+K)",
-            "Lock Screen",
+            "Lock Session",
             "Restart System",
             "Shut Down"
         };
         for (int i = 0; i < 6; i++) {
-            int ry = my0 + 10 + i * 36;
-            bool hov = pt_in(in->mx, in->my, mx0 + 8, ry, mw - 16, 30);
-            if (hov) dui_rect_rounded(mx0 + 8, ry, mw - 16, 30, 8, (i >= 4) ? THEME_ACCENT_ROSE : THEME_ACCENT_CYAN, 45);
-            dui_text(mx0 + 18, ry + 7, labels[i], (i == 5) ? THEME_ACCENT_ROSE : THEME_TEXT_PRIMARY, 1);
+            int ry = my0 + 12 + i * 36;
+            bool hov = pt_in(in->mx, in->my, mx0 + 10, ry, mw - 20, 30);
+            if (hov) dui_rect_rounded(mx0 + 10, ry, mw - 20, 30, 10, (i >= 4) ? THEME_ACCENT_ROSE : THEME_SURFACE_HOVER, 190);
+            dui_text(mx0 + 20, ry + 7, labels[i], (i == 5) ? THEME_ACCENT_ROSE : THEME_TEXT_PRIMARY, 1);
             if (hov && in->left_pressed) {
                 g_brand_menu_open = false;
                 input_consume_mouse(in);
                 if (i == 0) wm_open_app(APP_MONITOR);
                 else if (i == 1) wm_open_app(APP_SETTINGS);
-                else if (i == 2) g_spotlight_open = true;
+                else if (i == 2) { g_spotlight_open = true; play_system_sound((char*)"open"); }
                 else if (i == 3 && gSystemTable) launch_login_screen(gSystemTable);
                 else if (i == 4) os_restart();
                 else if (i == 5) os_shutdown();
@@ -564,108 +618,122 @@ void blankUI_draw_shell(BlankInputState* in) {
         }
     }
 
-    // B) Control Center Popover (Volume slider, Wallpaper grid, Resolution, DHCP, Power)
-    g_anim_cc = horizon_spring_step(g_anim_cc, g_control_center_open ? 1.0f : 0.0f, 0.30f);
+    // B) Bento Control Center Popover
+    g_anim_cc = horizon_spring_step(g_anim_cc, g_control_center_open ? 1.0f : 0.0f, 0.34f);
     if (g_control_center_open || g_anim_cc > 0.05f) {
-        int cw = 320;
-        int ch = 356;
-        int cx0 = sw - cw - 14;
-        int cy0 = bar_y + bar_h + 8 - (int)((1.0f - g_anim_cc) * 14.0f);
+        int cw = 336;
+        int ch = 382;
+        int cx0 = bar_x + cap_w - cw;
+        if (cx0 + cw > sw - 14) cx0 = sw - cw - 14;
+        if (cx0 < 14) cx0 = 14;
+        int cy0 = bar_y + bar_h + 10 - horizon_enter_offset_y(g_anim_cc, 12);
 
-        dui_shadow(cx0, cy0, cw, ch, THEME_RADIUS_LG, 9);
-        dui_glass_card(cx0, cy0, cw, ch, THEME_RADIUS_LG, THEME_SURFACE_CARD, 244, true);
+        dui_shadow(cx0, cy0, cw, ch, THEME_RADIUS_CARD, 10);
+        dui_bento_card(cx0, cy0, cw, ch, THEME_RADIUS_CARD, THEME_SURFACE_BASE, 246, true);
 
-        dui_text(cx0 + 18, cy0 + 16, "Control Center", THEME_TEXT_PRIMARY, 2);
+        dui_text(cx0 + 20, cy0 + 18, "Control Center", THEME_TEXT_PRIMARY, 2);
+        dui_status_pill(cx0 + cw - 92, cy0 + 18, 74, 22,
+                        ns.dhcp_bound ? "Online" : "Local",
+                        ns.dhcp_bound ? THEME_ACCENT_GREEN : THEME_ACCENT_CYAN,
+                        THEME_SURFACE_CARD, ns.dhcp_bound);
 
-        // Quick Network + DHCP Renew row
-        dui_rect_rounded(cx0 + 14, cy0 + 48, cw - 28, 56, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 210);
-        dui_draw_sys_icon(cx0 + 26, cy0 + 66, 20, 1, ns.link_up ? THEME_ACCENT_GREEN : THEME_TEXT_MUTED);
-        dui_text_ellipsis(cx0 + 56, cy0 + 56, 150, ns.nic_present ? ns.adapter_name : "No NIC", THEME_TEXT_PRIMARY, 1);
-        dui_text(cx0 + 56, cy0 + 76, ns.dhcp_bound ? ns.ip_str : (ns.nic_present ? "No DHCP" : "Offline"), THEME_TEXT_SECONDARY, 1);
-        if (dui_button(cx0 + cw - 92, cy0 + 62, 66, 28, "Renew", THEME_ACCENT_CYAN, false, in->mx, in->my, in->left_pressed && g_control_center_open)) {
+        // Network Bento Tile
+        dui_bento_card(cx0 + 14, cy0 + 52, cw - 28, 60, THEME_RADIUS_LG, THEME_SURFACE_CARD, 220, false);
+        dui_draw_sys_icon(cx0 + 26, cy0 + 72, 20, 1, ns.link_up ? THEME_ACCENT_GREEN : THEME_TEXT_MUTED);
+        dui_text_ellipsis(cx0 + 56, cy0 + 62, 162, ns.nic_present ? ns.adapter_name : "No NIC", THEME_TEXT_PRIMARY, 1);
+        dui_text(cx0 + 56, cy0 + 82, ns.dhcp_bound ? ns.ip_str : (ns.nic_present ? "No DHCP" : "Offline"), THEME_TEXT_SECONDARY, 1);
+        if (dui_button(cx0 + cw - 94, cy0 + 68, 68, 28, "Renew", THEME_ACCENT_CYAN, false, in->mx, in->my, in->left_pressed && g_control_center_open)) {
             net_dhcp_renew();
+            play_system_sound((char*)"tool");
             input_consume_mouse(in);
         }
 
-        // Volume Slider
-        dui_rect_rounded(cx0 + 14, cy0 + 114, cw - 28, 60, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 210);
-        dui_text(cx0 + 26, cy0 + 124, is_audio_muted() ? "Audio Output (Muted)" : "Audio Output", THEME_TEXT_PRIMARY, 1);
-        if (dui_button(cx0 + cw - 82, cy0 + 120, 56, 24, is_audio_muted() ? "Unmute" : "Mute", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed && g_control_center_open)) {
+        // Audio + Live EQ Bento Tile
+        dui_bento_card(cx0 + 14, cy0 + 122, cw - 28, 70, THEME_RADIUS_LG, THEME_SURFACE_CARD, 220, eq_live);
+        dui_text(cx0 + 26, cy0 + 132, is_audio_muted() ? "Audio Output (Muted)" : "Audio Output", THEME_TEXT_PRIMARY, 1);
+        dui_eq_bars(cx0 + cw - 118, cy0 + 131, 24, 18, eq_bands, 4, THEME_ACCENT_CYAN, eq_live);
+        if (dui_button(cx0 + cw - 86, cy0 + 128, 60, 24, is_audio_muted() ? "Unmute" : "Mute", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed && g_control_center_open)) {
             toggle_audio_mute();
             input_consume_mouse(in);
         }
-        int sl_x = cx0 + 26, sl_y = cy0 + 152, sl_w = cw - 52;
-        dui_rect_rounded(sl_x, sl_y, sl_w, 8, 4, THEME_BORDER_SUBTLE, 240);
+        int sl_x = cx0 + 26, sl_y = cy0 + 166, sl_w = cw - 52;
+        dui_rect_rounded(sl_x, sl_y, sl_w, 8, 4, THEME_SURFACE_INPUT, 240);
         int fill_w = (sl_w * get_master_volume()) / 100;
         dui_rect_rounded(sl_x, sl_y, fill_w, 8, 4, THEME_ACCENT_CYAN, 255);
-        dui_circle(sl_x + fill_w, sl_y + 4, 7, 0xFFFFFF, 255);
+        dui_circle(sl_x + fill_w, sl_y + 4, 7, 0xF8FAFC, 255);
         if (g_control_center_open && in->left_down && pt_in(in->mx, in->my, sl_x - 6, sl_y - 8, sl_w + 12, 24)) {
             int nv = ((in->mx - sl_x) * 100) / sl_w;
             set_master_volume(nv);
         }
 
-        // Wallpaper Theme Switcher (5 Horizon themes)
-        dui_text(cx0 + 18, cy0 + 188, "Horizon Wallpaper Theme", THEME_TEXT_SECONDARY, 1);
+        // Wallpaper Swatches (5 Horizon themes)
+        dui_text(cx0 + 20, cy0 + 204, "Canvas Theme", THEME_TEXT_SECONDARY, 1);
         const uint32_t theme_swatches[5] = { 0x1E3A8A, 0x065F46, 0x3730A3, 0x7F1D1D, 0x0F766E };
         for (int t = 0; t < 5; t++) {
-            int sx = cx0 + 18 + t * 58;
-            int sy = cy0 + 210;
+            int sx = cx0 + 18 + t * 62;
+            int sy = cy0 + 226;
             bool act = (dui_get_wallpaper_id() == t);
-            dui_rect_rounded(sx, sy, 48, 30, 8, theme_swatches[t], 255);
-            if (act) dui_rect_rounded_outline(sx - 2, sy - 2, 52, 34, 10, THEME_ACCENT_CYAN, 255);
-            if (g_control_center_open && in->left_pressed && pt_in(in->mx, in->my, sx, sy, 48, 30)) {
+            dui_rect_rounded(sx, sy, 52, 32, 10, theme_swatches[t], 255);
+            dui_rect_rounded_outline(sx, sy, 52, 32, 10, act ? THEME_ACCENT_CYAN : THEME_BORDER_SUBTLE, act ? 245 : 150);
+            if (g_control_center_open && in->left_pressed && pt_in(in->mx, in->my, sx, sy, 52, 32)) {
                 dui_set_wallpaper_id(t);
                 g_wallpaper_theme = t;
                 blankReg_set_int("UI/WallpaperTheme", t);
                 if (gSystemTable) blankReg_save(gSystemTable);
-                play_system_sound((char*)"click");
+                play_system_sound((char*)"tool");
                 input_consume_mouse(in);
             }
         }
 
-        // Resolution Buttons + Power Pills
-        dui_text(cx0 + 18, cy0 + 254, "Display Mode", THEME_TEXT_SECONDARY, 1);
-        if (dui_button(cx0 + 18, cy0 + 274, 134, 28, "1024 x 768", (screen_width == 1024) ? THEME_ACCENT_CYAN : THEME_SURFACE_ELEVATED, screen_width == 1024, in->mx, in->my, in->left_pressed && g_control_center_open)) {
+        // Display Mode + Power Tactile Pills
+        dui_text(cx0 + 20, cy0 + 270, "Display Resolution", THEME_TEXT_SECONDARY, 1);
+        if (dui_button(cx0 + 18, cy0 + 290, 144, 30, "1024 x 768", (screen_width == 1024) ? THEME_ACCENT_CYAN : THEME_SURFACE_ELEVATED, screen_width == 1024, in->mx, in->my, in->left_pressed && g_control_center_open)) {
             set_screen_resolution(1024, 768);
+            play_system_sound((char*)"tool");
             input_consume_mouse(in);
         }
-        if (dui_button(cx0 + 162, cy0 + 274, 140, 28, "1280 x 800", (screen_width == 1280) ? THEME_ACCENT_CYAN : THEME_SURFACE_ELEVATED, screen_width == 1280, in->mx, in->my, in->left_pressed && g_control_center_open)) {
+        if (dui_button(cx0 + 174, cy0 + 290, 144, 30, "1280 x 800", (screen_width == 1280) ? THEME_ACCENT_CYAN : THEME_SURFACE_ELEVATED, screen_width == 1280, in->mx, in->my, in->left_pressed && g_control_center_open)) {
             set_screen_resolution(1280, 800);
+            play_system_sound((char*)"tool");
             input_consume_mouse(in);
         }
 
-        if (dui_button(cx0 + 18, cy0 + 314, 90, 28, "Lock", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed && g_control_center_open)) {
+        if (dui_button(cx0 + 18, cy0 + 334, 94, 32, "Lock", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed && g_control_center_open)) {
             g_control_center_open = false;
+            play_system_sound((char*)"lock");
             if (gSystemTable) launch_login_screen(gSystemTable);
             input_consume_mouse(in);
         }
-        if (dui_button(cx0 + 116, cy0 + 314, 90, 28, "Restart", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed && g_control_center_open)) {
+        if (dui_button(cx0 + 120, cy0 + 334, 94, 32, "Restart", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed && g_control_center_open)) {
             os_restart();
         }
-        if (dui_button(cx0 + 214, cy0 + 314, 88, 28, "Power Off", THEME_ACCENT_ROSE, true, in->mx, in->my, in->left_pressed && g_control_center_open)) {
+        if (dui_button(cx0 + 222, cy0 + 334, 96, 32, "Power Off", THEME_ACCENT_ROSE, true, in->mx, in->my, in->left_pressed && g_control_center_open)) {
             os_shutdown();
         }
     }
 
     // C) Downloads Popover
     if (g_downloads_open) {
-        int dw = 330;
-        int dh = 280;
-        int dx0 = sw - dw - 48;
-        int dy0 = bar_y + bar_h + 8;
+        int dw = 340;
+        int dh = 288;
+        int dx0 = bar_x + cap_w - dw - 24;
+        if (dx0 + dw > sw - 14) dx0 = sw - dw - 14;
+        if (dx0 < 14) dx0 = 14;
+        int dy0 = bar_y + bar_h + 10;
 
-        dui_shadow(dx0, dy0, dw, dh, THEME_RADIUS_LG, 8);
-        dui_glass_card(dx0, dy0, dw, dh, THEME_RADIUS_LG, THEME_SURFACE_CARD, 242, true);
-        dui_text(dx0 + 16, dy0 + 14, "Downloads (\\DOWNLOADS\\)", THEME_TEXT_PRIMARY, 1);
+        dui_shadow(dx0, dy0, dw, dh, THEME_RADIUS_CARD, 9);
+        dui_bento_card(dx0, dy0, dw, dh, THEME_RADIUS_CARD, THEME_SURFACE_BASE, 246, true);
+        dui_text(dx0 + 18, dy0 + 16, "Downloads (\\DOWNLOADS\\)", THEME_TEXT_PRIMARY, 1);
 
-        if (dui_button(dx0 + dw - 76, dy0 + 10, 62, 24, "Clear", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed)) {
+        if (dui_button(dx0 + dw - 78, dy0 + 12, 62, 24, "Clear", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed)) {
             net_clear_finished_downloads();
+            play_system_sound((char*)"tool");
             input_consume_mouse(in);
         }
 
         if (dl_count == 0) {
-            dui_text(dx0 + 18, dy0 + 96, "No downloaded files yet.", THEME_TEXT_SECONDARY, 1);
-            if (dui_button(dx0 + 18, dy0 + 128, 160, 30, "Open Horizon Web", THEME_ACCENT_CYAN, true, in->mx, in->my, in->left_pressed)) {
+            dui_text(dx0 + 20, dy0 + 102, "No downloaded files yet.", THEME_TEXT_SECONDARY, 1);
+            if (dui_button(dx0 + 20, dy0 + 134, 168, 32, "Open Browser", THEME_ACCENT_CYAN, true, in->mx, in->my, in->left_pressed)) {
                 g_downloads_open = false;
                 wm_open_app(APP_BROWSER);
                 input_consume_mouse(in);
@@ -675,9 +743,9 @@ void blankUI_draw_shell(BlankInputState* in) {
             for (int i = 0; i < max_show; i++) {
                 const DownloadEntry* de = net_get_download(i);
                 if (!de) continue;
-                int ry = dy0 + 48 + i * 54;
+                int ry = dy0 + 52 + i * 54;
                 bool hov = pt_in(in->mx, in->my, dx0 + 12, ry, dw - 24, 46);
-                dui_rect_rounded(dx0 + 12, ry, dw - 24, 46, 8, hov ? THEME_SURFACE_HOVER : THEME_SURFACE_INPUT, 220);
+                dui_bento_card(dx0 + 12, ry, dw - 24, 46, 12, hov ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, 225, hov);
                 dui_text_ellipsis(dx0 + 22, ry + 8, dw - 100, de->filename, THEME_TEXT_PRIMARY, 1);
                 dui_text_ellipsis(dx0 + 22, ry + 26, dw - 100, de->status_text, THEME_TEXT_SECONDARY, 1);
                 if (hov && in->left_pressed && de->state == HTTP_DONE) {
@@ -689,29 +757,29 @@ void blankUI_draw_shell(BlankInputState* in) {
         }
     }
 
-    // D) Spotlight Command Palette Overlay
-    g_anim_spot = horizon_spring_step(g_anim_spot, g_spotlight_open ? 1.0f : 0.0f, 0.30f);
+    // D) Spotlight Command Palette Overlay (24px Bento Modal)
+    g_anim_spot = horizon_spring_step(g_anim_spot, g_spotlight_open ? 1.0f : 0.0f, 0.34f);
     if (g_spotlight_open) {
-        dui_rect(0, 0, sw, sh, 0x04070E, 130);
+        dui_rect(0, 0, sw, sh, 0x04070E, 140);
 
-        int spw = 500;
+        int spw = 516;
         if (spw > sw - 40) spw = sw - 40;
-        int sph = 330;
+        int sph = 342;
         int spx = (sw - spw) / 2;
-        int spy = (sh - sph) / 2 - 40;
+        int spy = (sh - sph) / 2 - 40 - horizon_enter_offset_y(g_anim_spot, 10);
 
-        dui_shadow(spx, spy, spw, sph, THEME_RADIUS_XL, 12);
-        dui_glass_card(spx, spy, spw, sph, THEME_RADIUS_XL, THEME_SURFACE_CARD, 246, true);
+        dui_shadow(spx, spy, spw, sph, THEME_RADIUS_CARD, 12);
+        dui_bento_card(spx, spy, spw, sph, THEME_RADIUS_CARD, THEME_SURFACE_BASE, 248, true);
 
-        // Search box
-        dui_rect_rounded(spx + 16, spy + 16, spw - 32, 44, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 240);
-        dui_rect_rounded_outline(spx + 16, spy + 16, spw - 32, 44, THEME_RADIUS_MD, THEME_BORDER_FOCUS, 200);
-        dui_draw_sys_icon(spx + 28, spy + 29, 18, 0, THEME_ACCENT_CYAN);
+        // Tactile Search Input Pill
+        dui_rect_rounded(spx + 18, spy + 18, spw - 36, 46, THEME_RADIUS_LG, THEME_SURFACE_INPUT, 245);
+        dui_rect_rounded_outline(spx + 18, spy + 18, spw - 36, 46, THEME_RADIUS_LG, THEME_BORDER_FOCUS, 200);
+        dui_draw_sys_icon(spx + 32, spy + 32, 18, 0, THEME_ACCENT_CYAN);
 
         if (g_spotlight_len > 0) {
-            dui_text(spx + 54, spy + 29, g_spotlight_query, THEME_TEXT_PRIMARY, 1);
+            dui_text(spx + 58, spy + 32, g_spotlight_query, THEME_TEXT_PRIMARY, 1);
         } else {
-            dui_text(spx + 54, spy + 29, "Type to launch apps or open URL (http://...)", THEME_TEXT_MUTED, 1);
+            dui_text(spx + 58, spy + 32, "Type to launch apps or open URL (http://...)", THEME_TEXT_MUTED, 1);
         }
 
         // Capture keyboard typing cleanly inside Spotlight
@@ -737,6 +805,7 @@ void blankUI_draw_shell(BlankInputState* in) {
             } else if (in->key_char >= 32 && in->key_char < 127 && g_spotlight_len < 60) {
                 g_spotlight_query[g_spotlight_len++] = in->key_char;
                 g_spotlight_query[g_spotlight_len] = 0;
+                play_system_sound((char*)"tool");
             }
             input_consume_key(in);
         }
@@ -746,11 +815,11 @@ void blankUI_draw_shell(BlankInputState* in) {
         for (int i = 0; i < APP_COUNT && shown < 5; i++) {
             if (str_icontains(g_dock_items[i].name, g_spotlight_query) ||
                 str_icontains(g_dock_items[i].keywords, g_spotlight_query)) {
-                int ry = spy + 74 + shown * 46;
-                bool hov = pt_in(in->mx, in->my, spx + 16, ry, spw - 32, 40);
-                dui_rect_rounded(spx + 16, ry, spw - 32, 40, THEME_RADIUS_MD, hov ? THEME_SURFACE_HOVER : THEME_SURFACE_BASE, 210);
-                dui_draw_squircle_icon(spx + 24, ry + 6, 28, (int)g_dock_items[i].id, false);
-                dui_text(spx + 62, ry + 12, g_dock_items[i].name, THEME_TEXT_PRIMARY, 1);
+                int ry = spy + 78 + shown * 48;
+                bool hov = pt_in(in->mx, in->my, spx + 18, ry, spw - 36, 42);
+                dui_rect_rounded(spx + 18, ry, spw - 36, 42, THEME_RADIUS_MD, hov ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, 215);
+                dui_draw_squircle_icon(spx + 26, ry + 7, 28, (int)g_dock_items[i].id, false);
+                dui_text(spx + 64, ry + 13, g_dock_items[i].name, THEME_TEXT_PRIMARY, 1);
                 if (hov && in->left_pressed) {
                     g_spotlight_open = false;
                     wm_open_app(g_dock_items[i].id);
@@ -763,6 +832,7 @@ void blankUI_draw_shell(BlankInputState* in) {
         // Click outside Spotlight dismisses it cleanly
         if (in->left_pressed && !pt_in(in->mx, in->my, spx, spy, spw, sph)) {
             g_spotlight_open = false;
+            play_system_sound((char*)"close");
             input_consume_mouse(in);
         }
     }
@@ -773,20 +843,21 @@ void blankUI_draw_shell(BlankInputState* in) {
         rclick_menu_open = true;
         rclick_menu_x = in->mx;
         rclick_menu_y = in->my;
-        if (rclick_menu_x + 190 > sw - 12) rclick_menu_x = sw - 202;
-        if (rclick_menu_y + 160 > sh - 80) rclick_menu_y = sh - 240;
+        if (rclick_menu_x + 200 > sw - 12) rclick_menu_x = sw - 212;
+        if (rclick_menu_y + 164 > sh - 80) rclick_menu_y = sh - 244;
+        play_system_sound((char*)"open");
     }
 
     if (rclick_menu_open) {
-        int mw = 190, mh = 152;
-        dui_shadow(rclick_menu_x, rclick_menu_y, mw, mh, THEME_RADIUS_MD, 7);
-        dui_glass_card(rclick_menu_x, rclick_menu_y, mw, mh, THEME_RADIUS_MD, THEME_SURFACE_CARD, 240, true);
+        int mw = 200, mh = 156;
+        dui_shadow(rclick_menu_x, rclick_menu_y, mw, mh, THEME_RADIUS_LG, 8);
+        dui_bento_card(rclick_menu_x, rclick_menu_y, mw, mh, THEME_RADIUS_LG, THEME_SURFACE_CARD, 246, true);
         const char* items[4] = { "New Terminal", "Open Horizon Web", "Next Wallpaper", "Display Settings" };
         for (int i = 0; i < 4; i++) {
-            int ry = rclick_menu_y + 8 + i * 34;
-            bool hov = pt_in(in->mx, in->my, rclick_menu_x + 6, ry, mw - 12, 30);
-            if (hov) dui_rect_rounded(rclick_menu_x + 6, ry, mw - 12, 30, 6, THEME_ACCENT_CYAN, 50);
-            dui_text(rclick_menu_x + 14, ry + 7, items[i], THEME_TEXT_PRIMARY, 1);
+            int ry = rclick_menu_y + 10 + i * 34;
+            bool hov = pt_in(in->mx, in->my, rclick_menu_x + 8, ry, mw - 16, 30);
+            if (hov) dui_rect_rounded(rclick_menu_x + 8, ry, mw - 16, 30, 8, THEME_SURFACE_HOVER, 210);
+            dui_text(rclick_menu_x + 16, ry + 7, items[i], THEME_TEXT_PRIMARY, 1);
             if (hov && in->left_pressed) {
                 rclick_menu_open = false;
                 input_consume_mouse(in);
@@ -796,6 +867,7 @@ void blankUI_draw_shell(BlankInputState* in) {
                     int nt = (dui_get_wallpaper_id() + 1) % 5;
                     dui_set_wallpaper_id(nt);
                     g_wallpaper_theme = nt;
+                    play_system_sound((char*)"tool");
                 } else if (i == 3) wm_open_app(APP_SETTINGS);
             }
         }

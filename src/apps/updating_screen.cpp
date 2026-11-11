@@ -40,19 +40,18 @@ extern "C" void launch_updating_screen(float progress) {
     audio_tick();
 
     dui_rect(0, 0, sw, sh, THEME_BG_VOID, 255);
+    dui_dot_grid_overlay(0, 0, sw, sh, 32, THEME_TEXT_PRIMARY, 10);
 
     int cx = sw / 2;
     int cy = sh / 2;
-    dui_circle(cx, cy - 20, 190, THEME_ACCENT_IRIS, 14);
-    dui_circle(cx, cy - 20, 120, THEME_ACCENT_CYAN, 18);
 
-    int card_w = 500;
-    int card_h = 280;
+    int card_w = 516;
+    int card_h = 292;
     int card_x = cx - card_w / 2;
     int card_y = cy - card_h / 2;
 
-    dui_shadow(card_x, card_y, card_w, card_h, THEME_RADIUS_XL, 12);
-    dui_glass_card(card_x, card_y, card_w, card_h, THEME_RADIUS_XL, THEME_SURFACE_BASE, 224, true);
+    dui_shadow(card_x, card_y, card_w, card_h, THEME_RADIUS_CARD, 12);
+    dui_bento_card(card_x, card_y, card_w, card_h, THEME_RADIUS_CARD, THEME_SURFACE_BASE, 236, true);
 
     int ring_y = card_y + 78;
     dui_progress_ring(cx, ring_y, 38, 5, p, THEME_SURFACE_ELEVATED, THEME_ACCENT_CYAN);

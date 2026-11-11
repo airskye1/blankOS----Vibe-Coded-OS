@@ -502,14 +502,15 @@ static void generate_wallpaper_cache(int tid) {
                 b += rb * bw;
             }
 
-            // Subtle film-grain hash dither (-1, 0, +1) to prevent 8-bit banding
+            // Subtle film-grain hash dither (-1, 0, +1) + Lira architectural 28px dot grid
             uint32_t h = (x * 374761393U + y_hash) ^ 0x5BF03635U;
             h = (h ^ (h >> 13)) * 1274126177U;
             int dither = (int)((h >> 24) & 3U) - 1;
+            int dot = ((x % 28U) == 0U && (y % 28U) == 0U) ? 7 : 0;
 
-            int ir = (int)r + dither;
-            int ig = (int)g + dither;
-            int ib = (int)b + dither;
+            int ir = (int)r + dither + dot;
+            int ig = (int)g + dither + dot;
+            int ib = (int)b + dither + dot;
             if (ir < 0) ir = 0; else if (ir > 255) ir = 255;
             if (ig < 0) ig = 0; else if (ig > 255) ig = 255;
             if (ib < 0) ib = 0; else if (ib > 255) ib = 255;
@@ -1406,9 +1407,38 @@ void dui_shadow(int x, int y, int w, int h, int radius, int elevation) {
 void dui_glass_card(int x, int y, int w, int h, int radius, uint32_t tint, uint8_t alpha, bool focused) {
     if (w <= 0 || h <= 0) return;
     dui_frosted_glass(x, y, w, h, radius, tint, alpha);
-    uint32_t border_col = focused ? THEME_BORDER_FOCUS : THEME_BORDER_SPECULAR;
-    uint8_t border_alpha = focused ? 210 : 150;
+    int r_clamped = imin(radius, imin(w, h) / 2);
+    if (w > 2 * r_clamped + 4) {
+        // Directional top specular catchlight + bottom grounding shade (zero glow)
+        compositor_fill_span(x + r_clamped + 1, x + w - r_clamped - 1, y + 1, 0xFFFFFF, focused ? 42 : 24);
+        compositor_fill_span(x + r_clamped + 1, x + w - r_clamped - 1, y + h - 2, 0x000000, 48);
+    }
+    uint32_t border_col = focused ? THEME_BORDER_SPECULAR : THEME_BORDER_SUBTLE;
+    uint8_t border_alpha = focused ? 215 : 165;
     dui_rect_rounded_outline(x, y, w, h, radius, border_col, border_alpha);
+}
+
+void dui_bento_card(int x, int y, int w, int h, int radius, uint32_t tint, uint8_t alpha, bool active) {
+    if (w <= 0 || h <= 0) return;
+    int r = (radius <= 0) ? THEME_RADIUS_LG : radius;
+    dui_shadow(x, y + 2, w, h, r, active ? 2 : 1);
+    dui_rect_rounded(x, y, w, h, r, tint, alpha);
+    int rc = imin(r, imin(w, h) / 2);
+    if (w > 2 * rc + 4) {
+        compositor_fill_span(x + rc + 1, x + w - rc - 1, y + 1, 0xFFFFFF, active ? 46 : 26);
+        compositor_fill_span(x + rc + 1, x + w - rc - 1, y + h - 2, 0x000000, 56);
+    }
+    uint32_t border = active ? THEME_BORDER_SPECULAR : THEME_BORDER_SUBTLE;
+    dui_rect_rounded_outline(x, y, w, h, r, border, active ? 210 : 155);
+}
+
+void dui_dot_grid_overlay(int x, int y, int w, int h, int spacing, uint32_t color, uint8_t alpha) {
+    if (w <= 0 || h <= 0 || spacing < 6) return;
+    for (int py = y + spacing / 2; py < y + h - 2; py += spacing) {
+        for (int px = x + spacing / 2; px < x + w - 2; px += spacing) {
+            put_pixel_alpha(px, py, color, alpha);
+        }
+    }
 }
 
 // ============================================================================
@@ -1835,16 +1865,15 @@ void dui_draw_squircle_icon(int x, int y, int size, int app_id, bool hovered) {
     if (hovered) {
         top_col = horizon_lerp_color(top_col, 0xFFFFFF, 0.14f);
         bot_col = horizon_lerp_color(bot_col, 0xFFFFFF, 0.08f);
-        dui_rect_rounded_outline(x - 1, y - 1, size + 2, size + 2, r + 1, top_col, 160);
     }
 
     dui_gradient_rounded(x, y, size, size, r, top_col, bot_col, 255);
 
-    // Subtle top inner specular gloss
+    // Tactile top inner specular catchlight + crisp hairline (zero outer neon glow)
     if (size >= 24) {
-        dui_rect_rounded(x + 2, y + 2, size - 4, imax(2, size / 5), imax(2, r - 2), 0xFFFFFF, 32);
+        dui_rect_rounded(x + 2, y + 2, size - 4, imax(2, size / 6), imax(2, r - 2), 0xFFFFFF, hovered ? 42 : 28);
     }
-    dui_rect_rounded_outline(x, y, size, size, r, 0xFFFFFF, hovered ? 120 : 65);
+    dui_rect_rounded_outline(x, y, size, size, r, 0xFFFFFF, hovered ? 145 : 70);
 
     int cx = x + size / 2;
     int cy = y + size / 2;
@@ -2134,20 +2163,34 @@ bool dui_draw_image_path(const char* path, int x, int y, int w, int h) {
 // Cohesive Horizon Interactive Controls
 // ============================================================================
 
-bool dui_button(int x, int y, int w, int h, const char* label, uint32_t accent, bool primary, int mx, int my, bool clicked) {
+static bool g_dui_pointer_down = false;
+
+void dui_set_pointer_down(bool down) {
+    g_dui_pointer_down = down;
+}
+
+bool dui_button_tactile(int x, int y, int w, int h, const char* label, uint32_t accent, bool primary, int mx, int my, bool down, bool clicked) {
     if (w <= 0 || h <= 0) return false;
     bool hovered = (mx >= x && mx < x + w && my >= y && my < y + h);
-    int r = (h <= 28) ? THEME_RADIUS_SM : THEME_RADIUS_MD;
+    bool pressed = hovered && down;
+    int r = (h <= 28) ? THEME_RADIUS_SM : ((h >= 34) ? THEME_RADIUS_PILL : THEME_RADIUS_MD);
+    int rc = imin(r, imin(w, h) / 2);
+    int by = pressed ? (y + 1) : y;
 
     uint32_t text_col = THEME_TEXT_PRIMARY;
     if (primary) {
-        uint32_t c_top = hovered ? horizon_lerp_color(accent, 0xFFFFFF, 0.14f) : accent;
-        uint32_t c_bot = horizon_lerp_color(c_top, 0x000000, 0.22f);
-        dui_gradient_rounded(x, y, w, h, r, c_top, c_bot, 255);
-        if (w > 2 * r) {
-            compositor_fill_span(x + r, x + w - r, y + 1, 0xFFFFFF, 70);
+        uint32_t base = accent;
+        if (pressed) base = horizon_lerp_color(base, 0x000000, 0.16f);
+        else if (hovered) base = horizon_lerp_color(base, 0xFFFFFF, 0.12f);
+
+        uint32_t c_top = horizon_lerp_color(base, 0xFFFFFF, pressed ? 0.04f : 0.16f);
+        uint32_t c_bot = horizon_lerp_color(base, 0x000000, pressed ? 0.28f : 0.20f);
+        dui_gradient_rounded(x, by, w, h, rc, c_top, c_bot, 255);
+        if (w > 2 * rc + 2) {
+            compositor_fill_span(x + rc, x + w - rc, by + 1, 0xFFFFFF, pressed ? 32 : 85);
+            compositor_fill_span(x + rc, x + w - rc, by + h - 2, 0x000000, pressed ? 24 : 55);
         }
-        dui_rect_rounded_outline(x, y, w, h, r, horizon_lerp_color(c_top, 0xFFFFFF, 0.35f), hovered ? 210 : 140);
+        dui_rect_rounded_outline(x, by, w, h, rc, horizon_lerp_color(base, 0xFFFFFF, 0.34f), hovered ? 215 : 155);
 
         int ar = (accent >> 16) & 0xFF;
         int ag = (accent >> 8) & 0xFF;
@@ -2155,19 +2198,21 @@ bool dui_button(int x, int y, int w, int h, const char* label, uint32_t accent, 
         int lum = (ar * 299 + ag * 587 + ab * 114) / 1000;
         text_col = (lum > 140) ? THEME_TEXT_ON_ACCENT : THEME_TEXT_PRIMARY;
     } else {
-        uint32_t bg = hovered ? THEME_SURFACE_HOVER : THEME_SURFACE_ELEVATED;
-        dui_rect_rounded(x, y, w, h, r, bg, hovered ? 235 : 205);
-        dui_rect_rounded_outline(x, y, w, h, r, hovered ? THEME_BORDER_FOCUS : THEME_BORDER_SPECULAR, hovered ? 200 : 140);
-        if (w > 2 * r) {
-            compositor_fill_span(x + r, x + w - r, y + 1, 0xFFFFFF, hovered ? 45 : 25);
+        uint32_t top_col = pressed ? THEME_SURFACE_BASE : (hovered ? horizon_lerp_color(THEME_SURFACE_HOVER, 0xFFFFFF, 0.06f) : THEME_SURFACE_ELEVATED);
+        uint32_t bot_col = pressed ? THEME_SURFACE_INPUT : (hovered ? THEME_SURFACE_CARD : horizon_lerp_color(THEME_SURFACE_CARD, 0x000000, 0.10f));
+        dui_gradient_rounded(x, by, w, h, rc, top_col, bot_col, 240);
+        if (w > 2 * rc + 2) {
+            compositor_fill_span(x + rc, x + w - rc, by + 1, 0xFFFFFF, pressed ? 16 : (hovered ? 48 : 28));
+            compositor_fill_span(x + rc, x + w - rc, by + h - 2, 0x000000, 50);
         }
+        dui_rect_rounded_outline(x, by, w, h, rc, hovered ? THEME_BORDER_SPECULAR : THEME_BORDER_SUBTLE, hovered ? 215 : 175);
     }
 
     if (label && label[0]) {
         int tw = dui_text_width(label, 1);
         int th = dui_text_height(1);
         int tx = x + (w - tw) / 2;
-        int ty = y + (h - th) / 2;
+        int ty = by + (h - th) / 2;
         if (tw > w - 12) {
             dui_text_ellipsis(x + 6, ty, w - 12, label, text_col, 1);
         } else {
@@ -2177,44 +2222,56 @@ bool dui_button(int x, int y, int w, int h, const char* label, uint32_t accent, 
     return hovered && clicked;
 }
 
+bool dui_button(int x, int y, int w, int h, const char* label, uint32_t accent, bool primary, int mx, int my, bool clicked) {
+    return dui_button_tactile(x, y, w, h, label, accent, primary, mx, my, g_dui_pointer_down, clicked);
+}
+
 bool dui_icon_pill(int x, int y, int w, int h, const char* label, int sys_icon, bool active, int mx, int my, bool clicked) {
     if (w <= 0 || h <= 0) return false;
     bool hovered = (mx >= x && mx < x + w && my >= y && my < y + h);
+    bool pressed = hovered && g_dui_pointer_down;
     int r = h / 2;
+    int by = pressed ? (y + 1) : y;
 
-    uint32_t bg = THEME_SURFACE_CARD;
-    uint8_t bg_a = 175;
+    uint32_t top_col = THEME_SURFACE_CARD;
+    uint32_t bot_col = THEME_SURFACE_BASE;
+    uint8_t bg_a = 200;
     uint32_t border = THEME_BORDER_SUBTLE;
-    uint8_t border_a = 130;
+    uint8_t border_a = 150;
     uint32_t fg = THEME_TEXT_SECONDARY;
 
     if (active) {
-        bg = horizon_lerp_color(THEME_SURFACE_ELEVATED, THEME_ACCENT_CYAN, 0.24f);
-        bg_a = 230;
-        border = THEME_ACCENT_CYAN;
-        border_a = 210;
+        top_col = horizon_lerp_color(THEME_SURFACE_ELEVATED, THEME_ACCENT_CYAN, 0.24f);
+        bot_col = horizon_lerp_color(THEME_SURFACE_CARD, THEME_ACCENT_CYAN, 0.14f);
+        bg_a = 240;
+        border = THEME_BORDER_SPECULAR;
+        border_a = 220;
         fg = THEME_TEXT_PRIMARY;
     } else if (hovered) {
-        bg = THEME_SURFACE_HOVER;
-        bg_a = 215;
+        top_col = pressed ? THEME_SURFACE_BASE : THEME_SURFACE_HOVER;
+        bot_col = pressed ? THEME_SURFACE_INPUT : THEME_SURFACE_ELEVATED;
+        bg_a = 235;
         border = THEME_BORDER_SPECULAR;
-        border_a = 170;
+        border_a = 195;
         fg = THEME_TEXT_PRIMARY;
     }
 
-    dui_rect_rounded(x, y, w, h, r, bg, bg_a);
-    dui_rect_rounded_outline(x, y, w, h, r, border, border_a);
+    dui_gradient_rounded(x, by, w, h, r, top_col, bot_col, bg_a);
+    if (w > 2 * r + 2) {
+        compositor_fill_span(x + r, x + w - r, by + 1, 0xFFFFFF, active ? 46 : (hovered ? 34 : 20));
+    }
+    dui_rect_rounded_outline(x, by, w, h, r, border, border_a);
 
     int pad_x = imax(8, h / 3);
     int tx = x + pad_x;
     if (sys_icon >= 0) {
         int icon_sz = (h >= 24) ? 14 : 12;
-        dui_draw_sys_icon(tx, y + (h - icon_sz) / 2, icon_sz, sys_icon, active ? THEME_ACCENT_CYAN : fg);
+        dui_draw_sys_icon(tx, by + (h - icon_sz) / 2, icon_sz, sys_icon, active ? THEME_ACCENT_CYAN : fg);
         tx += icon_sz + 6;
     }
 
     if (label && label[0]) {
-        int ty = y + (h - dui_text_height(1)) / 2;
+        int ty = by + (h - dui_text_height(1)) / 2;
         int avail = (x + w - pad_x) - tx;
         if (avail > 8) {
             dui_text_ellipsis(tx, ty, avail, label, fg, 1);
@@ -2224,23 +2281,62 @@ bool dui_icon_pill(int x, int y, int w, int h, const char* label, int sys_icon, 
     return hovered && clicked;
 }
 
+void dui_status_pill(int x, int y, int w, int h, const char* label, uint32_t dot_color, uint32_t bg, bool active) {
+    if (w <= 0 || h <= 0) return;
+    int r = h / 2;
+    dui_rect_rounded(x, y, w, h, r, bg, active ? 235 : 195);
+    if (w > 2 * r + 2) {
+        compositor_fill_span(x + r, x + w - r, y + 1, 0xFFFFFF, 26);
+    }
+    dui_rect_rounded_outline(x, y, w, h, r, active ? dot_color : THEME_BORDER_SUBTLE, active ? 180 : 150);
+
+    int pad = imax(8, h / 3);
+    dui_circle(x + pad + 3, y + h / 2, 3, dot_color, 255);
+    if (label && label[0]) {
+        int ty = y + (h - dui_text_height(1)) / 2;
+        dui_text_ellipsis(x + pad + 11, ty, w - pad * 2 - 12, label, THEME_TEXT_PRIMARY, 1);
+    }
+}
+
+void dui_eq_bars(int x, int y, int w, int h, const int* bands, int count, uint32_t accent, bool active) {
+    if (w <= 0 || h <= 0 || !bands || count <= 0) return;
+    int gap = 2;
+    int bw = (w - (count - 1) * gap) / count;
+    if (bw < 2) bw = 2;
+    int total_w = count * bw + (count - 1) * gap;
+    int sx = x + (w - total_w) / 2;
+    for (int i = 0; i < count; i++) {
+        int lvl = bands[i];
+        if (lvl < 0) lvl = 0;
+        if (lvl > 100) lvl = 100;
+        int min_bh = imax(3, h / 5);
+        int bh = active ? (min_bh + ((h - min_bh) * lvl) / 100) : min_bh;
+        int bx = sx + i * (bw + gap);
+        int by = y + (h - bh) / 2;
+        uint32_t col = active ? accent : THEME_TEXT_MUTED;
+        dui_rect_rounded(bx, by, bw, bh, 1, col, active ? 245 : 140);
+    }
+}
+
 void dui_toggle_switch(int x, int y, bool on, uint32_t accent) {
-    const int w = 38;
-    const int h = 20;
-    const int r = 10;
+    const int w = 40;
+    const int h = 22;
+    const int r = 11;
 
     if (on) {
-        dui_rect_rounded(x, y, w, h, r, accent, 255);
-        dui_rect_rounded_outline(x, y, w, h, r, horizon_lerp_color(accent, 0xFFFFFF, 0.32f), 150);
+        uint32_t c_top = horizon_lerp_color(accent, 0xFFFFFF, 0.14f);
+        uint32_t c_bot = horizon_lerp_color(accent, 0x000000, 0.18f);
+        dui_gradient_rounded(x, y, w, h, r, c_top, c_bot, 255);
+        dui_rect_rounded_outline(x, y, w, h, r, horizon_lerp_color(accent, 0xFFFFFF, 0.34f), 175);
     } else {
-        dui_rect_rounded(x, y, w, h, r, THEME_SURFACE_ELEVATED, 230);
-        dui_rect_rounded_outline(x, y, w, h, r, THEME_BORDER_SPECULAR, 150);
+        dui_gradient_rounded(x, y, w, h, r, THEME_SURFACE_ELEVATED, THEME_SURFACE_BASE, 235);
+        dui_rect_rounded_outline(x, y, w, h, r, THEME_BORDER_SUBTLE, 175);
     }
 
-    int kx = on ? (x + w - 10) : (x + 10);
+    int kx = on ? (x + w - 11) : (x + 11);
     int ky = y + h / 2;
-    dui_circle(kx, ky + 1, 7, 0x000000, 65);
-    dui_circle(kx, ky, 7, 0xFFFFFF, 255);
+    dui_circle(kx, ky + 1, 7, 0x000000, 70);
+    dui_circle(kx, ky, 7, 0xF8FAFC, 255);
 }
 
 } // extern "C"

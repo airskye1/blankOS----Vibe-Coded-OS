@@ -272,7 +272,7 @@ static void calc_apply_op(char next_op) {
             g_calc_error = true;
             g_calc_op = 0;
             g_calc_pending_expr[0] = '\0';
-            play_system_sound((const char*)"error");
+            play_system_sound((char*)"error");
             return;
         }
         g_calc_accum = res;
@@ -303,7 +303,7 @@ static void calc_equals(void) {
         g_calc_error = true;
         g_calc_op = 0;
         g_calc_pending_expr[0] = '\0';
-        play_system_sound((const char*)"error");
+        play_system_sound((char*)"error");
         return;
     }
 
@@ -341,6 +341,7 @@ static void calculator_render(BlankWindow* win, int cx, int cy, int cw, int ch, 
     if (g_calc_flash_ticks > 0) g_calc_flash_ticks--;
 
     bool click_avail = (in && in->left_pressed);
+    bool pointer_down = (in && in->left_down);
     int mx = in ? in->mx : -1;
     int my = in ? in->my : -1;
 
@@ -351,45 +352,49 @@ static void calculator_render(BlankWindow* win, int cx, int cy, int cw, int ch, 
             char lb[2] = { kc, '\0' };
             calc_input_digit(kc);
             calc_flash(lb);
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"tool");
         } else if (kc == '.') {
             calc_input_dot();
             calc_flash(".");
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"tool");
         } else if (kc == '+' || kc == '-' || kc == '*' || kc == '/') {
             char lb[2] = { kc, '\0' };
             calc_apply_op(kc);
             calc_flash(lb);
-            play_system_sound((const char*)"click");
+            if (!g_calc_error) play_system_sound((char*)"tool");
         } else if (kc == '%') {
             calc_percent();
             calc_flash("%");
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"tool");
         } else if (kc == '=' || kc == '\n') {
+            bool had_op = (g_calc_op != 0);
             calc_equals();
             calc_flash("=");
-            play_system_sound((const char*)"click");
+            if (!g_calc_error) {
+                play_system_sound(had_op ? (char*)"success" : (char*)"tool");
+            }
         } else if (kc == '\b') {
             calc_backspace();
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"tool");
         } else if (kc == 'c' || kc == 'C' || in->scan_code == BLANK_SCAN_ESC) {
             calc_clear_all();
             calc_flash("C");
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"close");
         }
     }
 
-    dui_rect(cx, cy, cw, ch, THEME_BG_DEEP, 185);
+    dui_rect(cx, cy, cw, ch, THEME_BG_DEEP, 200);
 
     int pad = 12;
     int card_w = cw - pad * 2;
 
-    // 1. Expression History Strip
+    // 1. Expression History Bento Strip
     int hist_y = cy + 10;
     int hist_h = 68;
-    dui_glass_card(cx + pad, hist_y, card_w, hist_h, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 215, false);
+    dui_bento_card(cx + pad, hist_y, card_w, hist_h, THEME_RADIUS_LG, THEME_SURFACE_INPUT, 225, false);
     if (g_calc_hist_count == 0) {
-        dui_text(cx + pad + 12, hist_y + 24, "History empty  |  Click or type digits", THEME_TEXT_MUTED, 1);
+        dui_status_pill(cx + pad + 12, hist_y + 22, 106, 24, "Tape Ready", THEME_ACCENT_AMBER, THEME_SURFACE_CARD, false);
+        dui_text_ellipsis(cx + pad + 128, hist_y + 26, card_w - 140, "Click or type digits", THEME_TEXT_MUTED, 1);
     } else {
         int show = g_calc_hist_count > 3 ? 3 : g_calc_hist_count;
         int start = g_calc_hist_count - show;
@@ -401,44 +406,55 @@ static void calculator_render(BlankWindow* win, int cx, int cy, int cw, int ch, 
             calc_strcat(line, " = ", sizeof(line));
             calc_strcat(line, g_calc_history[idx].result, sizeof(line));
 
-            bool hov = calc_pt_in(mx, my, cx + pad + 4, ry, card_w - 8, 18);
+            bool hov = calc_pt_in(mx, my, cx + pad + 6, ry, card_w - 12, 18);
             if (hov) {
-                dui_rect_rounded(cx + pad + 6, ry, card_w - 12, 18, 4, THEME_SURFACE_HOVER, 160);
+                dui_rect_rounded(cx + pad + 8, ry, card_w - 16, 18, THEME_RADIUS_SM, THEME_SURFACE_HOVER, 170);
+                dui_rect_rounded_outline(cx + pad + 8, ry, card_w - 16, 18, THEME_RADIUS_SM, THEME_BORDER_SUBTLE, 160);
                 if (click_avail) {
                     click_avail = false;
                     calc_strcpy(g_calc_display, g_calc_history[idx].result, sizeof(g_calc_display));
                     g_calc_reset_next = false;
                     g_calc_error = false;
-                    play_system_sound((const char*)"click");
+                    play_system_sound((char*)"tab");
                 }
             }
             int tw = dui_text_width(line, 1);
-            int tx = cx + pad + card_w - 12 - tw;
-            if (tx < cx + pad + 10) tx = cx + pad + 10;
-            dui_text_ellipsis(tx, ry + 1, card_w - 20, line, hov ? THEME_ACCENT_AMBER : THEME_TEXT_SECONDARY, 1);
+            int tx = cx + pad + card_w - 14 - tw;
+            if (tx < cx + pad + 12) tx = cx + pad + 12;
+            dui_text_ellipsis(tx, ry + 1, card_w - 24, line, hov ? THEME_ACCENT_AMBER : THEME_TEXT_SECONDARY, 1);
         }
     }
 
-    // 2. Main Glass Display Card
+    // 2. Main Hero Bento Display Card
     int disp_y = hist_y + hist_h + 8;
     int disp_h = 84;
-    dui_glass_card(cx + pad, disp_y, card_w, disp_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 235, true);
+    dui_bento_card(cx + pad, disp_y, card_w, disp_h, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 240, !g_calc_error);
+    dui_dot_grid_overlay(cx + pad + 12, disp_y + 8, card_w - 24, disp_h - 16, 14, THEME_TEXT_PRIMARY, 10);
+
+    if (g_calc_error) {
+        dui_status_pill(cx + pad + 12, disp_y + 10, 72, 20, "Error", THEME_ACCENT_ROSE, THEME_SURFACE_ELEVATED, true);
+    } else if (g_calc_op != 0) {
+        dui_status_pill(cx + pad + 12, disp_y + 10, 74, 20, "Active", THEME_ACCENT_AMBER, THEME_SURFACE_ELEVATED, true);
+    } else {
+        dui_status_pill(cx + pad + 12, disp_y + 10, 72, 20, "Ready", THEME_ACCENT_TEAL, THEME_SURFACE_ELEVATED, false);
+    }
 
     if (g_calc_pending_expr[0]) {
         int pw = dui_text_width(g_calc_pending_expr, 1);
         int px = cx + pad + card_w - 14 - pw;
-        if (px < cx + pad + 12) px = cx + pad + 12;
-        dui_text_ellipsis(px, disp_y + 12, card_w - 24, g_calc_pending_expr, THEME_ACCENT_AMBER, 1);
+        int min_px = cx + pad + 94;
+        if (px < min_px) px = min_px;
+        dui_text_ellipsis(px, disp_y + 12, (cx + pad + card_w - 14) - px, g_calc_pending_expr, THEME_ACCENT_AMBER, 1);
     }
 
     int dscale = (dui_text_width(g_calc_display, 3) <= card_w - 28) ? 3 : 2;
     int dw = dui_text_width(g_calc_display, dscale);
     int dx = cx + pad + card_w - 14 - dw;
-    if (dx < cx + pad + 12) dx = cx + pad + 12;
+    if (dx < cx + pad + 14) dx = cx + pad + 14;
     int dy = disp_y + (dscale == 3 ? 38 : 44);
-    dui_text_ellipsis(dx, dy, card_w - 24, g_calc_display, g_calc_error ? THEME_ACCENT_ROSE : THEME_TEXT_PRIMARY, dscale);
+    dui_text_ellipsis(dx, dy, card_w - 28, g_calc_display, g_calc_error ? THEME_ACCENT_ROSE : THEME_TEXT_PRIMARY, dscale);
 
-    // 3. 5x4 Spatial Glass Keypad
+    // 3. 5x4 Lira Tactile Squircle Keypad
     int grid_y = disp_y + disp_h + 10;
     int avail_h = (cy + ch - pad) - grid_y;
     int gap = 7;
@@ -446,6 +462,7 @@ static void calculator_render(BlankWindow* win, int cx, int cy, int cw, int ch, 
     int btn_h = (avail_h - gap * 4) / 5;
     if (btn_h > 46) btn_h = 46;
     if (btn_h < 30) btn_h = 30;
+    int key_r = (btn_h >= 38) ? THEME_RADIUS_LG : THEME_RADIUS_MD;
 
     const char* rows[5][4] = {
         { "C",   "+/-", "%", "/" },
@@ -471,6 +488,8 @@ static void calculator_render(BlankWindow* win, int cx, int cy, int cw, int ch, 
             bool op_active = (g_calc_op != 0 && lbl[0] == g_calc_op && lbl[1] == '\0' && g_calc_reset_next);
             bool flashing = (g_calc_flash_ticks > 0 && calc_streq(g_calc_flash_btn, lbl));
             bool hov = calc_pt_in(mx, my, bx, by, bw, btn_h);
+            bool pressed = (hov && pointer_down) || flashing;
+            int kby = pressed ? (by + 1) : by;
 
             uint32_t bg = THEME_SURFACE_CARD;
             uint32_t fg = THEME_TEXT_PRIMARY;
@@ -487,37 +506,60 @@ static void calculator_render(BlankWindow* win, int cx, int cy, int cw, int ch, 
             } else if (is_fn) {
                 bg = flashing ? THEME_ACCENT_CYAN : (hov ? THEME_SURFACE_HOVER : THEME_SURFACE_ELEVATED);
                 fg = flashing ? THEME_TEXT_ON_ACCENT : (c == 0 ? THEME_ACCENT_ROSE : THEME_TEXT_SECONDARY);
+                border = hov ? THEME_BORDER_SPECULAR : THEME_BORDER_SUBTLE;
             } else {
                 bg = flashing ? THEME_ACCENT_AMBER : (hov ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD);
                 fg = flashing ? THEME_TEXT_ON_ACCENT : THEME_TEXT_PRIMARY;
+                border = hov ? THEME_BORDER_SPECULAR : THEME_BORDER_SUBTLE;
             }
 
-            dui_rect_rounded(bx, by, bw, btn_h, THEME_RADIUS_MD, bg, (is_eq || op_active) ? 245 : 225);
-            dui_rect_rounded_outline(bx, by, bw, btn_h, THEME_RADIUS_MD, hov ? THEME_ACCENT_AMBER : border, hov ? 200 : 120);
+            uint32_t c_top = pressed ? horizon_lerp_color(bg, 0x000000, 0.14f)
+                                     : horizon_lerp_color(bg, 0xFFFFFF, (is_eq || op_active) ? 0.14f : 0.06f);
+            uint32_t c_bot = pressed ? horizon_lerp_color(bg, 0x000000, 0.24f)
+                                     : horizon_lerp_color(bg, 0x000000, (is_eq || op_active) ? 0.18f : 0.12f);
+
+            int kr = key_r;
+            if (kr > btn_h / 2) kr = btn_h / 2;
+            dui_gradient_rounded(bx, kby, bw, btn_h, kr, c_top, c_bot, (is_eq || op_active) ? 250 : 235);
+            if (bw > 2 * kr + 2) {
+                dui_line(bx + kr, kby + 1, bx + bw - kr, kby + 1, 0xFFFFFF, pressed ? 20 : ((is_eq || op_active) ? 88 : (hov ? 56 : 34)));
+                dui_line(bx + kr, kby + btn_h - 2, bx + bw - kr, kby + btn_h - 2, 0x000000, pressed ? 22 : 54);
+            }
+            dui_rect_rounded_outline(bx, kby, bw, btn_h, kr, hov ? THEME_ACCENT_AMBER : border, hov ? 210 : 155);
 
             int tw = dui_text_width(lbl, 1);
+            int th = dui_text_height(1);
             int tx = bx + (bw - tw) / 2;
-            int ty = by + (btn_h - 16) / 2;
+            int ty = kby + (btn_h - th) / 2;
             dui_text(tx, ty, lbl, fg, 1);
 
             if (hov && click_avail) {
                 click_avail = false;
                 calc_flash(lbl);
-                play_system_sound((const char*)"click");
                 if (lbl[0] >= '0' && lbl[0] <= '9' && lbl[1] == '\0') {
                     calc_input_digit(lbl[0]);
+                    play_system_sound((char*)"tool");
                 } else if (calc_streq(lbl, ".")) {
                     calc_input_dot();
+                    play_system_sound((char*)"tool");
                 } else if (calc_streq(lbl, "C")) {
                     calc_clear_all();
+                    play_system_sound((char*)"close");
                 } else if (calc_streq(lbl, "+/-")) {
                     calc_toggle_sign();
+                    play_system_sound((char*)"tool");
                 } else if (calc_streq(lbl, "%")) {
                     calc_percent();
+                    play_system_sound((char*)"tool");
                 } else if (calc_streq(lbl, "=")) {
+                    bool had_op = (g_calc_op != 0);
                     calc_equals();
+                    if (!g_calc_error) {
+                        play_system_sound(had_op ? (char*)"success" : (char*)"tool");
+                    }
                 } else if (lbl[1] == '\0') {
                     calc_apply_op(lbl[0]);
+                    if (!g_calc_error) play_system_sound((char*)"tool");
                 }
             }
         }

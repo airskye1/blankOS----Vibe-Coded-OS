@@ -95,6 +95,7 @@ extern "C" void launch_loading_screen(EFI_SYSTEM_TABLE* SystemTable) {
     for (int frame = 0; frame <= total_frames; frame++) {
         input_poll(&in);
         audio_tick();
+        dui_set_pointer_down(in.left_down);
 
         if (in.left_pressed ||
             (in.has_key && (in.key_char == '\n' || in.key_char == '\r' ||
@@ -103,48 +104,45 @@ extern "C" void launch_loading_screen(EFI_SYSTEM_TABLE* SystemTable) {
         }
 
         float t = (float)frame / (float)total_frames;
-        float progress = horizon_ease_out_cubic(t);
+        float progress = horizon_ease_lira(t);
 
-        // Obsidian void backdrop
+        // Obsidian void backdrop + subtle Lira architectural dot grid
         dui_rect(0, 0, sw, sh, THEME_BG_VOID, 255);
+        dui_dot_grid_overlay(0, 0, sw, sh, 32, THEME_TEXT_PRIMARY, 10);
 
         int cx = sw / 2;
         int cy = sh / 2 - 28;
 
-        // Ambient Aurora halo behind Horizon orb
-        int pulse_r = 128 + (frame % 24) / 3;
-        dui_circle(cx, cy - 36, pulse_r + 56, THEME_ACCENT_IRIS, 12);
-        dui_circle(cx, cy - 36, pulse_r, THEME_ACCENT_CYAN, 18);
-        dui_circle(cx, cy - 36, 72, THEME_ACCENT_TEAL, 22);
+        // Zero neon halo: crisp geometric emblem + precision stroke trace ring
+        dui_circle_outline(cx, cy - 36, 56, THEME_BORDER_SUBTLE, 140);
+        dui_progress_ring(cx, cy - 36, 46, 4, progress, THEME_SURFACE_CARD, THEME_ACCENT_CYAN);
+        dui_circle(cx, cy - 36, 30, THEME_SURFACE_BASE, 240);
+        dui_circle_outline(cx, cy - 36, 30, THEME_BORDER_SPECULAR, 180);
+        dui_circle(cx, cy - 36, 10, THEME_ACCENT_CYAN, 230);
+        dui_circle(cx, cy - 36, 4, THEME_BG_VOID, 255);
 
-        // Glowing Horizon orb + eased progress ring
-        dui_circle(cx, cy - 36, 36, THEME_SURFACE_BASE, 235);
-        dui_progress_ring(cx, cy - 36, 48, 5, progress, THEME_SURFACE_ELEVATED, THEME_ACCENT_CYAN);
-        dui_circle(cx, cy - 36, 20, THEME_ACCENT_CYAN, 48);
-        dui_circle(cx, cy - 36, 11, THEME_ACCENT_IRIS, 190);
-        dui_circle(cx, cy - 36, 5, THEME_TEXT_PRIMARY, 245);
-
-        // Title & Subtitle
+        // Editorial Title & Subtitle
         const char* title = "BlankOS Horizon";
         int tw = dui_text_width(title, 2);
         dui_text(cx - tw / 2, cy + 32, title, THEME_TEXT_PRIMARY, 2);
 
-        const char* sub = "UEFI Spatial Glass Kernel";
+        const char* sub = "Architectural UEFI Kernel";
         int sub_w = dui_text_width(sub, 1);
         dui_text(cx - sub_w / 2, cy + 68, sub, THEME_TEXT_SECONDARY, 1);
 
-        // Sleek horizontal progress bar
-        int bar_w = 280;
-        int bar_h = 5;
+        // Crisp pill progress track
+        int bar_w = 296;
+        int bar_h = 6;
         int bar_x = cx - bar_w / 2;
-        int bar_y = cy + 100;
-        dui_rect_rounded(bar_x, bar_y, bar_w, bar_h, 2, THEME_SURFACE_CARD, 255);
+        int bar_y = cy + 98;
+        dui_rect_rounded(bar_x, bar_y, bar_w, bar_h, 3, THEME_SURFACE_CARD, 255);
+        dui_rect_rounded_outline(bar_x, bar_y, bar_w, bar_h, 3, THEME_BORDER_SUBTLE, 140);
         int fill_w = (int)((float)bar_w * progress);
-        if (fill_w >= 4) {
-            dui_gradient_rounded(bar_x, bar_y, fill_w, bar_h, 2, THEME_ACCENT_CYAN, THEME_ACCENT_TEAL, 255);
+        if (fill_w >= 6) {
+            dui_gradient_rounded(bar_x, bar_y, fill_w, bar_h, 3, THEME_ACCENT_CYAN, THEME_ACCENT_TEAL, 255);
         }
 
-        // Hardware Check Readout Pills (4 compact glass chips)
+        // Hardware Check Bento Chips (4 crisp 16px Bento cards)
         const char* labels[4] = { "GOP Display", "UEFI HID", "SNP Net", "FAT32" };
         const char* vals[4]   = { gop_val, hid_val, net_val, fs_val };
         const float thresh[4] = { 0.12f, 0.32f, 0.54f, 0.76f };
@@ -155,32 +153,32 @@ extern "C" void launch_loading_screen(EFI_SYSTEM_TABLE* SystemTable) {
             (vol_cnt > 0)
         };
 
-        int pill_w = 152;
-        int pill_h = 46;
+        int pill_w = 156;
+        int pill_h = 52;
         int gap = 12;
         int row_w = 4 * pill_w + 3 * gap;
         int row_x = cx - row_w / 2;
-        int row_y = cy + 132;
+        int row_y = cy + 128;
 
         for (int i = 0; i < 4; i++) {
             int px = row_x + i * (pill_w + gap);
             bool active = (progress >= thresh[i]);
-            dui_glass_card(px, row_y, pill_w, pill_h, THEME_RADIUS_MD,
+            dui_bento_card(px, row_y, pill_w, pill_h, THEME_RADIUS_LG,
                            active ? THEME_SURFACE_CARD : THEME_SURFACE_BASE,
-                           active ? 220 : 140, active);
+                           active ? 235 : 165, active);
 
             uint32_t dot_col = THEME_TEXT_MUTED;
             if (active) {
                 dot_col = ready[i] ? THEME_ACCENT_GREEN : THEME_ACCENT_AMBER;
             }
-            dui_circle(px + 14, row_y + 16, 4, dot_col, active ? 255 : 120);
-            dui_text(px + 25, row_y + 8, labels[i], active ? THEME_TEXT_PRIMARY : THEME_TEXT_MUTED, 1);
-            dui_text_ellipsis(px + 12, row_y + 26, pill_w - 24,
+            dui_circle(px + 15, row_y + 18, 4, dot_col, active ? 255 : 120);
+            dui_text(px + 26, row_y + 10, labels[i], active ? THEME_TEXT_PRIMARY : THEME_TEXT_MUTED, 1);
+            dui_text_ellipsis(px + 14, row_y + 29, pill_w - 28,
                               active ? vals[i] : "Checking...",
                               active ? THEME_TEXT_SECONDARY : THEME_TEXT_MUTED, 1);
         }
 
-        const char* hint = "Press Space or click to skip";
+        const char* hint = "Press Space or click to continue";
         int hw = dui_text_width(hint, 1);
         dui_text(cx - hw / 2, sh - 38, hint, THEME_TEXT_MUTED, 1);
 

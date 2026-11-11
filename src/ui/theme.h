@@ -5,8 +5,9 @@
 #include <stdbool.h>
 
 // ============================================================================
-// BlankOS Horizon Spatial Glass Design Language Tokens
-// Cohesive Obsidian + Aurora depth system with restrained spring/ease motion
+// BlankOS Horizon x Lira Architectural Design Language Tokens
+// Obsidian + Aurora palette with tactile two-tone bevels, 1px specular
+// hairlines, generous squircle/pill radii, and damped Lira spring motion
 // ============================================================================
 
 // Depth Surfaces (0xAARRGGBB or 0x00RRGGBB where alpha is passed explicitly)
@@ -38,16 +39,17 @@
 #define THEME_ACCENT_ROSE      0xFB7185
 #define THEME_ACCENT_RED       0xEF4444
 
-// Radii & Spacing
-#define THEME_RADIUS_SM        6
-#define THEME_RADIUS_MD        10
-#define THEME_RADIUS_LG        14
+// Radii & Spacing (Lira Generous Squircle & Pill Geometry)
+#define THEME_RADIUS_SM        8
+#define THEME_RADIUS_MD        12
+#define THEME_RADIUS_LG        16
 #define THEME_RADIUS_XL        20
+#define THEME_RADIUS_CARD      24
 #define THEME_RADIUS_PILL      999
 
-#define THEME_TITLEBAR_H       36
-#define THEME_TOPBAR_H         36
-#define THEME_DOCK_H           64
+#define THEME_TITLEBAR_H       38
+#define THEME_TOPBAR_H         40
+#define THEME_DOCK_H           66
 
 // Motion & Easing Helpers (safe integer/float freestanding math)
 static inline float horizon_clampf(float v, float lo, float hi) {
@@ -70,6 +72,25 @@ static inline float horizon_ease_out_cubic(float t) {
     t = horizon_clampf(t, 0.0f, 1.0f);
     float inv = 1.0f - t;
     return 1.0f - inv * inv * inv;
+}
+
+// Fast-settle Lira quintic-out curve (crisp ~240ms feel, zero bounce)
+static inline float horizon_ease_lira(float t) {
+    t = horizon_clampf(t, 0.0f, 1.0f);
+    float inv = 1.0f - t;
+    float inv2 = inv * inv;
+    return 1.0f - inv2 * inv2;
+}
+
+// Emil-design-eng rule: never animate from scale(0); start at 0.94..1.0
+static inline float horizon_enter_scale(float anim) {
+    float e = horizon_ease_lira(anim);
+    return 0.94f + 0.06f * e;
+}
+
+static inline int horizon_enter_offset_y(float anim, int travel_px) {
+    float e = horizon_ease_lira(anim);
+    return (int)((1.0f - e) * (float)travel_px);
 }
 
 static inline float horizon_spring_step(float cur, float target, float stiffness) {

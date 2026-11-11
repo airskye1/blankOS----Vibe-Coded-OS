@@ -137,11 +137,13 @@ static void render_overview(int px, int py, int pw, int ph, const BlankInputStat
     int right_w = pw - left_w - 12;
 
     // Left Hardware Summary Card
-    dui_glass_card(px, card_y, left_w, 152, THEME_RADIUS_MD, THEME_SURFACE_CARD, 225, false);
+    dui_bento_card(px, card_y, left_w, 152, THEME_RADIUS_LG, THEME_SURFACE_CARD, 232, true);
+    dui_dot_grid_overlay(px + 4, card_y + 4, left_w - 8, 42, 12, THEME_BORDER_SPECULAR, 28);
     const char* cpu_brand = pci_get_cpu_brand();
     const char* cpu_vendor = pci_get_cpu_vendor();
 
     dui_text(px + 14, card_y + 12, "PROCESSOR", THEME_ACCENT_IRIS, 1);
+    dui_status_pill(px + left_w - 108, card_y + 8, 94, 22, "UEFI x64", THEME_ACCENT_GREEN, THEME_SURFACE_ELEVATED, true);
     dui_text_ellipsis(px + 14, card_y + 30, left_w - 28,
                       (cpu_brand && cpu_brand[0]) ? cpu_brand : "x86_64 Processor",
                       THEME_TEXT_PRIMARY, 1);
@@ -179,7 +181,7 @@ static void render_overview(int px, int py, int pw, int ph, const BlankInputStat
 
     // Right Memory Ring Card
     int rx = px + left_w + 12;
-    dui_glass_card(rx, card_y, right_w, 152, THEME_RADIUS_MD, THEME_SURFACE_CARD, 225, false);
+    dui_bento_card(rx, card_y, right_w, 152, THEME_RADIUS_LG, THEME_SURFACE_CARD, 232, false);
     uint64_t used_mb = memory_get_used_mb();
     uint64_t total_mb = memory_get_total_mb();
     if (total_mb == 0) total_mb = 512;
@@ -215,7 +217,7 @@ static void render_overview(int px, int py, int pw, int ph, const BlankInputStat
     int log_h = ph - (log_y - py);
     if (log_h < 100) log_h = 100;
 
-    dui_glass_card(px, log_y, pw, log_h, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 235, false);
+    dui_bento_card(px, log_y, pw, log_h, THEME_RADIUS_LG, THEME_SURFACE_INPUT, 238, false);
     dui_text(px + 14, log_y + 10, "KERNEL BOOT LOG", THEME_ACCENT_CYAN, 1);
 
     // Parse boot log lines
@@ -244,13 +246,13 @@ static void render_overview(int px, int py, int pw, int ph, const BlankInputStat
     if (pt_in(in->mx, in->my, px, log_y, pw, log_h) && in->scroll_y != 0) {
         s_bootlog_scroll -= in->scroll_y;
     }
-    if (dui_button(px + pw - 96, log_y + 6, 40, 22, "Up", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed)) {
+    if (dui_button_tactile(px + pw - 96, log_y + 6, 40, 22, "Up", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_down, in->left_pressed)) {
         s_bootlog_scroll--;
-        play_system_sound((char*)"click");
+        play_system_sound((char*)"tool");
     }
-    if (dui_button(px + pw - 50, log_y + 6, 40, 22, "Dn", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed)) {
+    if (dui_button_tactile(px + pw - 50, log_y + 6, 40, 22, "Dn", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_down, in->left_pressed)) {
         s_bootlog_scroll++;
-        play_system_sound((char*)"click");
+        play_system_sound((char*)"tool");
     }
     if (s_bootlog_scroll < 0) s_bootlog_scroll = 0;
     if (s_bootlog_scroll > max_scroll) s_bootlog_scroll = max_scroll;
@@ -289,13 +291,13 @@ static void render_display_theme(int px, int py, int pw, int ph, const BlankInpu
         bool active = (cur_wp == t);
         bool hov = pt_in(in->mx, in->my, cx0, cy0, card_w, card_h);
 
-        dui_glass_card(cx0, cy0, card_w, card_h, THEME_RADIUS_MD,
-                       hov ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, 225, active);
-        dui_gradient_rounded(cx0 + 8, cy0 + 8, card_w - 16, 44, 6, theme_top[t], theme_bot[t], 255);
+        dui_bento_card(cx0, cy0, card_w, card_h, THEME_RADIUS_LG,
+                       hov ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, 230, active);
+        dui_gradient_rounded(cx0 + 8, cy0 + 8, card_w - 16, 44, THEME_RADIUS_SM, theme_top[t], theme_bot[t], 255);
         dui_text_ellipsis(cx0 + 8, cy0 + 58, card_w - 16, theme_names[t],
                           active ? THEME_TEXT_PRIMARY : THEME_TEXT_SECONDARY, 1);
         if (active) {
-            dui_rect_rounded_outline(cx0, cy0, card_w, card_h, THEME_RADIUS_MD, THEME_ACCENT_IRIS, 240);
+            dui_rect_rounded_outline(cx0, cy0, card_w, card_h, THEME_RADIUS_LG, THEME_ACCENT_IRIS, 240);
             dui_circle(cx0 + card_w - 16, cy0 + 18, 6, THEME_ACCENT_GREEN, 255);
         }
 
@@ -304,14 +306,14 @@ static void render_display_theme(int px, int py, int pw, int ph, const BlankInpu
             g_wallpaper_theme = t;
             blankReg_set_int("UI/WallpaperTheme", t);
             if (gSystemTable) blankReg_save(gSystemTable);
-            play_system_sound((char*)"click");
+            play_system_sound((char*)"tool");
             set_status("Wallpaper theme updated & saved to REGISTRY.INI", THEME_ACCENT_GREEN);
         }
     }
 
     // GOP Resolution Switcher
     int res_y = py + 188;
-    dui_glass_card(px, res_y, pw, 108, THEME_RADIUS_MD, THEME_SURFACE_CARD, 220, false);
+    dui_bento_card(px, res_y, pw, 108, THEME_RADIUS_LG, THEME_SURFACE_CARD, 228, false);
     dui_text(px + 16, res_y + 12, "DISPLAY RESOLUTION (UEFI GOP)", THEME_ACCENT_CYAN, 1);
 
     char cur_res[48];
@@ -333,12 +335,13 @@ static void render_display_theme(int px, int py, int pw, int ph, const BlankInpu
         int bx = px + 16 + r * (bw + 12);
         int by = res_y + 44;
         bool is_cur = ((uint32_t)screen_width == rw[r] && (uint32_t)screen_height == rh[r]);
-        if (dui_button(bx, by, bw, 38, rlbl[r], is_cur ? THEME_ACCENT_IRIS : THEME_SURFACE_ELEVATED,
-                       is_cur, in->mx, in->my, in->left_pressed)) {
+        if (dui_button_tactile(bx, by, bw, 38, rlbl[r], is_cur ? THEME_ACCENT_IRIS : THEME_SURFACE_ELEVATED,
+                               is_cur, in->mx, in->my, in->left_down, in->left_pressed)) {
             if (set_screen_resolution(rw[r], rh[r])) {
                 blankReg_set_int("Display/Width", (int)rw[r]);
                 blankReg_set_int("Display/Height", (int)rh[r]);
                 if (gSystemTable) blankReg_save(gSystemTable);
+                play_system_sound((char*)"success");
                 set_status("GOP display mode switched & saved", THEME_ACCENT_GREEN);
             } else {
                 play_system_sound((char*)"error");
@@ -349,7 +352,7 @@ static void render_display_theme(int px, int py, int pw, int ph, const BlankInpu
 
     // Desktop Telemetry Widget & Pulse Capsule Toggles
     int tog_y = res_y + 122;
-    dui_glass_card(px, tog_y, pw, 108, THEME_RADIUS_MD, THEME_SURFACE_CARD, 220, false);
+    dui_bento_card(px, tog_y, pw, 108, THEME_RADIUS_LG, THEME_SURFACE_CARD, 228, false);
     dui_text(px + 16, tog_y + 12, "DESKTOP OVERLAYS", THEME_ACCENT_TEAL, 1);
 
     // Row 1: Desktop Telemetry Widget
@@ -361,7 +364,7 @@ static void render_display_theme(int px, int py, int pw, int ph, const BlankInpu
         g_show_desktop_widgets = !g_show_desktop_widgets;
         blankReg_set_int("UI/DesktopWidgets", g_show_desktop_widgets ? 1 : 0);
         if (gSystemTable) blankReg_save(gSystemTable);
-        play_system_sound((char*)"click");
+        play_system_sound((char*)"tool");
         set_status(g_show_desktop_widgets ? "Desktop Telemetry Widget enabled" : "Desktop Telemetry Widget hidden", THEME_ACCENT_CYAN);
     }
 
@@ -374,7 +377,7 @@ static void render_display_theme(int px, int py, int pw, int ph, const BlankInpu
         g_show_dynamic_island = !g_show_dynamic_island;
         blankReg_set_int("UI/DynamicIsland", g_show_dynamic_island ? 1 : 0);
         if (gSystemTable) blankReg_save(gSystemTable);
-        play_system_sound((char*)"click");
+        play_system_sound((char*)"tool");
         set_status("Top bar Pulse Capsule setting saved", THEME_ACCENT_CYAN);
     }
 
@@ -389,17 +392,23 @@ static void render_audio(int px, int py, int pw, int ph, const BlankInputState* 
     dui_text(px, py + 26, "Non-blocking PIT chime sequencer & Intel HDA hardware probe", THEME_TEXT_SECONDARY, 1);
 
     int card_y = py + 54;
-    dui_glass_card(px, card_y, pw, 154, THEME_RADIUS_MD, THEME_SURFACE_CARD, 225, false);
-
-    dui_draw_sys_icon(px + 16, card_y + 14, 18, 2, is_audio_muted() ? THEME_ACCENT_ROSE : THEME_ACCENT_IRIS);
-    dui_text_ellipsis(px + 42, card_y + 14, pw - 160, get_audio_device_name(), THEME_TEXT_PRIMARY, 1);
-
     bool muted = is_audio_muted();
-    if (dui_button(px + pw - 106, card_y + 10, 90, 28, muted ? "Unmute" : "Mute",
-                   muted ? THEME_ACCENT_ROSE : THEME_SURFACE_ELEVATED, muted,
-                   in->mx, in->my, in->left_pressed)) {
+    dui_bento_card(px, card_y, pw, 154, THEME_RADIUS_LG, THEME_SURFACE_CARD, 232, !muted);
+    dui_dot_grid_overlay(px + 4, card_y + 4, pw - 8, 42, 12, THEME_BORDER_SPECULAR, 24);
+
+    dui_draw_sys_icon(px + 16, card_y + 14, 18, 2, muted ? THEME_ACCENT_ROSE : THEME_ACCENT_IRIS);
+    dui_text_ellipsis(px + 42, card_y + 14, pw - 246, get_audio_device_name(), THEME_TEXT_PRIMARY, 1);
+
+    int eq_bands[4] = { 0, 0, 0, 0 };
+    audio_get_eq_bands(eq_bands, 4);
+    dui_eq_bars(px + pw - 186, card_y + 12, 68, 24, eq_bands, 4,
+                muted ? THEME_TEXT_MUTED : THEME_ACCENT_IRIS, !muted && audio_is_playing());
+
+    if (dui_button_tactile(px + pw - 106, card_y + 10, 90, 28, muted ? "Unmute" : "Mute",
+                           muted ? THEME_ACCENT_ROSE : THEME_SURFACE_ELEVATED, muted,
+                           in->mx, in->my, in->left_down, in->left_pressed)) {
         toggle_audio_mute();
-        if (!is_audio_muted()) play_system_sound((char*)"click");
+        if (!is_audio_muted()) play_system_sound((char*)"tool");
     }
 
     int vol = get_master_volume();
@@ -435,7 +444,7 @@ static void render_audio(int px, int py, int pw, int ph, const BlankInputState* 
             s_vol_dragging = false;
             blankReg_set_int("Audio/MasterVolume", get_master_volume());
             if (gSystemTable) blankReg_save(gSystemTable);
-            play_system_sound((char*)"click");
+            play_system_sound((char*)"tool");
             set_status("Master volume saved to REGISTRY.INI", THEME_ACCENT_GREEN);
         }
     }
@@ -447,34 +456,40 @@ static void render_audio(int px, int py, int pw, int ph, const BlankInputState* 
         int bx = px + 16 + i * 74;
         int by = card_y + 112;
         bool act = (vol == presets[i] && !muted);
-        if (dui_button(bx, by, 66, 26, plabels[i], act ? THEME_ACCENT_IRIS : THEME_SURFACE_ELEVATED,
-                       act, in->mx, in->my, in->left_pressed)) {
+        if (dui_button_tactile(bx, by, 66, 26, plabels[i], act ? THEME_ACCENT_IRIS : THEME_SURFACE_ELEVATED,
+                               act, in->mx, in->my, in->left_down, in->left_pressed)) {
             set_master_volume(presets[i]);
             blankReg_set_int("Audio/MasterVolume", presets[i]);
             if (gSystemTable) blankReg_save(gSystemTable);
-            play_system_sound((char*)"click");
+            play_system_sound((char*)"tool");
         }
+    }
+    if (pw > 450) {
+        dui_status_pill(px + pw - 144, card_y + 113, 128, 24,
+                        muted ? "Audio Muted" : "Chime Ready",
+                        muted ? THEME_ACCENT_ROSE : THEME_ACCENT_GREEN,
+                        THEME_SURFACE_ELEVATED, !muted);
     }
 
     // Sound Test Card
     int test_y = card_y + 168;
-    dui_glass_card(px, test_y, pw, 134, THEME_RADIUS_MD, THEME_SURFACE_CARD, 220, false);
+    dui_bento_card(px, test_y, pw, 134, THEME_RADIUS_LG, THEME_SURFACE_CARD, 228, false);
     dui_text(px + 16, test_y + 14, "CHIME & TONE DIAGNOSTICS", THEME_ACCENT_TEAL, 1);
     dui_text(px + 16, test_y + 34, "Trigger non-blocking speaker chime sequences:", THEME_TEXT_SECONDARY, 1);
 
-    if (dui_button(px + 16, test_y + 66, 150, 38, "Test Chime", THEME_ACCENT_IRIS, true, in->mx, in->my, in->left_pressed)) {
+    if (dui_button_tactile(px + 16, test_y + 66, 150, 38, "Test Chime", THEME_ACCENT_IRIS, true, in->mx, in->my, in->left_down, in->left_pressed)) {
         if (is_audio_muted()) toggle_audio_mute();
         if (get_master_volume() == 0) set_master_volume(75);
-        play_system_sound((char*)"startup");
+        play_system_sound((char*)"reward");
         set_status("Playing 4-note Horizon startup chime", THEME_ACCENT_CYAN);
     }
-    if (dui_button(px + 178, test_y + 66, 110, 38, "Notify", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed)) {
-        play_system_sound((char*)"notify");
+    if (dui_button_tactile(px + 178, test_y + 66, 110, 38, "Notify", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_down, in->left_pressed)) {
+        play_system_sound((char*)"open");
     }
-    if (dui_button(px + 298, test_y + 66, 110, 38, "Success", THEME_ACCENT_GREEN, false, in->mx, in->my, in->left_pressed)) {
+    if (dui_button_tactile(px + 298, test_y + 66, 110, 38, "Success", THEME_ACCENT_GREEN, false, in->mx, in->my, in->left_down, in->left_pressed)) {
         play_system_sound((char*)"success");
     }
-    if (dui_button(px + 418, test_y + 66, 100, 38, "Alert", THEME_ACCENT_ROSE, false, in->mx, in->my, in->left_pressed)) {
+    if (dui_button_tactile(px + 418, test_y + 66, 100, 38, "Alert", THEME_ACCENT_ROSE, false, in->mx, in->my, in->left_down, in->left_pressed)) {
         play_system_sound((char*)"error");
     }
 
@@ -492,18 +507,18 @@ static void render_network(int px, int py, int pw, int ph, const BlankInputState
     dui_text(px, py + 26, "Ethernet, ARP, DHCP, DNS, ICMP & TCP/HTTP/1.1 interface telemetry", THEME_TEXT_SECONDARY, 1);
 
     int card_y = py + 54;
-    dui_glass_card(px, card_y, pw, 210, THEME_RADIUS_MD, THEME_SURFACE_CARD, 225, false);
+    dui_bento_card(px, card_y, pw, 210, THEME_RADIUS_LG, THEME_SURFACE_CARD, 232, ns.link_up);
+    dui_dot_grid_overlay(px + 4, card_y + 4, pw - 8, 42, 12, THEME_BORDER_SPECULAR, 24);
 
     // Adapter Header + Link Badge
     dui_draw_sys_icon(px + 16, card_y + 16, 20, 1, ns.link_up ? THEME_ACCENT_GREEN : THEME_ACCENT_ROSE);
-    dui_text_ellipsis(px + 44, card_y + 16, pw - 160,
+    dui_text_ellipsis(px + 44, card_y + 16, pw - 170,
                       ns.nic_present ? ns.adapter_name : "No SNP Network Interface",
                       THEME_TEXT_PRIMARY, 1);
 
     uint32_t badge_col = ns.link_up ? THEME_ACCENT_GREEN : THEME_ACCENT_ROSE;
-    dui_rect_rounded(px + pw - 104, card_y + 12, 88, 24, 12, badge_col, 40);
-    dui_rect_rounded_outline(px + pw - 104, card_y + 12, 88, 24, 12, badge_col, 180);
-    dui_text(px + pw - 90, card_y + 16, ns.link_up ? "Link Up" : "Link Dn", badge_col, 1);
+    dui_status_pill(px + pw - 110, card_y + 12, 94, 24, ns.link_up ? "Link Up" : "Link Dn",
+                    badge_col, THEME_SURFACE_ELEVATED, ns.link_up);
 
     int col1 = px + 16;
     int col2 = px + pw / 2 + 8;
@@ -550,11 +565,11 @@ static void render_network(int px, int py, int pw, int ph, const BlankInputState
 
     // Actions Card (Renew DHCP + Ping Gateway)
     int act_y = card_y + 224;
-    dui_glass_card(px, act_y, pw, 128, THEME_RADIUS_MD, THEME_SURFACE_CARD, 220, false);
+    dui_bento_card(px, act_y, pw, 128, THEME_RADIUS_LG, THEME_SURFACE_CARD, 228, false);
     dui_text(px + 16, act_y + 14, "NETWORK DIAGNOSTICS", THEME_ACCENT_CYAN, 1);
 
-    if (dui_button(px + 16, act_y + 44, 150, 36, "Renew DHCP", THEME_ACCENT_IRIS, true, in->mx, in->my, in->left_pressed)) {
-        play_system_sound((char*)"click");
+    if (dui_button_tactile(px + 16, act_y + 44, 150, 36, "Renew DHCP", THEME_ACCENT_IRIS, true, in->mx, in->my, in->left_down, in->left_pressed)) {
+        play_system_sound((char*)"tool");
         if (net_dhcp_renew()) {
             play_system_sound((char*)"success");
             os_send_notification("Network", "DHCP lease renewed successfully.");
@@ -565,8 +580,8 @@ static void render_network(int px, int py, int pw, int ph, const BlankInputState
         }
     }
 
-    if (dui_button(px + 178, act_y + 44, 156, 36, "Ping Gateway", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed)) {
-        play_system_sound((char*)"click");
+    if (dui_button_tactile(px + 178, act_y + 44, 156, 36, "Ping Gateway", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_down, in->left_pressed)) {
+        play_system_sound((char*)"tool");
         if (ns.gateway_ip == 0 || !ns.gw_str[0]) {
             s_copy(s_ping_result, "No gateway IP bound", sizeof(s_ping_result));
             s_ping_color = THEME_ACCENT_AMBER;
@@ -581,7 +596,7 @@ static void render_network(int px, int py, int pw, int ph, const BlankInputState
                 s_cat(s_ping_result, rb, sizeof(s_ping_result));
                 s_cat(s_ping_result, " ms", sizeof(s_ping_result));
                 s_ping_color = THEME_ACCENT_GREEN;
-                play_system_sound((char*)"notify");
+                play_system_sound((char*)"success");
             } else {
                 s_copy(s_ping_result, "Gateway ping timed out (1000 ms)", sizeof(s_ping_result));
                 s_ping_color = THEME_ACCENT_ROSE;
@@ -610,7 +625,7 @@ static void render_hardware_pci(int px, int py, int pw, int ph, const BlankInput
     int tbl_h = ph - 56;
     if (tbl_h < 120) tbl_h = 120;
 
-    dui_glass_card(px, tbl_y, pw, tbl_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 225, false);
+    dui_bento_card(px, tbl_y, pw, tbl_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 230, false);
 
     // Table Header
     dui_rect_rounded(px + 6, tbl_y + 6, pw - 12, 28, 6, THEME_SURFACE_INPUT, 240);
@@ -630,13 +645,13 @@ static void render_hardware_pci(int px, int py, int pw, int ph, const BlankInput
     }
 
     int foot_y = tbl_y + tbl_h - 32;
-    if (dui_button(px + 12, foot_y, 76, 24, "Prev", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed)) {
+    if (dui_button_tactile(px + 12, foot_y, 76, 24, "Prev", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_down, in->left_pressed)) {
         s_pci_scroll -= 3;
-        play_system_sound((char*)"click");
+        play_system_sound((char*)"tool");
     }
-    if (dui_button(px + 96, foot_y, 76, 24, "Next", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed)) {
+    if (dui_button_tactile(px + 96, foot_y, 76, 24, "Next", THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_down, in->left_pressed)) {
         s_pci_scroll += 3;
-        play_system_sound((char*)"click");
+        play_system_sound((char*)"tool");
     }
 
     if (s_pci_scroll < 0) s_pci_scroll = 0;
@@ -727,18 +742,20 @@ static void sysinfo_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, c
                           s_active_tab == i, in->mx, in->my, in->left_pressed)) {
             s_active_tab = i;
             s_status_msg[0] = '\0';
-            play_system_sound((char*)"click");
+            play_system_sound((char*)"tab");
         }
     }
 
     // Quick cross-app utility links at sidebar bottom
     if (ch > 360) {
-        if (dui_button(cx + 12, cy + ch - 78, sidebar_w - 24, 30, "Activity Monitor",
-                       THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed)) {
+        if (dui_button_tactile(cx + 12, cy + ch - 78, sidebar_w - 24, 30, "Activity Monitor",
+                               THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_down, in->left_pressed)) {
+            play_system_sound((char*)"open");
             wm_open_app(APP_MONITOR);
         }
-        if (dui_button(cx + 12, cy + ch - 42, sidebar_w - 24, 30, "Registry Studio",
-                       THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_pressed)) {
+        if (dui_button_tactile(cx + 12, cy + ch - 42, sidebar_w - 24, 30, "Registry Studio",
+                               THEME_SURFACE_ELEVATED, false, in->mx, in->my, in->left_down, in->left_pressed)) {
+            play_system_sound((char*)"open");
             wm_open_app(APP_REGEDIT);
         }
     }

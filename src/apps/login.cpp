@@ -104,34 +104,35 @@ extern "C" void launch_login_screen(EFI_SYSTEM_TABLE* SystemTable) {
         frame_cnt++;
         input_poll(&in);
         audio_tick();
+        dui_set_pointer_down(in.left_down);
 
         int sw = (int)(screen_width > 0 ? screen_width : 1024);
         int sh = (int)(screen_height > 0 ? screen_height : 768);
 
-        int card_w = 392;
-        int card_h = 336;
+        int card_w = 408;
+        int card_h = 348;
         int card_x = (sw - card_w) / 2;
-        int card_y = (sh - card_h) / 2 + 26;
+        int card_y = (sh - card_h) / 2 + 28;
 
         int inp_x = card_x + 32;
         int inp_w = card_w - 64;
-        int user_y = card_y + 124;
-        int pass_y = card_y + 186;
-        int inp_h = 38;
+        int user_y = card_y + 128;
+        int pass_y = card_y + 192;
+        int inp_h = 40;
 
         int btn_w = card_w - 64;
-        int btn_h = 42;
+        int btn_h = 44;
         int btn_x = card_x + 32;
-        int btn_y = card_y + 250;
+        int btn_y = card_y + 258;
 
         // Handle field focus clicks
         if (in.left_pressed) {
             if (point_in_rect(in.mx, in.my, inp_x, user_y, inp_w, inp_h)) {
                 active_field = 0;
-                play_system_sound((char*)"click");
+                play_system_sound((char*)"tool");
             } else if (point_in_rect(in.mx, in.my, inp_x, pass_y, inp_w, inp_h)) {
                 active_field = 1;
-                play_system_sound((char*)"click");
+                play_system_sound((char*)"tool");
             }
         }
 
@@ -181,16 +182,17 @@ extern "C" void launch_login_screen(EFI_SYSTEM_TABLE* SystemTable) {
         int sw_txt = dui_text_width(sub_hdr, 1);
         dui_text((sw - sw_txt) / 2, clock_y + 48, sub_hdr, THEME_TEXT_SECONDARY, 1);
 
-        // Centered Frosted Glass User Card
-        dui_shadow(card_x, card_y, card_w, card_h, THEME_RADIUS_XL, 12);
-        dui_glass_card(card_x, card_y, card_w, card_h, THEME_RADIUS_XL, THEME_SURFACE_BASE, 214, true);
+        // Centered Lira Bento Login Card (24px radius, dot grid accent, crisp hairlines)
+        dui_shadow(card_x, card_y, card_w, card_h, THEME_RADIUS_CARD, 12);
+        dui_bento_card(card_x, card_y, card_w, card_h, THEME_RADIUS_CARD, THEME_SURFACE_BASE, 232, true);
+        dui_dot_grid_overlay(card_x + 16, card_y + 14, card_w - 32, 74, 14, THEME_TEXT_PRIMARY, 12);
 
-        // Glowing Avatar Ring + User Initial
+        // Tactile Monogram Seal (zero neon halo)
         int av_x = card_x + card_w / 2;
         int av_y = card_y + 54;
-        dui_circle(av_x, av_y, 33, THEME_ACCENT_CYAN, 70);
-        dui_circle(av_x, av_y, 28, THEME_ACCENT_IRIS, 210);
-        dui_circle(av_x, av_y, 24, THEME_SURFACE_CARD, 255);
+        dui_circle(av_x, av_y, 28, THEME_SURFACE_CARD, 255);
+        dui_circle_outline(av_x, av_y, 28, THEME_BORDER_SPECULAR, 210);
+        dui_circle_outline(av_x, av_y, 33, THEME_BORDER_SUBTLE, 130);
 
         char initial[2] = { 'H', '\0' };
         if (user_len > 0) {
@@ -252,7 +254,7 @@ extern "C" void launch_login_screen(EFI_SYSTEM_TABLE* SystemTable) {
             if (user_len > 0 && !login_str_eq(user_buf, initial_user)) {
                 blankReg_set_string("User/Name", user_buf);
             }
-            play_system_sound((char*)"click");
+            play_system_sound((char*)"open");
             logged_in = true;
         }
 
@@ -264,11 +266,11 @@ extern "C" void launch_login_screen(EFI_SYSTEM_TABLE* SystemTable) {
         int restart_x = pw_off_x - 10 - restart_w;
 
         if (dui_icon_pill(restart_x, py, restart_w, 34, "Restart", 16, false, in.mx, in.my, in.left_pressed)) {
-            play_system_sound((char*)"click");
+            play_system_sound((char*)"close");
             os_restart();
         }
         if (dui_icon_pill(pw_off_x, py, pw_off_w, 34, "Power Off", 10, false, in.mx, in.my, in.left_pressed)) {
-            play_system_sound((char*)"click");
+            play_system_sound((char*)"close");
             os_shutdown();
         }
 

@@ -1,11 +1,12 @@
 {
   "os_name": "BlankOS Horizon",
   "version_major": 3,
-  "version_minor": 0,
+  "version_minor": 1,
   "version_patch": 0,
   "build_date": "2026-11-11",
   "update_url": "https://github.com/airskye1/blankOS----Vibe-Coded-OS",
   "update_logs": [
+    "3.1.0: Lira Design Language & BlankJS Release. Redesigned the entire desktop shell, window manager, OOBE, login/lock screens, Horizon Web, and built-in desktop suite around the tactile Lira aesthetic (centered collapsible pill topbar with live Sound EQ monitor, 20-24px Bento cards, crisp specular catchlights, zero ambient neon halos, tactile pointer-down bevel controls, architectural dot lattices, and cohesive acoustic triangle chime sound cues) while preserving Obsidian + Aurora colors. Built BlankJS, a freestanding ECMAScript + live DOM engine in Horizon Web with closures, template literals, setTimeout/setInterval timers, interactive <button>/<input>/document.getElementById/createElement DOM bindings, javascript: URL execution, and a Ctrl+J DevTools Console & live REPL drawer.",
     "3.0.0: BlankOS Horizon Complete Rewrite. Introduced Obsidian Spatial Glass UI engine with frosted backdrop blur, cached TrueType glyph atlas, 5 Aurora wallpapers, and Z-ordered multi-window desktop manager with drag, resize, edge-snap, Control Center, and Spotlight (Ctrl+K). Added unified USB Tablet + relative mouse sub-pixel input, non-blocking audio chime sequencer, real UEFI SNP/ARP/DHCP/DNS/ICMP/TCP/HTTP-1.1 network stack, Horizon Web Browser with HTML rendering and FAT32 \\DOWNLOADS\\ streaming, fixed GPT/FAT32 installer controller reconnect, and rewrote all built-in desktop applications with real hardware/network telemetry.",
     "2.0.0: Massive Architecture Overhaul. Transitioned BlankOS to a true graphical operating system with real hardware GPU drivers (VMware SVGA II) and a Hybrid Rendering Pipeline. Rebuilt the entire user interface with smooth 60 FPS animations, dock hover effects, and premium icons. Implemented a fully native graphical installer with MBR/GPT disk partitioning and FAT32 formatting. Added an integrated Firmware & Software OTA Updater.",
     "1.2.9: Added full ELF Executable loader, transitioned all apps (Settings, BlankDrop, Browser) out of the kernel to true dynamic apps. Implemented PCI hardware enumeration for Wi-Fi and Bluetooth controllers. Downloaded stb_image and stb_truetype to parse PNG, JPEG, and TrueType fonts using custom written bare-metal mathematics stubs (`math.cpp`) and UEFI `stdlib` hooks (`stb_stdlib.cpp`).",

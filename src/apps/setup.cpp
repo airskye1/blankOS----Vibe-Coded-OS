@@ -262,13 +262,13 @@ static void stp_render_installing_frame(EFI_SYSTEM_TABLE* st, const SetupInstall
     dui_draw_wallpaper(dui_get_wallpaper_id());
     dui_rect(0, 0, sw, sh, THEME_BG_VOID, 92);
 
-    int card_w = (sw >= 820) ? 720 : (sw - 64);
-    int card_h = 460;
+    int card_w = (sw >= 820) ? 736 : (sw - 64);
+    int card_h = 468;
     int card_x = (sw - card_w) / 2;
     int card_y = (sh - card_h) / 2;
 
-    dui_shadow(card_x, card_y, card_w, card_h, THEME_RADIUS_XL, 12);
-    dui_glass_card(card_x, card_y, card_w, card_h, THEME_RADIUS_XL, THEME_SURFACE_BASE, 224, true);
+    dui_shadow(card_x, card_y, card_w, card_h, THEME_RADIUS_CARD, 12);
+    dui_bento_card(card_x, card_y, card_w, card_h, THEME_RADIUS_CARD, THEME_SURFACE_BASE, 236, true);
 
     stp_draw_header_steps(card_x, card_y, card_w, STEP_INSTALLING);
 
@@ -823,60 +823,71 @@ extern "C" void launch_setup_screen(EFI_SYSTEM_TABLE* SystemTable) {
         int card_y = (sh - card_h) / 2;
 
         // Render Aurora wallpaper + translucent dark scrim
+        dui_set_pointer_down(in.left_down);
         dui_draw_wallpaper(dui_get_wallpaper_id());
         dui_rect(0, 0, sw, sh, THEME_BG_VOID, 92);
 
-        dui_shadow(card_x, card_y, card_w, card_h, THEME_RADIUS_XL, 12);
-        dui_glass_card(card_x, card_y, card_w, card_h, THEME_RADIUS_XL, THEME_SURFACE_BASE, 224, true);
+        dui_shadow(card_x, card_y, card_w, card_h, THEME_RADIUS_CARD, 12);
+        dui_bento_card(card_x, card_y, card_w, card_h, THEME_RADIUS_CARD, THEME_SURFACE_BASE, 236, true);
 
         stp_draw_header_steps(card_x, card_y, card_w, (int)step);
 
         if (step == STEP_WELCOME) {
             int cx = card_x + card_w / 2;
 
-            // Horizon orb emblem
-            dui_circle(cx, card_y + 114, 28, THEME_ACCENT_CYAN, 40);
-            dui_circle(cx, card_y + 114, 18, THEME_ACCENT_IRIS, 200);
-            dui_circle(cx, card_y + 114, 7, THEME_TEXT_PRIMARY, 240);
+            // Clean Lira seal emblem (zero glow)
+            dui_circle(cx, card_y + 104, 24, THEME_SURFACE_CARD, 255);
+            dui_circle_outline(cx, card_y + 104, 24, THEME_BORDER_SPECULAR, 200);
+            dui_circle(cx, card_y + 104, 9, THEME_ACCENT_CYAN, 240);
 
             const char* title = "Welcome to BlankOS Horizon";
             int tw = dui_text_width(title, 2);
-            dui_text(cx - tw / 2, card_y + 156, title, THEME_TEXT_PRIMARY, 2);
+            dui_text(cx - tw / 2, card_y + 140, title, THEME_TEXT_PRIMARY, 2);
 
             const char* sub1 = "Install BlankOS Horizon onto a GPT/FAT32 disk for persistent storage,";
-            const char* sub2 = "or try the Live Desktop environment without modifying your drives.";
-            dui_text(cx - dui_text_width(sub1, 1) / 2, card_y + 196, sub1, THEME_TEXT_SECONDARY, 1);
-            dui_text(cx - dui_text_width(sub2, 1) / 2, card_y + 216, sub2, THEME_TEXT_SECONDARY, 1);
+            const char* sub2 = "or launch the Live Desktop environment without modifying any drives.";
+            dui_text(cx - dui_text_width(sub1, 1) / 2, card_y + 178, sub1, THEME_TEXT_SECONDARY, 1);
+            dui_text(cx - dui_text_width(sub2, 1) / 2, card_y + 198, sub2, THEME_TEXT_SECONDARY, 1);
 
-            // 3 compact feature tiles
-            const char* f_titles[3] = { "Spatial Glass UI", "GPT + FAT32 ESP", "UEFI Network" };
-            const char* f_descs[3]  = { "TrueType & frosted cards", "Native UEFI disk boot", "SNP DHCP + HTTP/1.1" };
-            int f_icons[3] = { 17, 19, 6 };
-            int tile_w = (card_w - 96 - 24) / 3;
-            int tile_y = card_y + 260;
+            // Asymmetric Lira Bento Grid: wide Hero Card (left) + 2 compact Cards (right)
+            int grid_x = card_x + 44;
+            int grid_w = card_w - 88;
+            int grid_y = card_y + 230;
+            int hero_w = (grid_w * 54) / 100;
+            int side_w = grid_w - hero_w - 12;
 
-            for (int i = 0; i < 3; i++) {
-                int tx = card_x + 48 + i * (tile_w + 12);
-                dui_glass_card(tx, tile_y, tile_w, 92, THEME_RADIUS_MD, THEME_SURFACE_CARD, 195, false);
-                dui_draw_sys_icon(tx + 14, tile_y + 14, 18, f_icons[i], THEME_ACCENT_CYAN);
-                dui_text(tx + 14, tile_y + 40, f_titles[i], THEME_TEXT_PRIMARY, 1);
-                dui_text_ellipsis(tx + 14, tile_y + 62, tile_w - 28, f_descs[i], THEME_TEXT_MUTED, 1);
-            }
+            dui_bento_card(grid_x, grid_y, hero_w, 134, THEME_RADIUS_LG, THEME_SURFACE_CARD, 215, true);
+            dui_dot_grid_overlay(grid_x + 12, grid_y + 12, hero_w - 24, 110, 14, THEME_TEXT_PRIMARY, 10);
+            dui_draw_sys_icon(grid_x + 18, grid_y + 18, 20, 17, THEME_ACCENT_CYAN);
+            dui_text(grid_x + 46, grid_y + 18, "Lira x Horizon Design", THEME_TEXT_PRIMARY, 1);
+            dui_text(grid_x + 18, grid_y + 52, "Bento architecture, tactile bevels,", THEME_TEXT_SECONDARY, 1);
+            dui_text(grid_x + 18, grid_y + 72, "collapsible pill chrome & acoustic cues.", THEME_TEXT_SECONDARY, 1);
+            dui_status_pill(grid_x + 18, grid_y + 98, 136, 22, "Obsidian + Aurora", THEME_ACCENT_CYAN, THEME_SURFACE_INPUT, true);
+
+            dui_bento_card(grid_x + hero_w + 12, grid_y, side_w, 61, THEME_RADIUS_LG, THEME_SURFACE_CARD, 210, false);
+            dui_draw_sys_icon(grid_x + hero_w + 26, grid_y + 14, 16, 19, THEME_ACCENT_TEAL);
+            dui_text(grid_x + hero_w + 50, grid_y + 12, "GPT + FAT32 ESP", THEME_TEXT_PRIMARY, 1);
+            dui_text(grid_x + hero_w + 50, grid_y + 34, "Native UEFI disk boot", THEME_TEXT_MUTED, 1);
+
+            dui_bento_card(grid_x + hero_w + 12, grid_y + 73, side_w, 61, THEME_RADIUS_LG, THEME_SURFACE_CARD, 210, false);
+            dui_draw_sys_icon(grid_x + hero_w + 26, grid_y + 87, 16, 6, THEME_ACCENT_IRIS);
+            dui_text(grid_x + hero_w + 50, grid_y + 85, "Live JS Browser", THEME_TEXT_PRIMARY, 1);
+            dui_text(grid_x + hero_w + 50, grid_y + 107, "SNP HTTP + DOM scripts", THEME_TEXT_MUTED, 1);
 
             // Bottom Action Bar
-            int btn_y = card_y + card_h - 66;
-            if (dui_button(card_x + 48, btn_y, 200, 40, "Try Live Environment",
+            int btn_y = card_y + card_h - 64;
+            if (dui_button(card_x + 44, btn_y, 200, 40, "Try Live Environment",
                            THEME_SURFACE_ELEVATED, false, in.mx, in.my, in.left_pressed) ||
                 (in.has_key && in.key_char == ' ')) {
-                play_system_sound((char*)"click");
+                play_system_sound((char*)"open");
                 g_is_live_cd = true;
                 exit_to_desktop = true;
             }
 
-            if (dui_button(card_x + card_w - 248, btn_y, 200, 40, "Continue Setup ->",
+            if (dui_button(card_x + card_w - 244, btn_y, 200, 40, "Continue Setup ->",
                            THEME_ACCENT_CYAN, true, in.mx, in.my, in.left_pressed) ||
                 (in.has_key && (in.key_char == '\r' || in.key_char == '\n'))) {
-                play_system_sound((char*)"click");
+                play_system_sound((char*)"tab");
                 num_disks = stp_scan_physical_disks(SystemTable, disks, SETUP_MAX_DISKS);
                 if (num_disks > 0 && selected_disk_idx < 0) selected_disk_idx = 0;
                 step = STEP_DISK_SELECT;

@@ -105,13 +105,13 @@ static void wx_build_url(const char* city, const char* query, char* out, int max
     wx_cat(out, query, max_len);
 }
 
-static void wx_start_fetch(void) {
+static bool wx_start_fetch(void) {
     NetStatus ns;
     net_get_status(&ns);
     if (!ns.nic_present || !ns.link_up || !ns.dhcp_bound) {
         g_wx_loading = false;
         wx_copy(g_wx_error, "Offline - Connect Ethernet/DHCP to fetch live weather", sizeof(g_wx_error));
-        return;
+        return false;
     }
 
     if (g_wx_http_summary_id >= 0) { net_http_close(g_wx_http_summary_id); g_wx_http_summary_id = -1; }
@@ -128,11 +128,12 @@ static void wx_start_fetch(void) {
     if (id < 0) {
         g_wx_loading = false;
         wx_copy(g_wx_error, "Unable to open HTTP request to wttr.in", sizeof(g_wx_error));
-        return;
+        return false;
     }
     g_wx_http_summary_id = id;
     g_wx_loading = true;
     g_wx_error[0] = '\0';
+    return true;
 }
 
 static void wx_start_detail_fetch(void) {
@@ -181,22 +182,34 @@ static void wx_parse_detail(const char* raw) {
 
 static void wx_draw_emblem(int cx, int cy, const char* cond) {
     if (wx_icontains(cond, "rain") || wx_icontains(cond, "drizzle") || wx_icontains(cond, "shower")) {
-        dui_circle(cx - 10, cy - 2, 16, THEME_TEXT_SECONDARY, 210);
-        dui_circle(cx + 10, cy, 14, THEME_TEXT_SECONDARY, 210);
-        dui_rect_rounded(cx - 22, cy - 2, 46, 16, 8, THEME_TEXT_SECONDARY, 215);
-        dui_line(cx - 10, cy + 18, cx - 14, cy + 28, THEME_ACCENT_CYAN, 230);
-        dui_line(cx,      cy + 18, cx - 4,  cy + 28, THEME_ACCENT_CYAN, 230);
-        dui_line(cx + 10, cy + 18, cx + 6,  cy + 28, THEME_ACCENT_CYAN, 230);
+        dui_circle(cx - 10, cy - 2, 15, THEME_TEXT_SECONDARY, 220);
+        dui_circle(cx + 10, cy, 13, THEME_TEXT_SECONDARY, 220);
+        dui_rect_rounded(cx - 22, cy - 2, 46, 15, 8, THEME_TEXT_SECONDARY, 225);
+        dui_line(cx - 10, cy + 17, cx - 14, cy + 27, THEME_ACCENT_CYAN, 235);
+        dui_line(cx,      cy + 17, cx - 4,  cy + 27, THEME_ACCENT_CYAN, 235);
+        dui_line(cx + 10, cy + 17, cx + 6,  cy + 27, THEME_ACCENT_CYAN, 235);
     } else if (wx_icontains(cond, "cloud") || wx_icontains(cond, "overcast") || wx_icontains(cond, "mist") || wx_icontains(cond, "fog")) {
-        dui_circle(cx + 12, cy - 10, 12, THEME_ACCENT_AMBER, 190);
-        dui_circle(cx - 10, cy + 2, 16, THEME_TEXT_PRIMARY, 220);
-        dui_circle(cx + 10, cy + 4, 14, THEME_TEXT_PRIMARY, 220);
-        dui_rect_rounded(cx - 22, cy + 2, 46, 16, 8, THEME_TEXT_PRIMARY, 225);
+        dui_circle(cx + 12, cy - 10, 11, THEME_ACCENT_AMBER, 225);
+        dui_circle_outline(cx + 12, cy - 10, 12, THEME_BORDER_SPECULAR, 150);
+        dui_circle(cx - 10, cy + 2, 15, THEME_TEXT_PRIMARY, 225);
+        dui_circle(cx + 10, cy + 4, 13, THEME_TEXT_PRIMARY, 225);
+        dui_rect_rounded(cx - 22, cy + 2, 46, 15, 8, THEME_TEXT_PRIMARY, 230);
     } else {
-        // Clear / Sun
-        dui_circle(cx, cy, 24, THEME_ACCENT_AMBER, 55);
+        // Clear / Sun (crisp 1px orbital ring, no blurry low-alpha halo)
         dui_circle(cx, cy, 16, THEME_ACCENT_AMBER, 245);
+        dui_circle_outline(cx, cy, 21, THEME_ACCENT_AMBER, 175);
+        dui_circle_outline(cx, cy, 22, THEME_BORDER_SPECULAR, 95);
     }
+}
+
+static bool wx_ieq(const char* a, const char* b) {
+    if (!a || !b) return false;
+    int i = 0;
+    while (a[i] && b[i]) {
+        if (wx_lower(a[i]) != wx_lower(b[i])) return false;
+        i++;
+    }
+    return a[i] == b[i];
 }
 
 static bool wx_pt_in(int px, int py, int rx, int ry, int rw, int rh) {
@@ -263,6 +276,7 @@ static void weather_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
     }
 
     bool click_avail = (in && in->left_pressed);
+    bool pointer_down = (in && in->left_down);
     int mx = in ? in->mx : -1;
     int my = in ? in->my : -1;
 
@@ -270,111 +284,125 @@ static void weather_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
     if (in && in->has_key && g_wx_input_focused) {
         int clen = wx_len(g_wx_city_input);
         if (in->key_char == '\n') {
-            wx_start_fetch();
-            play_system_sound((const char*)"click");
+            bool ok = wx_start_fetch();
+            play_system_sound(ok ? (char*)"tool" : (char*)"error");
         } else if (in->key_char == '\b') {
             if (clen > 0) g_wx_city_input[clen - 1] = '\0';
         } else if (in->scan_code == BLANK_SCAN_ESC) {
             g_wx_input_focused = false;
+            play_system_sound((char*)"close");
         } else if (in->key_char >= 32 && in->key_char <= 126 && clen < 44) {
             g_wx_city_input[clen] = in->key_char;
             g_wx_city_input[clen + 1] = '\0';
         }
     }
 
-    dui_rect(cx, cy, cw, ch, THEME_BG_DEEP, 185);
+    dui_rect(cx, cy, cw, ch, THEME_BG_DEEP, 200);
 
     int pad = 14;
     int inner_w = cw - pad * 2;
 
     // Top City Input + Action Bar
-    int box_w = inner_w - 208;
+    int box_w = inner_w - 210;
     if (box_w < 120) box_w = 120;
-    dui_rect_rounded(cx + pad, cy + 12, box_w, 30, 8, THEME_SURFACE_INPUT, 240);
-    dui_rect_rounded_outline(cx + pad, cy + 12, box_w, 30, 8,
-                             g_wx_input_focused ? THEME_ACCENT_TEAL : THEME_BORDER_SUBTLE, 200);
-    dui_text_ellipsis(cx + pad + 10, cy + 19, box_w - 20,
+    dui_rect_rounded(cx + pad, cy + 12, box_w, 32, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 240);
+    dui_rect_rounded_outline(cx + pad, cy + 12, box_w, 32, THEME_RADIUS_MD,
+                             g_wx_input_focused ? THEME_BORDER_FOCUS : THEME_BORDER_SUBTLE, 210);
+    dui_text_ellipsis(cx + pad + 12, cy + 20, box_w - 24,
                       g_wx_city_input[0] ? g_wx_city_input : "City (blank = Auto IP via wttr.in)",
                       g_wx_city_input[0] ? THEME_TEXT_PRIMARY : THEME_TEXT_MUTED, 1);
 
-    if (click_avail && wx_pt_in(mx, my, cx + pad, cy + 12, box_w, 30)) {
+    if (click_avail && wx_pt_in(mx, my, cx + pad, cy + 12, box_w, 32)) {
         click_avail = false;
         g_wx_input_focused = true;
+        play_system_sound((char*)"tool");
     }
 
-    if (dui_button(cx + pad + box_w + 8, cy + 12, 92, 30, g_wx_loading ? "Syncing..." : "Fetch Now",
-                   THEME_ACCENT_TEAL, true, mx, my, click_avail)) {
+    if (dui_button_tactile(cx + pad + box_w + 8, cy + 12, 94, 32, g_wx_loading ? "Syncing..." : "Fetch Now",
+                           THEME_ACCENT_TEAL, true, mx, my, pointer_down, click_avail)) {
         click_avail = false;
-        wx_start_fetch();
-        play_system_sound((const char*)"click");
+        bool ok = wx_start_fetch();
+        play_system_sound(ok ? (char*)"tool" : (char*)"error");
     }
 
-    if (dui_button(cx + pad + box_w + 106, cy + 12, 96, 30, "Renew DHCP",
-                   THEME_SURFACE_ELEVATED, false, mx, my, click_avail)) {
+    if (dui_button_tactile(cx + pad + box_w + 108, cy + 12, 98, 32, "Renew DHCP",
+                           THEME_SURFACE_ELEVATED, false, mx, my, pointer_down, click_avail)) {
         click_avail = false;
         if (net_dhcp_renew()) {
             wx_start_fetch();
-            play_system_sound((const char*)"success");
+            play_system_sound((char*)"success");
         } else {
             wx_copy(g_wx_error, "Offline - Connect Ethernet/DHCP to fetch live weather", sizeof(g_wx_error));
-            play_system_sound((const char*)"error");
+            play_system_sound((char*)"error");
         }
     }
 
     // Quick City Presets
     const char* presets[4] = { "Auto", "London", "Tokyo", "New York" };
-    int py = cy + 50;
+    int py = cy + 52;
     for (int p = 0; p < 4; p++) {
-        int px = cx + pad + p * 90;
-        if (dui_button(px, py, 82, 24, presets[p], THEME_SURFACE_CARD, false, mx, my, click_avail)) {
+        int px = cx + pad + p * 92;
+        bool active_preset = (p == 0 && !g_wx_city_input[0]) || (p > 0 && wx_ieq(g_wx_city_input, presets[p]));
+        if (dui_button_tactile(px, py, 84, 26, presets[p],
+                               active_preset ? THEME_ACCENT_TEAL : THEME_SURFACE_CARD,
+                               active_preset, mx, my, pointer_down, click_avail)) {
             click_avail = false;
             if (p == 0) g_wx_city_input[0] = '\0';
             else wx_copy(g_wx_city_input, presets[p], sizeof(g_wx_city_input));
-            wx_start_fetch();
-            play_system_sound((const char*)"click");
+            bool ok = wx_start_fetch();
+            play_system_sound(ok ? (char*)"tab" : (char*)"error");
         }
     }
 
-    // Main Weather Hero Card
-    int hero_y = cy + 84;
+    // Main Weather Bento Hero Card
+    int hero_y = cy + 88;
     int hero_h = 166;
-    dui_glass_card(cx + pad, hero_y, inner_w, hero_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 228, true);
+    dui_bento_card(cx + pad, hero_y, inner_w, hero_h, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 232, g_wx_has_data);
+    dui_dot_grid_overlay(cx + pad + 14, hero_y + 12, inner_w - 28, hero_h - 24, 16, THEME_TEXT_PRIMARY, 12);
 
     if (!online) {
+        dui_status_pill(cx + pad + inner_w - 118, hero_y + 14, 102, 22, "Offline", THEME_ACCENT_AMBER, THEME_SURFACE_ELEVATED, false);
         dui_text(cx + pad + 22, hero_y + 28, "Offline - Connect Ethernet/DHCP to fetch live weather", THEME_ACCENT_AMBER, 1);
-        dui_text_ellipsis(cx + pad + 22, hero_y + 56, inner_w - 44,
+        dui_text_ellipsis(cx + pad + 22, hero_y + 58, inner_w - 44,
                           ns.nic_present ? "NIC detected, waiting for active link / DHCP IPv4 lease." : "No UEFI SNP network adapter detected.",
                           THEME_TEXT_SECONDARY, 1);
-        dui_text(cx + pad + 22, hero_y + 84, "Click 'Renew DHCP' then 'Fetch Now' to query http://wttr.in/?format=3", THEME_TEXT_MUTED, 1);
+        dui_text_ellipsis(cx + pad + 22, hero_y + 88, inner_w - 44,
+                          "Click 'Renew DHCP' then 'Fetch Now' to query http://wttr.in/?format=3", THEME_TEXT_MUTED, 1);
     } else if (g_wx_loading && !g_wx_has_data) {
-        dui_text(cx + pad + 22, hero_y + 44, "Connecting to http://wttr.in/?format=3 ...", THEME_ACCENT_TEAL, 2);
-        dui_text(cx + pad + 22, hero_y + 82, "Resolving DNS and streaming live atmospheric telemetry.", THEME_TEXT_SECONDARY, 1);
+        dui_status_pill(cx + pad + inner_w - 118, hero_y + 14, 102, 22, "Syncing", THEME_ACCENT_CYAN, THEME_SURFACE_ELEVATED, true);
+        dui_text_ellipsis(cx + pad + 22, hero_y + 44, inner_w - 150, "Connecting to wttr.in ...", THEME_ACCENT_TEAL, 2);
+        dui_text_ellipsis(cx + pad + 22, hero_y + 84, inner_w - 44, "Resolving DNS and streaming live atmospheric telemetry.", THEME_TEXT_SECONDARY, 1);
     } else if (g_wx_error[0] && !g_wx_has_data) {
-        dui_text(cx + pad + 22, hero_y + 38, "Live Weather Request Failed", THEME_ACCENT_ROSE, 2);
-        dui_text_ellipsis(cx + pad + 22, hero_y + 74, inner_w - 44, g_wx_error, THEME_TEXT_SECONDARY, 1);
+        dui_status_pill(cx + pad + inner_w - 118, hero_y + 14, 102, 22, "Error", THEME_ACCENT_ROSE, THEME_SURFACE_ELEVATED, true);
+        dui_text_ellipsis(cx + pad + 22, hero_y + 38, inner_w - 150, "Live Weather Request Failed", THEME_ACCENT_ROSE, 2);
+        dui_text_ellipsis(cx + pad + 22, hero_y + 78, inner_w - 44, g_wx_error, THEME_TEXT_SECONDARY, 1);
     } else if (g_wx_has_data) {
-        wx_draw_emblem(cx + pad + 56, hero_y + 72, g_wx_condition[0] ? g_wx_condition : g_wx_summary_line);
+        dui_status_pill(cx + pad + inner_w - 118, hero_y + 14, 102, 22, "wttr.in Live", THEME_ACCENT_GREEN, THEME_SURFACE_ELEVATED, true);
+        dui_bento_card(cx + pad + 18, hero_y + 32, 76, 76, THEME_RADIUS_LG, THEME_SURFACE_ELEVATED, 215, false);
+        wx_draw_emblem(cx + pad + 56, hero_y + 70, g_wx_condition[0] ? g_wx_condition : g_wx_summary_line);
 
-        dui_text_ellipsis(cx + pad + 112, hero_y + 22, inner_w - 134,
+        dui_text_ellipsis(cx + pad + 112, hero_y + 20, inner_w - 240,
                           g_wx_location[0] ? g_wx_location : "Live Station", THEME_TEXT_PRIMARY, 2);
         dui_text_ellipsis(cx + pad + 112, hero_y + 54, inner_w - 134,
                           g_wx_temp[0] ? g_wx_temp : g_wx_summary_line, THEME_ACCENT_TEAL, 3);
-        dui_text_ellipsis(cx + pad + 112, hero_y + 100, inner_w - 134,
+        dui_text_ellipsis(cx + pad + 112, hero_y + 102, inner_w - 134,
                           g_wx_condition[0] ? g_wx_condition : g_wx_summary_line, THEME_TEXT_SECONDARY, 1);
         dui_text_ellipsis(cx + pad + 112, hero_y + 128, inner_w - 134,
                           g_wx_summary_line, THEME_TEXT_MUTED, 1);
     } else {
+        dui_status_pill(cx + pad + inner_w - 118, hero_y + 14, 102, 22, "Ready", THEME_ACCENT_TEAL, THEME_SURFACE_ELEVATED, false);
         dui_text(cx + pad + 22, hero_y + 46, "Atmosphere Ready", THEME_TEXT_PRIMARY, 2);
-        dui_text(cx + pad + 22, hero_y + 82, "Click 'Fetch Now' to retrieve live weather from wttr.in.", THEME_TEXT_SECONDARY, 1);
+        dui_text(cx + pad + 22, hero_y + 84, "Click 'Fetch Now' to retrieve live weather from wttr.in.", THEME_TEXT_SECONDARY, 1);
     }
 
-    // Bottom 4 Live Metric Cards (only real parsed values, "--" when absent)
+    // Bottom 4 Live Metric Bento Cards (only real parsed values, "--" when absent)
     int met_y = hero_y + hero_h + 12;
     int met_h = (cy + ch - pad) - met_y;
-    if (met_h > 110) met_h = 110;
+    if (met_h > 106) met_h = 106;
     int card_w = (inner_w - 30) / 4;
 
     const char* labels[4] = { "Feels Like", "Humidity", "Wind", "Pressure" };
+    const uint32_t dot_cols[4] = { THEME_ACCENT_AMBER, THEME_ACCENT_CYAN, THEME_ACCENT_TEAL, THEME_ACCENT_IRIS };
     const char* vals[4] = {
         g_wx_feels[0] ? g_wx_feels : "--",
         g_wx_humidity[0] ? g_wx_humidity : "--",
@@ -384,10 +412,12 @@ static void weather_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
 
     for (int i = 0; i < 4; i++) {
         int mx0 = cx + pad + i * (card_w + 10);
-        dui_glass_card(mx0, met_y, card_w, met_h, THEME_RADIUS_MD, THEME_SURFACE_BASE, 210, false);
-        dui_text(mx0 + 12, met_y + 14, labels[i], THEME_TEXT_MUTED, 1);
-        dui_text_ellipsis(mx0 + 12, met_y + 44, card_w - 24, vals[i],
-                          (g_wx_has_data && vals[i][0] != '-') ? THEME_TEXT_PRIMARY : THEME_TEXT_SECONDARY, 1);
+        bool has_val = (g_wx_has_data && vals[i][0] != '-');
+        dui_bento_card(mx0, met_y, card_w, met_h, THEME_RADIUS_LG, THEME_SURFACE_BASE, 225, has_val);
+        dui_circle(mx0 + 15, met_y + 20, 3, has_val ? dot_cols[i] : THEME_TEXT_MUTED, 235);
+        dui_text(mx0 + 24, met_y + 13, labels[i], THEME_TEXT_MUTED, 1);
+        dui_text_ellipsis(mx0 + 14, met_y + 44, card_w - 28, vals[i],
+                          has_val ? THEME_TEXT_PRIMARY : THEME_TEXT_SECONDARY, 1);
     }
 }
 

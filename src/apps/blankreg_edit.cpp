@@ -182,7 +182,7 @@ static void reg_apply_selected_value(void) {
         int iv = 0;
         if (!br_parse_int(g_reg_edit_val, &iv)) {
             br_copy(g_reg_status, "Invalid integer for DWORD key", sizeof(g_reg_status));
-            play_system_sound((const char*)"error");
+            play_system_sound((char*)"error");
             return;
         }
         blankReg_set_int(key, iv);
@@ -204,13 +204,13 @@ static void reg_apply_selected_value(void) {
     reg_sync_inspector_from_sel();
     br_copy(g_reg_status, "Updated: ", sizeof(g_reg_status));
     br_cat(g_reg_status, key, sizeof(g_reg_status));
-    play_system_sound((const char*)"success");
+    play_system_sound((char*)"success");
 }
 
 static void reg_create_new_key(void) {
     if (!g_reg_new_key[0]) {
         br_copy(g_reg_status, "Enter a key name first", sizeof(g_reg_status));
-        play_system_sound((const char*)"error");
+        play_system_sound((char*)"error");
         return;
     }
     if (g_reg_new_type == 0) {
@@ -235,7 +235,7 @@ static void reg_create_new_key(void) {
     reg_sync_inspector_from_sel();
     br_copy(g_reg_status, "Added key: ", sizeof(g_reg_status));
     br_cat(g_reg_status, target, sizeof(g_reg_status));
-    play_system_sound((const char*)"success");
+    play_system_sound((char*)"success");
 }
 
 static void reg_handle_text_key(char* buf, int max_len, const BlankInputState* in) {
@@ -257,10 +257,11 @@ static void blankreg_edit_render(BlankWindow* win, int cx, int cy, int cw, int c
     }
 
     bool click_avail = (in && in->left_pressed);
+    bool down = (in && in->left_down);
     int mx = in ? in->mx : -1;
     int my = in ? in->my : -1;
 
-    dui_rect(cx, cy, cw, ch, THEME_BG_DEEP, 185);
+    dui_rect(cx, cy, cw, ch, THEME_BG_DEEP, 195);
 
     const char* ns_labels[7] = { "All Keys", "System", "UI", "Audio", "Hardware", "Network", "Display" };
     const char* ns_pfxs[7]   = { "", "System/", "UI/", "Audio/", "Hardware/", "Network/", "Display/" };
@@ -270,7 +271,8 @@ static void blankreg_edit_render(BlankWindow* win, int cx, int cy, int cw, int c
     int sb_x = cx + 8;
     int sb_y = cy + 8;
     int sb_h = ch - 16;
-    dui_glass_card(sb_x, sb_y, sb_w, sb_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 210, false);
+    dui_bento_card(sb_x, sb_y, sb_w, sb_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 222, false);
+    dui_dot_grid_overlay(sb_x + 8, sb_y + 6, sb_w - 16, 28, 12, THEME_TEXT_MUTED, 14);
     dui_text(sb_x + 12, sb_y + 11, "Namespaces", THEME_TEXT_PRIMARY, 1);
 
     for (int n = 0; n < 7; n++) {
@@ -283,9 +285,13 @@ static void blankreg_edit_render(BlankWindow* win, int cx, int cy, int cw, int c
             if (n == 0 || br_starts_nocase(g_reg_rows[i].key, ns_pfxs[n])) count++;
         }
 
-        dui_rect_rounded(sb_x + 6, ny, sb_w - 12, 30, 7,
+        dui_rect_rounded(sb_x + 6, ny, sb_w - 12, 30, THEME_RADIUS_SM,
                          active ? THEME_SURFACE_ELEVATED : (hov ? THEME_SURFACE_HOVER : THEME_SURFACE_BASE),
                          active ? 240 : (hov ? 200 : 100));
+        if (active || hov) {
+            dui_rect_rounded_outline(sb_x + 6, ny, sb_w - 12, 30, THEME_RADIUS_SM,
+                                     active ? THEME_BORDER_SPECULAR : THEME_BORDER_SUBTLE, active ? 205 : 150);
+        }
         if (active) dui_rect_rounded(sb_x + 6, ny + 6, 3, 18, 2, THEME_ACCENT_IRIS, 255);
         dui_text(sb_x + 16, ny + 7, ns_labels[n], active ? THEME_TEXT_PRIMARY : THEME_TEXT_SECONDARY, 1);
 
@@ -298,7 +304,7 @@ static void blankreg_edit_render(BlankWindow* win, int cx, int cy, int cw, int c
             click_avail = false;
             g_reg_ns = n;
             g_reg_scroll = 0;
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"tab");
         }
     }
 
@@ -310,15 +316,15 @@ static void blankreg_edit_render(BlankWindow* win, int cx, int cy, int cw, int c
 
     // Top Toolbar
     int tb_h = 40;
-    dui_glass_card(rx, ry, rw, tb_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 220, false);
+    dui_bento_card(rx, ry, rw, tb_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 225, false);
 
     // Search filter box
     int srch_x = rx + 8;
     int srch_y = ry + 7;
     int srch_w = rw - 248;
     if (srch_w < 100) srch_w = 100;
-    dui_rect_rounded(srch_x, srch_y, srch_w, 26, 6, THEME_SURFACE_INPUT, 240);
-    dui_rect_rounded_outline(srch_x, srch_y, srch_w, 26, 6,
+    dui_rect_rounded(srch_x, srch_y, srch_w, 26, THEME_RADIUS_SM, THEME_SURFACE_INPUT, 240);
+    dui_rect_rounded_outline(srch_x, srch_y, srch_w, 26, THEME_RADIUS_SM,
                              (g_reg_focus_field == 1) ? THEME_ACCENT_IRIS : THEME_BORDER_SUBTLE, 200);
     if (g_reg_search[0]) {
         dui_text_ellipsis(srch_x + 8, srch_y + 5, srch_w - 14, g_reg_search, THEME_TEXT_PRIMARY, 1);
@@ -328,70 +334,74 @@ static void blankreg_edit_render(BlankWindow* win, int cx, int cy, int cw, int c
     if (click_avail && br_pt_in(mx, my, srch_x, srch_y, srch_w, 26)) {
         click_avail = false;
         g_reg_focus_field = 1;
+        play_system_sound((char*)"tool");
     }
 
-    if (dui_button(rx + rw - 232, ry + 7, 70, 26, "+ New", THEME_ACCENT_IRIS, false, mx, my, click_avail)) {
+    if (dui_button_tactile(rx + rw - 232, ry + 7, 70, 26, "+ New", THEME_ACCENT_IRIS, false, mx, my, down, click_avail)) {
         click_avail = false;
         g_reg_new_mode = !g_reg_new_mode;
         if (g_reg_new_mode) {
             g_reg_new_key[0] = '\0';
             g_reg_new_val[0] = '\0';
             g_reg_focus_field = 3;
+            play_system_sound((char*)"open");
+        } else {
+            play_system_sound((char*)"close");
         }
-        play_system_sound((const char*)"click");
     }
-    if (dui_button(rx + rw - 156, ry + 7, 68, 26, "Reload", THEME_SURFACE_ELEVATED, false, mx, my, click_avail)) {
+    if (dui_button_tactile(rx + rw - 156, ry + 7, 68, 26, "Reload", THEME_SURFACE_ELEVATED, false, mx, my, down, click_avail)) {
         click_avail = false;
         if (gSystemTable) blankReg_load(gSystemTable);
         reg_load_snapshot();
         reg_sync_inspector_from_sel();
         br_copy(g_reg_status, "Reloaded from REGISTRY.INI", sizeof(g_reg_status));
-        play_system_sound((const char*)"click");
+        play_system_sound((char*)"tool");
     }
-    if (dui_button(rx + rw - 82, ry + 7, 74, 26, "Save Hive", THEME_ACCENT_IRIS, true, mx, my, click_avail)) {
+    if (dui_button_tactile(rx + rw - 82, ry + 7, 74, 26, "Save Hive", THEME_ACCENT_IRIS, true, mx, my, down, click_avail)) {
         click_avail = false;
         bool ok = blankReg_save(gSystemTable);
         br_copy(g_reg_status, ok ? "Saved to \\EFI\\BOOT\\REGISTRY.INI" : "Saved in RAM (FAT32 RO)", sizeof(g_reg_status));
-        play_system_sound((const char*)(ok ? "success" : "notify"));
+        play_system_sound(ok ? (char*)"success" : (char*)"tool");
     }
 
     // Optional Inline "New Key" Bar
     int tbl_y = ry + tb_h + 8;
     if (g_reg_new_mode) {
         int nh = 44;
-        dui_glass_card(rx, tbl_y, rw, nh, THEME_RADIUS_MD, THEME_SURFACE_ELEVATED, 235, true);
+        dui_bento_card(rx, tbl_y, rw, nh, THEME_RADIUS_MD, THEME_SURFACE_ELEVATED, 238, true);
         int kw = (rw - 190) / 2;
         if (kw < 80) kw = 80;
 
         // Key input
-        dui_rect_rounded(rx + 8, tbl_y + 9, kw, 26, 6, THEME_SURFACE_INPUT, 240);
-        dui_rect_rounded_outline(rx + 8, tbl_y + 9, kw, 26, 6, (g_reg_focus_field == 3) ? THEME_ACCENT_IRIS : THEME_BORDER_SUBTLE, 200);
+        dui_rect_rounded(rx + 8, tbl_y + 9, kw, 26, THEME_RADIUS_SM, THEME_SURFACE_INPUT, 240);
+        dui_rect_rounded_outline(rx + 8, tbl_y + 9, kw, 26, THEME_RADIUS_SM, (g_reg_focus_field == 3) ? THEME_ACCENT_IRIS : THEME_BORDER_SUBTLE, 200);
         dui_text_ellipsis(rx + 14, tbl_y + 14, kw - 12, g_reg_new_key[0] ? g_reg_new_key : "Key (e.g. User/Note)",
                           g_reg_new_key[0] ? THEME_TEXT_PRIMARY : THEME_TEXT_MUTED, 1);
         if (click_avail && br_pt_in(mx, my, rx + 8, tbl_y + 9, kw, 26)) { click_avail = false; g_reg_focus_field = 3; }
 
         // Type toggle
-        if (dui_button(rx + 14 + kw, tbl_y + 9, 46, 26, g_reg_new_type ? "STR" : "INT", THEME_SURFACE_CARD, false, mx, my, click_avail)) {
+        if (dui_button_tactile(rx + 14 + kw, tbl_y + 9, 46, 26, g_reg_new_type ? "STR" : "INT", THEME_SURFACE_CARD, false, mx, my, down, click_avail)) {
             click_avail = false;
             g_reg_new_type = 1 - g_reg_new_type;
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"tab");
         }
 
         // Value input
         int vx = rx + 66 + kw;
-        dui_rect_rounded(vx, tbl_y + 9, kw, 26, 6, THEME_SURFACE_INPUT, 240);
-        dui_rect_rounded_outline(vx, tbl_y + 9, kw, 26, 6, (g_reg_focus_field == 4) ? THEME_ACCENT_IRIS : THEME_BORDER_SUBTLE, 200);
+        dui_rect_rounded(vx, tbl_y + 9, kw, 26, THEME_RADIUS_SM, THEME_SURFACE_INPUT, 240);
+        dui_rect_rounded_outline(vx, tbl_y + 9, kw, 26, THEME_RADIUS_SM, (g_reg_focus_field == 4) ? THEME_ACCENT_IRIS : THEME_BORDER_SUBTLE, 200);
         dui_text_ellipsis(vx + 6, tbl_y + 14, kw - 12, g_reg_new_val[0] ? g_reg_new_val : "Value",
                           g_reg_new_val[0] ? THEME_TEXT_PRIMARY : THEME_TEXT_MUTED, 1);
         if (click_avail && br_pt_in(mx, my, vx, tbl_y + 9, kw, 26)) { click_avail = false; g_reg_focus_field = 4; }
 
-        if (dui_button(rx + rw - 110, tbl_y + 9, 52, 26, "Add", THEME_ACCENT_GREEN, true, mx, my, click_avail)) {
+        if (dui_button_tactile(rx + rw - 110, tbl_y + 9, 52, 26, "Add", THEME_ACCENT_GREEN, true, mx, my, down, click_avail)) {
             click_avail = false;
             reg_create_new_key();
         }
-        if (dui_button(rx + rw - 52, tbl_y + 9, 44, 26, "Esc", THEME_SURFACE_CARD, false, mx, my, click_avail)) {
+        if (dui_button_tactile(rx + rw - 52, tbl_y + 9, 44, 26, "Esc", THEME_SURFACE_CARD, false, mx, my, down, click_avail)) {
             click_avail = false;
             g_reg_new_mode = false;
+            play_system_sound((char*)"close");
         }
         tbl_y += nh + 8;
     }
@@ -406,17 +416,17 @@ static void blankreg_edit_render(BlankWindow* win, int cx, int cy, int cw, int c
         vis_idx[vis_cnt++] = i;
     }
 
-    // Bottom Inspector Height = 96px
-    int insp_h = 96;
+    // Bottom Inspector Height = 98px
+    int insp_h = 98;
     int tbl_h = (ry + rh - insp_h - 8) - tbl_y;
     if (tbl_h < 100) tbl_h = 100;
 
-    dui_glass_card(rx, tbl_y, rw, tbl_h, THEME_RADIUS_MD, THEME_SURFACE_BASE, 215, false);
+    dui_bento_card(rx, tbl_y, rw, tbl_h, THEME_RADIUS_LG, THEME_SURFACE_BASE, 222, false);
 
     // Table header
     dui_rect(rx + 1, tbl_y + 28, rw - 2, 1, THEME_BORDER_SUBTLE, 180);
     dui_text(rx + 12, tbl_y + 7, "Key Path", THEME_TEXT_SECONDARY, 1);
-    dui_text(rx + rw - 220, tbl_y + 7, "Type", THEME_TEXT_SECONDARY, 1);
+    dui_text(rx + rw - 230, tbl_y + 7, "Type", THEME_TEXT_SECONDARY, 1);
     dui_text(rx + rw - 165, tbl_y + 7, "Value", THEME_TEXT_SECONDARY, 1);
 
     int row_h = 28;
@@ -440,18 +450,19 @@ static void blankreg_edit_render(BlankWindow* win, int cx, int cy, int cw, int c
         bool hov = br_pt_in(mx, my, rx + 6, y0, rw - 12, row_h - 2);
 
         if (sel || hov) {
-            dui_rect_rounded(rx + 6, y0, rw - 12, row_h - 2, 6,
+            dui_rect_rounded(rx + 6, y0, rw - 12, row_h - 2, THEME_RADIUS_SM,
                              sel ? THEME_SURFACE_ELEVATED : THEME_SURFACE_HOVER, sel ? 240 : 180);
+            dui_rect_rounded_outline(rx + 6, y0, rw - 12, row_h - 2, THEME_RADIUS_SM,
+                                     sel ? THEME_BORDER_SPECULAR : THEME_BORDER_SUBTLE, sel ? 200 : 145);
         }
         if (sel) {
             dui_rect_rounded(rx + 6, y0 + 5, 3, row_h - 12, 2, THEME_ACCENT_IRIS, 255);
         }
 
-        dui_text_ellipsis(rx + 14, y0 + 5, rw - 245, row->key, sel ? THEME_TEXT_PRIMARY : THEME_TEXT_SECONDARY, 1);
+        dui_text_ellipsis(rx + 14, y0 + 5, rw - 254, row->key, sel ? THEME_TEXT_PRIMARY : THEME_TEXT_SECONDARY, 1);
 
         uint32_t tcol = (row->type == 0) ? THEME_ACCENT_IRIS : THEME_ACCENT_TEAL;
-        dui_rect_rounded(rx + rw - 222, y0 + 4, 46, 18, 4, tcol, 200);
-        dui_text(rx + rw - 216, y0 + 5, (row->type == 0) ? "INT" : "STR", THEME_TEXT_ON_ACCENT, 1);
+        dui_status_pill(rx + rw - 234, y0 + 3, 60, 20, (row->type == 0) ? "INT" : "STR", tcol, THEME_SURFACE_INPUT, sel);
 
         char vdisp[128];
         if (row->type == 0) br_itoa(row->int_val, vdisp, sizeof(vdisp));
@@ -463,26 +474,26 @@ static void blankreg_edit_render(BlankWindow* win, int cx, int cy, int cw, int c
             g_reg_sel_idx = idx;
             reg_sync_inspector_from_sel();
             g_reg_focus_field = 2;
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"open");
         }
     }
     dui_pop_clip();
 
     // Bottom Inspector / Editor Card
     int iy = ry + rh - insp_h;
-    dui_glass_card(rx, iy, rw, insp_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 232, g_reg_focus_field == 2);
+    dui_bento_card(rx, iy, rw, insp_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 234, g_reg_focus_field == 2);
 
     if (g_reg_sel_idx >= 0 && g_reg_sel_idx < g_reg_total) {
         RegRowView* sel_r = &g_reg_rows[g_reg_sel_idx];
         dui_text_ellipsis(rx + 12, iy + 10, rw - 190, sel_r->key, THEME_ACCENT_IRIS, 1);
 
-        if (dui_button(rx + rw - 166, iy + 7, 74, 24, (g_reg_edit_type == 0) ? "Type: INT" : "Type: STR",
-                       THEME_SURFACE_ELEVATED, false, mx, my, click_avail)) {
+        if (dui_button_tactile(rx + rw - 166, iy + 7, 74, 24, (g_reg_edit_type == 0) ? "Type: INT" : "Type: STR",
+                               THEME_SURFACE_ELEVATED, false, mx, my, down, click_avail)) {
             click_avail = false;
             g_reg_edit_type = 1 - g_reg_edit_type;
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"tab");
         }
-        if (dui_button(rx + rw - 86, iy + 7, 74, 24, "Delete", THEME_ACCENT_ROSE, false, mx, my, click_avail)) {
+        if (dui_button_tactile(rx + rw - 86, iy + 7, 74, 24, "Delete", THEME_ACCENT_ROSE, false, mx, my, down, click_avail)) {
             click_avail = false;
             char delk[64];
             br_copy(delk, sel_r->key, sizeof(delk));
@@ -491,22 +502,22 @@ static void blankreg_edit_render(BlankWindow* win, int cx, int cy, int cw, int c
             reg_sync_inspector_from_sel();
             br_copy(g_reg_status, "Deleted: ", sizeof(g_reg_status));
             br_cat(g_reg_status, delk, sizeof(g_reg_status));
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"close");
         }
 
         // Editable Value Box + Apply
         int vx = rx + 12;
-        int vy = iy + 38;
+        int vy = iy + 37;
         int vw = rw - 108;
-        dui_rect_rounded(vx, vy, vw, 28, 6, THEME_SURFACE_INPUT, 245);
-        dui_rect_rounded_outline(vx, vy, vw, 28, 6, (g_reg_focus_field == 2) ? THEME_ACCENT_IRIS : THEME_BORDER_SUBTLE, 210);
+        dui_rect_rounded(vx, vy, vw, 28, THEME_RADIUS_SM, THEME_SURFACE_INPUT, 245);
+        dui_rect_rounded_outline(vx, vy, vw, 28, THEME_RADIUS_SM, (g_reg_focus_field == 2) ? THEME_ACCENT_IRIS : THEME_BORDER_SUBTLE, 210);
         dui_text_ellipsis(vx + 8, vy + 6, vw - 16, g_reg_edit_val, THEME_TEXT_PRIMARY, 1);
         if (click_avail && br_pt_in(mx, my, vx, vy, vw, 28)) {
             click_avail = false;
             g_reg_focus_field = 2;
         }
 
-        if (dui_button(rx + rw - 88, vy, 76, 28, "Apply", THEME_ACCENT_IRIS, true, mx, my, click_avail)) {
+        if (dui_button_tactile(rx + rw - 88, vy, 76, 28, "Apply", THEME_ACCENT_IRIS, true, mx, my, down, click_avail)) {
             click_avail = false;
             reg_apply_selected_value();
         }
@@ -514,7 +525,11 @@ static void blankreg_edit_render(BlankWindow* win, int cx, int cy, int cw, int c
         dui_text(rx + 12, iy + 36, "Select a registry key above to inspect or modify its value.", THEME_TEXT_MUTED, 1);
     }
 
-    dui_text_ellipsis(rx + 12, iy + 73, rw - 24, g_reg_status, THEME_TEXT_SECONDARY, 1);
+    uint32_t st_dot = THEME_ACCENT_IRIS;
+    if (br_starts_nocase(g_reg_status, "Invalid") || br_starts_nocase(g_reg_status, "Enter")) st_dot = THEME_ACCENT_ROSE;
+    else if (br_starts_nocase(g_reg_status, "Updated") || br_starts_nocase(g_reg_status, "Added") || br_starts_nocase(g_reg_status, "Saved to")) st_dot = THEME_ACCENT_GREEN;
+    dui_status_pill(rx + 12, iy + 70, 74, 20, "HIVE", st_dot, THEME_SURFACE_INPUT, true);
+    dui_text_ellipsis(rx + 94, iy + 72, rw - 108, g_reg_status, THEME_TEXT_SECONDARY, 1);
 
     // Keyboard routing
     if (in && in->has_key) {

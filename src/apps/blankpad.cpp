@@ -784,10 +784,10 @@ static void bp_save_active_file(void) {
     bool ok = vfs_write_file(f->name, f->content);
     g_bp_dirty = false;
     if (ok) {
-        play_system_sound((const char*)"success");
+        play_system_sound((char*)"success");
         bp_str_copy(g_bp_status, f->on_disk ? "Saved to FAT32" : "Saved to RAM VFS", sizeof(g_bp_status));
     } else {
-        play_system_sound((const char*)"error");
+        play_system_sound((char*)"error");
         bp_str_copy(g_bp_status, "Save Failed", sizeof(g_bp_status));
     }
 }
@@ -849,11 +849,12 @@ static void blankpad_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
     }
 
     bool click_avail = (in && in->left_pressed);
+    bool down = (in && in->left_down);
     int mx = in ? in->mx : -1;
     int my = in ? in->my : -1;
 
     // Subtle spatial glass backdrop
-    dui_rect(cx, cy, cw, ch, THEME_BG_DEEP, 185);
+    dui_rect(cx, cy, cw, ch, THEME_BG_DEEP, 195);
 
     int sidebar_w = g_bp_show_sidebar ? 216 : 0;
     if (g_bp_show_sidebar && cw < 480) sidebar_w = 168;
@@ -867,19 +868,20 @@ static void blankpad_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
         int sw = sidebar_w - 8;
         int sh = ch - 16;
 
-        dui_glass_card(sx, sy, sw, sh, THEME_RADIUS_MD, THEME_SURFACE_CARD, 210, false);
+        dui_bento_card(sx, sy, sw, sh, THEME_RADIUS_LG, THEME_SURFACE_CARD, 222, false);
+        dui_dot_grid_overlay(sx + 8, sy + 6, sw - 16, 28, 12, THEME_TEXT_MUTED, 14);
         dui_text(sx + 12, sy + 11, "Explorer", THEME_TEXT_PRIMARY, 1);
 
-        if (dui_button(sx + sw - 96, sy + 7, 42, 24, "Sync", THEME_SURFACE_ELEVATED, false, mx, my, click_avail)) {
+        if (dui_button_tactile(sx + sw - 96, sy + 7, 42, 24, "Sync", THEME_SURFACE_ELEVATED, false, mx, my, down, click_avail)) {
             click_avail = false;
             if (gSystemTable) bp_sync_from_fat32(gSystemTable);
             bp_str_copy(g_bp_status, "FAT32 Synced", sizeof(g_bp_status));
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"tool");
         }
-        if (dui_button(sx + sw - 50, sy + 7, 42, 24, "+New", THEME_ACCENT_CYAN, true, mx, my, click_avail)) {
+        if (dui_button_tactile(sx + sw - 50, sy + 7, 42, 24, "+New", THEME_ACCENT_CYAN, true, mx, my, down, click_avail)) {
             click_avail = false;
             bp_create_new_file();
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"open");
         }
 
         // Category filter pills
@@ -889,11 +891,11 @@ static void blankpad_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
             int px = sx + 8 + c * (pill_w + 2);
             int py = sy + 38;
             bool active = (g_bp_cat == c);
-            if (dui_button(px, py, pill_w, 22, cats[c], active ? THEME_ACCENT_CYAN : THEME_SURFACE_ELEVATED, active, mx, my, click_avail)) {
+            if (dui_button_tactile(px, py, pill_w, 22, cats[c], active ? THEME_ACCENT_CYAN : THEME_SURFACE_ELEVATED, active, mx, my, down, click_avail)) {
                 click_avail = false;
                 g_bp_cat = c;
                 g_bp_sidebar_scroll = 0;
-                play_system_sound((const char*)"click");
+                play_system_sound((char*)"tab");
             }
         }
 
@@ -927,7 +929,11 @@ static void blankpad_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
             bool hov = bp_pt_in(mx, my, sx + 6, ry, sw - 12, row_h - 4);
 
             uint32_t row_col = sel ? THEME_SURFACE_ELEVATED : (hov ? THEME_SURFACE_HOVER : THEME_SURFACE_BASE);
-            dui_rect_rounded(sx + 6, ry, sw - 12, row_h - 4, 7, row_col, sel ? 240 : (hov ? 210 : 120));
+            dui_rect_rounded(sx + 6, ry, sw - 12, row_h - 4, THEME_RADIUS_SM, row_col, sel ? 240 : (hov ? 210 : 120));
+            if (sel || hov) {
+                dui_rect_rounded_outline(sx + 6, ry, sw - 12, row_h - 4, THEME_RADIUS_SM,
+                                         sel ? THEME_BORDER_SPECULAR : THEME_BORDER_SUBTLE, sel ? 205 : 150);
+            }
             if (sel) {
                 dui_rect_rounded(sx + 6, ry + 5, 3, row_h - 14, 2, THEME_ACCENT_CYAN, 255);
             }
@@ -942,7 +948,7 @@ static void blankpad_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
             if (hov && click_avail) {
                 click_avail = false;
                 bp_select_index(idx);
-                play_system_sound((const char*)"click");
+                play_system_sound((char*)"open");
             }
         }
         dui_pop_clip();
@@ -956,16 +962,16 @@ static void blankpad_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
     int ew = cw - sidebar_w - 16;
     int eh = ch - 16;
 
-    dui_glass_card(ex, ey, ew, eh, THEME_RADIUS_MD, THEME_SURFACE_BASE, 220, true);
+    dui_bento_card(ex, ey, ew, eh, THEME_RADIUS_LG, THEME_SURFACE_BASE, 228, true);
 
     // Top toolbar
-    int tb_h = 40;
+    int tb_h = 42;
     dui_rect(ex + 1, ey + tb_h, ew - 2, 1, THEME_BORDER_SUBTLE, 180);
 
-    if (dui_button(ex + 8, ey + 8, 66, 24, g_bp_show_sidebar ? "Focus" : "Files", THEME_SURFACE_ELEVATED, false, mx, my, click_avail)) {
+    if (dui_button_tactile(ex + 8, ey + 9, 66, 24, g_bp_show_sidebar ? "Focus" : "Files", THEME_SURFACE_ELEVATED, false, mx, my, down, click_avail)) {
         click_avail = false;
         g_bp_show_sidebar = !g_bp_show_sidebar;
-        play_system_sound((const char*)"click");
+        play_system_sound((char*)"tab");
     }
 
     VfsEntry* active = (g_bp_selected >= 0 && g_bp_selected < g_vfs_count && g_vfs_files[g_bp_selected].used)
@@ -977,30 +983,32 @@ static void blankpad_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
 
     if (active) {
         if (g_bp_editing_name) {
-            dui_rect_rounded(name_x, ey + 7, name_w, 26, 6, THEME_SURFACE_INPUT, 245);
-            dui_rect_rounded_outline(name_x, ey + 7, name_w, 26, 6, THEME_BORDER_FOCUS, 220);
-            dui_text_ellipsis(name_x + 8, ey + 12, name_w - 16, g_bp_name_buf, THEME_TEXT_PRIMARY, 1);
+            dui_rect_rounded(name_x, ey + 8, name_w, 26, THEME_RADIUS_SM, THEME_SURFACE_INPUT, 245);
+            dui_rect_rounded_outline(name_x, ey + 8, name_w, 26, THEME_RADIUS_SM, THEME_BORDER_FOCUS, 220);
+            dui_text_ellipsis(name_x + 8, ey + 13, name_w - 16, g_bp_name_buf, THEME_TEXT_PRIMARY, 1);
         } else {
-            bool hov_name = bp_pt_in(mx, my, name_x, ey + 7, name_w, 26);
+            bool hov_name = bp_pt_in(mx, my, name_x, ey + 8, name_w, 26);
             if (hov_name) {
-                dui_rect_rounded(name_x, ey + 7, name_w, 26, 6, THEME_SURFACE_HOVER, 140);
+                dui_rect_rounded(name_x, ey + 8, name_w, 26, THEME_RADIUS_SM, THEME_SURFACE_HOVER, 140);
+                dui_rect_rounded_outline(name_x, ey + 8, name_w, 26, THEME_RADIUS_SM, THEME_BORDER_SUBTLE, 160);
                 if (click_avail) {
                     click_avail = false;
                     bp_str_copy(g_bp_name_buf, active->name, sizeof(g_bp_name_buf));
                     g_bp_editing_name = true;
+                    play_system_sound((char*)"tool");
                 }
             }
-            dui_text_ellipsis(name_x + 6, ey + 12, name_w - 12, active->name, THEME_TEXT_PRIMARY, 1);
+            dui_text_ellipsis(name_x + 6, ey + 13, name_w - 12, active->name, THEME_TEXT_PRIMARY, 1);
         }
     } else {
-        dui_text(name_x + 6, ey + 12, "No File Selected", THEME_TEXT_MUTED, 1);
+        dui_text(name_x + 6, ey + 13, "No File Selected", THEME_TEXT_MUTED, 1);
     }
 
-    if (dui_button(ex + ew - 142, ey + 8, 64, 24, "Save", THEME_ACCENT_CYAN, true, mx, my, click_avail)) {
+    if (dui_button_tactile(ex + ew - 142, ey + 9, 64, 24, "Save", THEME_ACCENT_CYAN, true, mx, my, down, click_avail)) {
         click_avail = false;
         bp_save_active_file();
     }
-    if (dui_button(ex + ew - 72, ey + 8, 64, 24, "Delete", THEME_ACCENT_ROSE, false, mx, my, click_avail)) {
+    if (dui_button_tactile(ex + ew - 72, ey + 9, 64, 24, "Delete", THEME_ACCENT_ROSE, false, mx, my, down, click_avail)) {
         click_avail = false;
         if (active) {
             char del_name[VFS_NAME_MAX];
@@ -1012,23 +1020,24 @@ static void blankpad_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
             if (g_bp_selected >= g_vfs_count) g_bp_selected = g_vfs_count - 1;
             if (g_bp_selected >= 0) bp_select_index(g_bp_selected);
             bp_str_copy(g_bp_status, "Deleted File", sizeof(g_bp_status));
-            play_system_sound((const char*)"click");
+            play_system_sound((char*)"close");
         }
     }
 
     // Editor content area
-    int body_x = ex + 6;
+    int body_x = ex + 8;
     int body_y = ey + tb_h + 6;
-    int body_w = ew - 12;
-    int body_h = eh - tb_h - 38;
+    int body_w = ew - 16;
+    int body_h = eh - tb_h - 42;
     int gutter_w = 40;
     int line_h = 20;
     int vis_lines = body_h / line_h;
     if (vis_lines < 1) vis_lines = 1;
 
-    dui_rect_rounded(body_x, body_y, body_w, body_h, 8, THEME_SURFACE_INPUT, 235);
-    dui_rect(body_x, body_y, gutter_w, body_h, THEME_BG_DEEP, 180);
+    dui_rect_rounded(body_x, body_y, body_w, body_h, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 240);
+    dui_rect(body_x + 1, body_y + 1, gutter_w, body_h - 2, THEME_BG_DEEP, 180);
     dui_rect(body_x + gutter_w, body_y + 4, 1, body_h - 8, THEME_BORDER_SUBTLE, 140);
+    dui_rect_rounded_outline(body_x, body_y, body_w, body_h, THEME_RADIUS_MD, THEME_BORDER_SUBTLE, 175);
 
     if (active) {
         char* buf = active->content;
@@ -1205,8 +1214,12 @@ static void blankpad_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
         }
         dui_pop_clip();
 
-        // Status Footer
-        int fy = ey + eh - 24;
+        // Status Footer with Lira Mode Pill
+        int fy = ey + eh - 28;
+        const char* badge_lbl = g_bp_dirty ? "Unsaved*" : (active->is_binary ? "Binary RO" : (active->on_disk ? "FAT32" : "RAM VFS"));
+        uint32_t badge_col = g_bp_dirty ? THEME_ACCENT_AMBER : (active->is_binary ? THEME_ACCENT_IRIS : (active->on_disk ? THEME_ACCENT_GREEN : THEME_ACCENT_CYAN));
+        dui_status_pill(ex + 8, fy - 2, 96, 22, badge_lbl, badge_col, THEME_SURFACE_INPUT, g_bp_dirty || active->on_disk);
+
         char footer[128];
         char nb1[16], nb2[16], nb3[16];
         bp_int_to_str(cur_line + 1, nb1, sizeof(nb1));
@@ -1219,10 +1232,13 @@ static void blankpad_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
         bp_str_cat(footer, "  |  ", sizeof(footer));
         bp_str_cat(footer, nb3, sizeof(footer));
         bp_str_cat(footer, " B  |  ", sizeof(footer));
-        bp_str_cat(footer, g_bp_dirty ? "Unsaved*" : g_bp_status, sizeof(footer));
+        bp_str_cat(footer, g_bp_status, sizeof(footer));
 
-        dui_text_ellipsis(ex + 10, fy, ew - 140, footer, g_bp_dirty ? THEME_ACCENT_AMBER : THEME_TEXT_SECONDARY, 1);
-        dui_text(ex + ew - 118, fy, "Ctrl+S Save", THEME_TEXT_MUTED, 1);
+        int hint_space = (ew >= 340) ? 112 : 12;
+        dui_text_ellipsis(ex + 112, fy + 1, ew - 118 - hint_space, footer, g_bp_dirty ? THEME_ACCENT_AMBER : THEME_TEXT_SECONDARY, 1);
+        if (ew >= 340) {
+            dui_text(ex + ew - 104, fy + 1, "Ctrl+S Save", THEME_TEXT_MUTED, 1);
+        }
     }
 }
 

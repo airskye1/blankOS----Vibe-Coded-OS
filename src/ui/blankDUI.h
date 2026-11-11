@@ -44,10 +44,12 @@ void dui_circle_outline(int cx, int cy, int r, uint32_t color, uint8_t alpha);
 void dui_line(int x0, int y0, int x1, int y1, uint32_t color, uint8_t alpha);
 void dui_progress_ring(int cx, int cy, int r, int thickness, float progress, uint32_t bg_color, uint32_t fg_color);
 
-// Horizon Spatial Glass Surfaces & Elevation
+// Horizon x Lira Architectural Surfaces & Elevation
 void dui_frosted_glass(int x, int y, int w, int h, int r, uint32_t tint, uint8_t alpha);
 void dui_shadow(int x, int y, int w, int h, int radius, int elevation);
 void dui_glass_card(int x, int y, int w, int h, int radius, uint32_t tint, uint8_t alpha, bool focused);
+void dui_bento_card(int x, int y, int w, int h, int radius, uint32_t tint, uint8_t alpha, bool active);
+void dui_dot_grid_overlay(int x, int y, int w, int h, int spacing, uint32_t color, uint8_t alpha);
 
 // Scissor Clip Stack
 void dui_push_clip(int x, int y, int w, int h);
@@ -71,9 +73,13 @@ void dui_draw_squircle_icon(int x, int y, int size, int app_id, bool hovered);
 void dui_draw_icon(int x, int y, int size, int icon_id);
 bool dui_draw_image_path(const char* path, int x, int y, int w, int h);
 
-// Cohesive Horizon Interactive Controls
+// Cohesive Horizon x Lira Tactile Controls
+void dui_set_pointer_down(bool down);
 bool dui_button(int x, int y, int w, int h, const char* label, uint32_t accent, bool primary, int mx, int my, bool clicked);
+bool dui_button_tactile(int x, int y, int w, int h, const char* label, uint32_t accent, bool primary, int mx, int my, bool down, bool clicked);
 bool dui_icon_pill(int x, int y, int w, int h, const char* label, int sys_icon, bool active, int mx, int my, bool clicked);
+void dui_status_pill(int x, int y, int w, int h, const char* label, uint32_t dot_color, uint32_t bg, bool active);
+void dui_eq_bars(int x, int y, int w, int h, const int* bands, int count, uint32_t accent, bool active);
 void dui_toggle_switch(int x, int y, bool on, uint32_t accent);
 
 // Backward-compatible Cursor & Toast entry points (defined in blankUI.cpp)

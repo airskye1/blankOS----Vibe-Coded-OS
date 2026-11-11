@@ -149,7 +149,7 @@ BlankWindow* wm_open_app(AppId id) {
     w->on_close = spec->close_fn;
 
     push_top_z((int)id);
-    play_system_sound((char*)"click");
+    play_system_sound((char*)"open");
     return w;
 }
 
@@ -161,6 +161,7 @@ void wm_close_window(BlankWindow* win) {
     win->dragging = false;
     win->resizing = false;
     remove_from_z(win->id);
+    play_system_sound((char*)"close");
 }
 
 void wm_minimize_window(BlankWindow* win) {
@@ -168,6 +169,7 @@ void wm_minimize_window(BlankWindow* win) {
     win->minimized = true;
     win->dragging = false;
     win->resizing = false;
+    play_system_sound((char*)"minimize");
 }
 
 void wm_toggle_maximize(BlankWindow* win) {
@@ -231,10 +233,11 @@ void wm_tick_and_render(const BlankInputState* raw_in) {
     if (!raw_in) return;
 
     BlankInputState in = *raw_in;
+    dui_set_pointer_down(in.left_down);
     int sw = (int)screen_width;
     int sh = (int)screen_height;
-    int work_top = THEME_TOPBAR_H + 10;
-    int work_bot = sh - THEME_DOCK_H - 14;
+    int work_top = THEME_TOPBAR_H + 14;
+    int work_bot = sh - THEME_DOCK_H - 16;
 
     // 1. Determine which visible top-most window owns mouse click focus
     if (in.left_pressed) {
@@ -369,52 +372,57 @@ void wm_tick_and_render(const BlankInputState* raw_in) {
         BlankWindow* w = &g_windows[g_z_order[i]];
         if (!w->open || w->minimized) continue;
 
-        // Spring open animation (scale vertical reveal cleanly without flicker)
-        w->anim_open = horizon_spring_step(w->anim_open, 1.0f, 0.28f);
-        float ease = horizon_ease_out_cubic(w->anim_open);
+        // Damped Lira spring open animation (never from scale 0: 0.94..1.0)
+        w->anim_open = horizon_spring_step(w->anim_open, 1.0f, 0.34f);
+        float scale = horizon_enter_scale(w->anim_open);
+        int lift_y = horizon_enter_offset_y(w->anim_open, 12);
 
         bool is_focused = (w == active);
-        int draw_y = w->y + (int)((1.0f - ease) * 16.0f);
-        int draw_h = (int)(w->h * (0.94f + 0.06f * ease));
+        int draw_y = w->y + lift_y;
+        int draw_h = (int)((float)w->h * scale);
         if (draw_h < 60) draw_h = 60;
 
-        // Elevation shadow + spatial glass shell
-        dui_shadow(w->x, draw_y, w->w, draw_h, THEME_RADIUS_LG, is_focused ? 10 : 5);
-        dui_glass_card(w->x, draw_y, w->w, draw_h, THEME_RADIUS_LG, THEME_SURFACE_BASE, is_focused ? 236 : 214, is_focused);
+        // Elevation shadow + generous Lira squircle glass shell (20px radius, zero glow)
+        dui_shadow(w->x, draw_y, w->w, draw_h, THEME_RADIUS_XL, is_focused ? 10 : 5);
+        dui_glass_card(w->x, draw_y, w->w, draw_h, THEME_RADIUS_XL, THEME_SURFACE_BASE, is_focused ? 238 : 216, is_focused);
 
-        // Titlebar header band + accent hairline
-        dui_rect(w->x + 1, draw_y + THEME_TITLEBAR_H - 1, w->w - 2, 1, THEME_BORDER_SUBTLE, 200);
-        if (is_focused) {
-            dui_rect_rounded(w->x + 14, draw_y + 12, 4, 12, 2, w->accent_color ? w->accent_color : THEME_ACCENT_CYAN, 255);
-        } else {
-            dui_rect_rounded(w->x + 14, draw_y + 12, 4, 12, 2, THEME_TEXT_MUTED, 140);
-        }
+        // Clean titlebar divider hairline
+        dui_rect(w->x + 14, draw_y + THEME_TITLEBAR_H - 1, w->w - 28, 1, THEME_BORDER_SUBTLE, is_focused ? 190 : 120);
 
-        // Small squircle badge + window title
-        dui_draw_squircle_icon(w->x + 24, draw_y + 8, 20, (int)w->app_id, false);
-        dui_text_ellipsis(w->x + 52, draw_y + 11, w->w - 140, w->title,
+        // Crisp focus dot + squircle app badge + title
+        uint32_t dot_col = w->accent_color ? w->accent_color : THEME_ACCENT_CYAN;
+        dui_circle(w->x + 16, draw_y + THEME_TITLEBAR_H / 2, is_focused ? 4 : 3, is_focused ? dot_col : THEME_TEXT_MUTED, is_focused ? 245 : 140);
+        dui_draw_squircle_icon(w->x + 26, draw_y + 9, 20, (int)w->app_id, false);
+        dui_text_ellipsis(w->x + 54, draw_y + 12, w->w - 150, w->title,
                           is_focused ? THEME_TEXT_PRIMARY : THEME_TEXT_SECONDARY, 1);
 
-        // Minimalist Horizon right-aligned window controls: Minimize (-), Maximize ([]), Close (x)
+        // Lira Tactile Pill Window Controls: Minimize, Maximize, Close (with immediate press detent)
         int btn_y = draw_y + 8;
-        int min_x   = w->x + w->w - 76;
-        int max_x   = w->x + w->w - 52;
-        int close_x = w->x + w->w - 28;
+        int min_x   = w->x + w->w - 82;
+        int max_x   = w->x + w->w - 56;
+        int close_x = w->x + w->w - 30;
 
-        bool hov_min   = pt_in_rect(in.mx, in.my, min_x, btn_y, 20, 20);
-        bool hov_max   = w->resizable && pt_in_rect(in.mx, in.my, max_x, btn_y, 20, 20);
-        bool hov_close = pt_in_rect(in.mx, in.my, close_x, btn_y, 20, 20);
+        bool hov_min   = pt_in_rect(in.mx, in.my, min_x, btn_y, 22, 22);
+        bool hov_max   = w->resizable && pt_in_rect(in.mx, in.my, max_x, btn_y, 22, 22);
+        bool hov_close = pt_in_rect(in.mx, in.my, close_x, btn_y, 22, 22);
 
-        dui_rect_rounded(min_x, btn_y, 20, 20, 6, hov_min ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, 200);
-        dui_rect(min_x + 5, btn_y + 10, 10, 2, THEME_TEXT_SECONDARY, 255);
+        int dy_min   = (hov_min && in.left_down) ? 1 : 0;
+        int dy_max   = (hov_max && in.left_down) ? 1 : 0;
+        int dy_close = (hov_close && in.left_down) ? 1 : 0;
+
+        dui_rect_rounded(min_x, btn_y + dy_min, 22, 22, 11, hov_min ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, 220);
+        dui_rect_rounded_outline(min_x, btn_y + dy_min, 22, 22, 11, hov_min ? THEME_BORDER_SPECULAR : THEME_BORDER_SUBTLE, 180);
+        dui_rect(min_x + 6, btn_y + dy_min + 10, 10, 2, THEME_TEXT_SECONDARY, 255);
 
         if (w->resizable) {
-            dui_rect_rounded(max_x, btn_y, 20, 20, 6, hov_max ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, 200);
-            dui_rect_rounded_outline(max_x + 5, btn_y + 5, 10, 10, 2, THEME_TEXT_SECONDARY, 230);
+            dui_rect_rounded(max_x, btn_y + dy_max, 22, 22, 11, hov_max ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, 220);
+            dui_rect_rounded_outline(max_x, btn_y + dy_max, 22, 22, 11, hov_max ? THEME_BORDER_SPECULAR : THEME_BORDER_SUBTLE, 180);
+            dui_rect_rounded_outline(max_x + 6, btn_y + dy_max + 6, 10, 10, 2, THEME_TEXT_SECONDARY, 230);
         }
 
-        dui_rect_rounded(close_x, btn_y, 20, 20, 6, hov_close ? THEME_ACCENT_RED : THEME_SURFACE_CARD, hov_close ? 235 : 200);
-        dui_draw_sys_icon(close_x + 3, btn_y + 3, 14, 12, hov_close ? 0xFFFFFF : THEME_TEXT_SECONDARY);
+        dui_rect_rounded(close_x, btn_y + dy_close, 22, 22, 11, hov_close ? THEME_ACCENT_RED : THEME_SURFACE_CARD, hov_close ? 240 : 220);
+        dui_rect_rounded_outline(close_x, btn_y + dy_close, 22, 22, 11, hov_close ? THEME_ACCENT_ROSE : THEME_BORDER_SUBTLE, 190);
+        dui_draw_sys_icon(close_x + 4, btn_y + dy_close + 4, 14, 12, hov_close ? 0xFFFFFF : THEME_TEXT_SECONDARY);
 
         // Client area coordinates + scissor clip
         int cx = w->x + 1;

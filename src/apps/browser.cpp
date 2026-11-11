@@ -15,6 +15,7 @@
 #include "../kernel/input.h"
 #include "../kernel/net.h"
 #include "../kernel/audio.h"
+#include "../kernel/js_engine.h"
 
 extern "C" {
     extern EFI_SYSTEM_TABLE* gSystemTable;
@@ -70,6 +71,8 @@ extern "C" {
 #define SPAN_BULLET       0x20
 #define SPAN_QUOTE        0x40
 #define SPAN_IMG_CHIP     0x80
+#define SPAN_BTN          0x100
+#define SPAN_INPUT        0x200
 
 typedef enum {
     PAGE_START = 0,
@@ -84,8 +87,9 @@ typedef struct {
     int x, y, w, h;
     int text_off;
     int href_off;
+    int dom_id;
     uint8_t scale;
-    uint8_t flags;
+    uint16_t flags;
     uint32_t color;
 } HtmlSpan;
 
@@ -122,6 +126,11 @@ typedef struct {
     bool layout_dirty;
     bool layout_source_mode;
 
+    JsRuntime* js_rt;
+    bool js_scripts_ran;
+    int initial_dom_count;
+    int active_input_dom_id;
+
     int scroll_y;
     int content_height;
 } BrowserTab;
@@ -154,6 +163,13 @@ static bool g_sidebar_open = true;
 static bool g_dl_popover_open = false;
 static bool g_scrollbar_drag = false;
 static int g_scrollbar_grab_off = 0;
+
+static bool g_console_open = false;
+static char g_console_input[192] = {0};
+static int g_console_input_len = 0;
+static bool g_console_input_focused = false;
+static char g_js_alert_banner[192] = {0};
+static uint32_t g_js_alert_ticks = 0;
 
 static bool g_ctx_open = false;
 static int g_ctx_x = 0;
@@ -393,10 +409,15 @@ static void normalize_input_url(const char* raw, char* out, int max_len) {
         str_copy(out, "blank://downloads", max_len);
         return;
     }
+    if (str_ieq(trimmed, "js") || str_ieq(trimmed, "js-demo") || str_ieq(trimmed, "sandbox")) {
+        str_copy(out, "blank://js-demo", max_len);
+        return;
+    }
 
     if (str_istarts_with(trimmed, "http://") ||
         str_istarts_with(trimmed, "https://") ||
-        str_istarts_with(trimmed, "blank://")) {
+        str_istarts_with(trimmed, "blank://") ||
+        str_istarts_with(trimmed, "javascript:")) {
         str_copy(out, trimmed, max_len);
         return;
     }
@@ -448,7 +469,8 @@ static void resolve_url(const char* base_url, const char* rel, char* out, int ma
 
     if (str_istarts_with(rel, "http://") ||
         str_istarts_with(rel, "https://") ||
-        str_istarts_with(rel, "blank://")) {
+        str_istarts_with(rel, "blank://") ||
+        str_istarts_with(rel, "javascript:")) {
         str_copy(out, rel, max_len);
         return;
     }
@@ -603,6 +625,9 @@ static void free_tab_doc_buffers(BrowserTab* t) {
     if (t->spans) { kfree(t->spans); t->spans = NULL; }
     if (t->text_pool) { kfree(t->text_pool); t->text_pool = NULL; }
     if (t->href_pool) { kfree(t->href_pool); t->href_pool = NULL; }
+    if (t->js_rt) { js_runtime_destroy(t->js_rt); t->js_rt = NULL; }
+    t->js_scripts_ran = false;
+    t->active_input_dom_id = -1;
     t->raw_len = 0;
     t->span_count = 0;
     t->text_pool_used = 0;
@@ -658,12 +683,205 @@ static void cancel_tab_transfer(BrowserTab* t) {
     t->last_net_state = HTTP_IDLE;
 }
 
+static void js_handle_outputs(BrowserTab* t) {
+    if (!t || !t->js_rt) return;
+    char abuf[192];
+    if (js_take_alert(t->js_rt, abuf, sizeof(abuf))) {
+        str_copy(g_js_alert_banner, abuf, sizeof(g_js_alert_banner));
+        g_js_alert_ticks = 220;
+    }
+    char nurl[256];
+    if (js_take_navigate(t->js_rt, nurl, sizeof(nurl))) {
+        navigate_tab(g_active_tab, nurl, true);
+    }
+}
+
+static bool hydrate_is_tracked_tag(const char* tname) {
+    return str_eq(tname, "button") || str_eq(tname, "input") ||
+           str_eq(tname, "h1") || str_eq(tname, "h2") || str_eq(tname, "h3") || str_eq(tname, "h4") ||
+           str_eq(tname, "p") || str_eq(tname, "div") || str_eq(tname, "span") ||
+           str_eq(tname, "li") || str_eq(tname, "a") || str_eq(tname, "ul") || str_eq(tname, "ol");
+}
+
+static void hydrate_tab_dom_and_scripts(BrowserTab* t) {
+    if (!t || t->js_scripts_ran || !t->raw_body || t->raw_len <= 0) return;
+    t->js_scripts_ran = true;
+
+    if (!t->js_rt) t->js_rt = js_runtime_create();
+    if (!t->js_rt) return;
+    js_runtime_reset(t->js_rt, t->url, t->title);
+
+    int parent_stack[16];
+    int sp = 0;
+    parent_stack[sp++] = js_dom_get_body_id(t->js_rt);
+
+    char* script_buf = (char*)kmalloc(32768);
+    int script_len = 0;
+    bool in_script = false;
+
+    const char* html = t->raw_body;
+    int len = t->raw_len;
+    int i = 0;
+
+    while (i < len) {
+        if (html[i] == '<') {
+            if (i + 3 < len && html[i + 1] == '!' && html[i + 2] == '-' && html[i + 3] == '-') {
+                i += 4;
+                while (i + 2 < len && !(html[i] == '-' && html[i + 1] == '-' && html[i + 2] == '>')) i++;
+                i += 3;
+                continue;
+            }
+            int tag_start = i + 1;
+            int j = tag_start;
+            char q = 0;
+            while (j < len && (q || html[j] != '>')) {
+                if ((html[j] == '"' || html[j] == '\'') && !q) q = html[j];
+                else if (q && html[j] == q) q = 0;
+                j++;
+            }
+            if (j >= len) break;
+
+            int tag_len = j - tag_start;
+            char tag_buf[512];
+            int cp = (tag_len < 511) ? tag_len : 511;
+            for (int k = 0; k < cp; k++) tag_buf[k] = html[tag_start + k];
+            tag_buf[cp] = '\0';
+
+            int tp = 0;
+            while (tag_buf[tp] && is_space_ch(tag_buf[tp])) tp++;
+            bool is_close = false;
+            if (tag_buf[tp] == '/') { is_close = true; tp++; }
+            char tname[32]; int ni = 0;
+            while (tag_buf[tp] && !is_space_ch(tag_buf[tp]) && tag_buf[tp] != '/' && ni < 30) {
+                tname[ni++] = to_lower_ch(tag_buf[tp++]);
+            }
+            tname[ni] = '\0';
+
+            if (in_script) {
+                if (is_close && str_eq(tname, "script")) {
+                    in_script = false;
+                    if (script_buf && script_len > 0) {
+                        script_buf[script_len] = '\0';
+                        js_eval(t->js_rt, script_buf, NULL, 0);
+                        js_handle_outputs(t);
+                    }
+                    script_len = 0;
+                    i = j + 1;
+                    continue;
+                }
+                if (script_buf && script_len + (j - i + 1) < 32760) {
+                    for (int k = i; k <= j; k++) script_buf[script_len++] = html[k];
+                }
+                i = j + 1;
+                continue;
+            }
+
+            i = j + 1;
+            if (str_eq(tname, "script") && !is_close) {
+                in_script = true;
+                script_len = 0;
+                continue;
+            }
+            if (is_close) {
+                if (hydrate_is_tracked_tag(tname) && sp > 1) sp--;
+                continue;
+            }
+            if (hydrate_is_tracked_tag(tname)) {
+                char id_val[48] = {0}, cls_val[64] = {0}, onclk[256] = {0}, val_attr[256] = {0}, href_val[192] = {0};
+                extract_attr(tag_buf + tp, "id", id_val, sizeof(id_val));
+                extract_attr(tag_buf + tp, "class", cls_val, sizeof(cls_val));
+                extract_attr(tag_buf + tp, "onclick", onclk, sizeof(onclk));
+                extract_attr(tag_buf + tp, "value", val_attr, sizeof(val_attr));
+                extract_attr(tag_buf + tp, "href", href_val, sizeof(href_val));
+
+                if (id_val[0] || str_eq(tname, "button") || str_eq(tname, "input") || onclk[0] ||
+                    str_eq(tname, "ul") || str_eq(tname, "ol") || str_eq(tname, "li") || str_eq(tname, "p") ||
+                    str_eq(tname, "h1") || str_eq(tname, "h2") || str_eq(tname, "h3")) {
+                    int nid = js_dom_create_element(t->js_rt, tname, parent_stack[sp - 1]);
+                    if (nid >= 0) {
+                        JsDomNode* dn = js_dom_get_node(t->js_rt, nid);
+                        if (dn) {
+                            str_copy(dn->elem_id, id_val, sizeof(dn->elem_id));
+                            str_copy(dn->class_name, cls_val, sizeof(dn->class_name));
+                            str_copy(dn->onclick_src, onclk, sizeof(dn->onclick_src));
+                            str_copy(dn->href, href_val, sizeof(dn->href));
+                            if (val_attr[0]) str_copy(dn->text, val_attr, sizeof(dn->text));
+                        }
+                        if (!str_eq(tname, "input") && cp > 0 && tag_buf[cp - 1] != '/' && sp < 15) {
+                            parent_stack[sp++] = nid;
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        if (in_script) {
+            if (script_buf && script_len < 32766) script_buf[script_len++] = html[i];
+            i++;
+            continue;
+        }
+
+        // Capture plain text into innermost tracked element (collapsed whitespace)
+        if (sp > 1) {
+            JsDomNode* cur_el = js_dom_get_node(t->js_rt, parent_stack[sp - 1]);
+            if (cur_el) {
+                int cur_l = str_len(cur_el->text);
+                char ch = html[i];
+                if (is_space_ch(ch)) {
+                    if (cur_l > 0 && cur_el->text[cur_l - 1] != ' ' && cur_l < 508) {
+                        cur_el->text[cur_l++] = ' ';
+                        cur_el->text[cur_l] = '\0';
+                    }
+                } else if (ch >= 32 && ch <= 126 && cur_l < 508) {
+                    cur_el->text[cur_l++] = ch;
+                    cur_el->text[cur_l] = '\0';
+                }
+            }
+        }
+        i++;
+    }
+
+    if (script_buf) kfree(script_buf);
+
+    // Handle document.write(...) output appended directly into raw_body
+    char* wbuf = (char*)kmalloc(2048);
+    if (wbuf && js_take_doc_write(t->js_rt, wbuf, 2048)) {
+        str_append(t->raw_body, "<hr/><p>", RAW_BODY_MAX);
+        str_append(t->raw_body, wbuf, RAW_BODY_MAX);
+        str_append(t->raw_body, "</p>", RAW_BODY_MAX);
+        t->raw_len = str_len(t->raw_body);
+    }
+    if (wbuf) kfree(wbuf);
+
+    const char* js_t = js_dom_get_title(t->js_rt);
+    if (js_t && js_t[0]) str_copy(t->title, js_t, 64);
+
+    t->initial_dom_count = js_dom_get_node_count(t->js_rt);
+    js_dom_clear_dirty(t->js_rt);
+}
+
 static void navigate_tab(int idx, const char* raw_url, bool push_history) {
     if (idx < 0 || idx >= g_tab_count || !raw_url) return;
     BrowserTab* t = &g_tabs[idx];
 
     char url[512];
     normalize_input_url(raw_url, url, 512);
+
+    // Execute javascript:... URL directly against current tab DOM without wiping page
+    if (str_istarts_with(url, "javascript:")) {
+        if (!t->js_rt) t->js_rt = js_runtime_create();
+        if (t->js_rt) {
+            js_eval(t->js_rt, url + 11, NULL, 0);
+            js_handle_outputs(t);
+            if (js_dom_is_dirty(t->js_rt)) {
+                js_dom_clear_dirty(t->js_rt);
+                t->layout_dirty = true;
+            }
+        }
+        if (idx == g_active_tab) sync_omnibar_from_active_tab();
+        return;
+    }
 
     cancel_tab_transfer(t);
     str_copy(t->url, url, 512);
@@ -680,6 +898,9 @@ static void navigate_tab(int idx, const char* raw_url, bool push_history) {
     if (t->raw_body) t->raw_body[0] = '\0';
     t->span_count = 0;
     t->layout_dirty = true;
+    t->js_scripts_ran = false;
+    t->initial_dom_count = 0;
+    t->active_input_dom_id = -1;
 
     if (str_ieq(url, "blank://start") || str_ieq(url, "blank://home")) {
         str_copy(t->url, "blank://start", 512);
@@ -694,6 +915,39 @@ static void navigate_tab(int idx, const char* raw_url, bool push_history) {
         str_copy(t->title, "Downloads", 64);
         t->page_mode = PAGE_DOWNLOADS;
         g_disk_scan_needed = true;
+    } else if (str_ieq(url, "blank://js-demo")) {
+        static const char* js_demo_html =
+            "<!doctype html><html><head><title>BlankJS Live Sandbox</title></head><body>"
+            "<h1>BlankJS Interactive Sandbox</h1>"
+            "<p id=\"status\">Live ECMAScript + DOM engine running natively in BlankOS Horizon.</p>"
+            "<p id=\"counter\">Button clicks: 0</p>"
+            "<p id=\"live-clock\">Timer tick: waiting...</p>"
+            "<button id=\"btn-inc\" onclick=\"incCounter()\">+1 Click Counter</button>"
+            "<button id=\"btn-accent\" onclick=\"cycleAccent()\">Cycle Accent Color</button>"
+            "<button id=\"btn-add\" onclick=\"addLogItem()\">Append DOM Item</button>"
+            "<br/><input id=\"note-box\" value=\"Hello BlankJS!\" />"
+            "<button id=\"btn-say\" onclick=\"submitNote()\">Add Note to List</button>"
+            "<hr/><h3>Dynamic DOM List</h3>"
+            "<ul id=\"dyn-list\"><li>Initial static HTML node</li></ul>"
+            "<script>"
+            "let count = 0; let ticks = 0; let accentIdx = 0;"
+            "const palette = ['#38BDF8', '#2DD4BF', '#34D399', '#818CF8', '#FBBF24'];"
+            "console.log('BlankJS Sandbox booted! Open Console (JS) to inspect.');"
+            "function incCounter() { count++; document.getElementById('counter').textContent = `Button clicks: ${count} (doubled = ${count * 2})`; playSound('tool'); }"
+            "function cycleAccent() { accentIdx = (accentIdx + 1) % palette.length; const col = palette[accentIdx]; const st = document.getElementById('status'); st.style.color = col; st.textContent = `Live style.color updated to ${col}`; playSound('send'); }"
+            "function addLogItem() { const ul = document.getElementById('dyn-list'); const li = document.createElement('li'); li.textContent = `Dynamic DOM node #${count + 1} via createElement()`; ul.appendChild(li); playSound('reply'); }"
+            "function submitNote() { const inp = document.getElementById('note-box'); const ul = document.getElementById('dyn-list'); const li = document.createElement('li'); li.textContent = `Note: ${inp.value}`; ul.appendChild(li); console.log('Note added:', inp.value); playSound('success'); }"
+            "setInterval(() => { ticks++; const clk = document.getElementById('live-clock'); if (clk) clk.textContent = `Live setInterval tick #${ticks}`; }, 1000);"
+            "</script></body></html>";
+        str_copy(t->url, "blank://js-demo", 512);
+        str_copy(t->title, "BlankJS Sandbox", 64);
+        t->page_mode = PAGE_HTTP;
+        if (!t->raw_body) t->raw_body = (char*)kmalloc(RAW_BODY_MAX);
+        if (t->raw_body) {
+            str_copy(t->raw_body, js_demo_html, RAW_BODY_MAX);
+            t->raw_len = str_len(t->raw_body);
+            hydrate_tab_dom_and_scripts(t);
+        }
     } else if (str_istarts_with(url, "https://")) {
         str_copy(t->title, "TLS Not Loaded", 64);
         t->page_mode = PAGE_HTTPS_NOTICE;
@@ -1010,7 +1264,7 @@ static void layout_newline(LayoutCtx* ctx, int extra_gap) {
     ctx->cur_x = ctx->line_start_x;
 }
 
-static void layout_emit_span(LayoutCtx* ctx, const char* text, uint8_t scale, uint8_t flags, uint32_t color, int w_override) {
+static void layout_emit_span(LayoutCtx* ctx, const char* text, uint8_t scale, uint16_t flags, uint32_t color, int w_override) {
     BrowserTab* t = ctx->tab;
     if (t->span_count >= MAX_HTML_SPANS) return;
 
@@ -1041,6 +1295,7 @@ static void layout_emit_span(LayoutCtx* ctx, const char* text, uint8_t scale, ui
     sp->h = lh;
     sp->text_off = text_off;
     sp->href_off = href_off;
+    sp->dom_id = -1;
     sp->scale = scale;
     sp->flags = flags;
     sp->color = color;
@@ -1057,7 +1312,7 @@ static void layout_push_word(LayoutCtx* ctx, const char* word, bool leading_spac
     if (ctx->heading_level == 1) scale = 3;
     else if (ctx->heading_level == 2) scale = 2;
 
-    uint8_t flags = 0;
+    uint16_t flags = 0;
     uint32_t color = THEME_TEXT_PRIMARY;
     if (ctx->bold_depth > 0 || ctx->heading_level > 0) flags |= SPAN_BOLD;
     if (ctx->code_depth > 0) {
@@ -1139,6 +1394,121 @@ static bool content_looks_like_html(const BrowserTab* t) {
             str_icontains(t->raw_body, "<a "));
 }
 
+static int find_dom_node_for_layout(JsRuntime* rt, const char* id_attr, const char* tag, int* tag_nth, int max_initial) {
+    if (!rt) return -1;
+    int cnt = js_dom_get_node_count(rt);
+    if (max_initial <= 0 || max_initial > cnt) max_initial = cnt;
+    if (id_attr && id_attr[0]) {
+        for (int i = 0; i < cnt; i++) {
+            JsDomNode* n = js_dom_get_node(rt, i);
+            if (n && n->elem_id[0] && str_eq(n->elem_id, id_attr)) return i;
+        }
+    }
+    if (tag && tag[0] && tag_nth) {
+        int seen = 0;
+        int want = *tag_nth;
+        for (int i = 0; i < max_initial; i++) {
+            JsDomNode* n = js_dom_get_node(rt, i);
+            if (n && str_eq(n->tag, tag)) {
+                if (seen == want) {
+                    (*tag_nth)++;
+                    return i;
+                }
+                seen++;
+            }
+        }
+    }
+    return -1;
+}
+
+static void layout_emit_dynamic_node(LayoutCtx* ctx, JsRuntime* rt, int nid, bool* rendered_dyn) {
+    if (!ctx || !rt || nid < 0 || nid >= JS_MAX_DOM_NODES || rendered_dyn[nid]) return;
+    JsDomNode* dn = js_dom_get_node(rt, nid);
+    if (!dn || dn->hidden) return;
+    rendered_dyn[nid] = true;
+
+    if (str_eq(dn->tag, "li")) {
+        layout_newline(ctx, 2);
+        int save_x = ctx->cur_x;
+        ctx->cur_x = (ctx->line_start_x > ctx->pad_x + 14) ? (ctx->line_start_x - 14) : ctx->pad_x;
+        layout_emit_span(ctx, "*", 1, SPAN_BULLET, THEME_ACCENT_CYAN, 12);
+        ctx->cur_x = (save_x > ctx->line_start_x) ? save_x : ctx->line_start_x;
+        ctx->line_has_content = false;
+    } else if (str_eq(dn->tag, "button")) {
+        const char* lbl = dn->text[0] ? dn->text : "Button";
+        int bw = dui_text_width(lbl, 1) + 28;
+        if (bw < 64) bw = 64;
+        if (ctx->line_has_content && ctx->cur_x + bw + 8 > ctx->max_x) layout_newline(ctx, 4);
+        else if (ctx->line_has_content) ctx->cur_x += 8;
+        uint32_t col = dn->color ? dn->color : THEME_ACCENT_CYAN;
+        layout_emit_span(ctx, lbl, 1, SPAN_BTN, col, bw);
+        HtmlSpan* last = &ctx->tab->spans[ctx->tab->span_count - 1];
+        last->dom_id = dn->id;
+        last->h = 30;
+        if (30 > ctx->line_h) ctx->line_h = 30;
+        return;
+    } else if (str_eq(dn->tag, "input")) {
+        int iw = 220;
+        if (ctx->line_has_content && ctx->cur_x + iw + 8 > ctx->max_x) layout_newline(ctx, 4);
+        else if (ctx->line_has_content) ctx->cur_x += 8;
+        layout_emit_span(ctx, dn->text, 1, SPAN_INPUT, THEME_TEXT_PRIMARY, iw);
+        HtmlSpan* last = &ctx->tab->spans[ctx->tab->span_count - 1];
+        last->dom_id = dn->id;
+        last->h = 30;
+        if (30 > ctx->line_h) ctx->line_h = 30;
+        return;
+    } else {
+        layout_newline(ctx, 3);
+    }
+
+    if (dn->text[0]) {
+        uint8_t sc = 1;
+        if (str_eq(dn->tag, "h1")) sc = 3;
+        else if (str_eq(dn->tag, "h2")) sc = 2;
+        uint32_t col = dn->color ? dn->color : ((sc >= 2) ? THEME_ACCENT_CYAN : THEME_TEXT_PRIMARY);
+        ctx->line_h = scale_line_height(sc);
+        // Word-wrap dynamic node text
+        const char* p = dn->text;
+        char w[128];
+        int wi = 0;
+        bool lead = false;
+        while (*p && ctx->tab->span_count < MAX_HTML_SPANS - 4) {
+            if (*p == ' ' || *p == '\t' || *p == '\n') {
+                if (wi > 0) {
+                    w[wi] = '\0';
+                    int sw = (lead && ctx->line_has_content) ? dui_text_width(" ", sc) : 0;
+                    int ww = dui_text_width(w, sc);
+                    if (ctx->line_has_content && ctx->cur_x + sw + ww > ctx->max_x) { layout_newline(ctx, 0); sw = 0; }
+                    ctx->cur_x += sw;
+                    layout_emit_span(ctx, w, sc, (sc >= 2) ? SPAN_BOLD : 0, col, ww);
+                    wi = 0;
+                    lead = true;
+                } else if (ctx->line_has_content) lead = true;
+            } else if (wi < 124) {
+                w[wi++] = *p;
+            }
+            p++;
+        }
+        if (wi > 0) {
+            w[wi] = '\0';
+            int sw = (lead && ctx->line_has_content) ? dui_text_width(" ", sc) : 0;
+            int ww = dui_text_width(w, sc);
+            if (ctx->line_has_content && ctx->cur_x + sw + ww > ctx->max_x) { layout_newline(ctx, 0); sw = 0; }
+            ctx->cur_x += sw;
+            layout_emit_span(ctx, w, sc, (sc >= 2) ? SPAN_BOLD : 0, col, ww);
+        }
+    }
+
+    int child = dn->first_child;
+    int guard = 0;
+    while (child >= 0 && guard++ < JS_MAX_DOM_NODES) {
+        layout_emit_dynamic_node(ctx, rt, child, rendered_dyn);
+        JsDomNode* ch = js_dom_get_node(rt, child);
+        child = ch ? ch->next_sibling : -1;
+    }
+    if (!str_eq(dn->tag, "span")) layout_newline(ctx, 2);
+}
+
 static void layout_tab_document(BrowserTab* t, int view_w) {
     if (!t) return;
     t->layout_dirty = false;
@@ -1205,7 +1575,7 @@ static void layout_tab_document(BrowserTab* t, int view_w) {
         return;
     }
 
-    // HTML Streaming Tokenizer
+    // HTML Streaming Tokenizer + Live BlankJS DOM Synchronization
     bool in_head = false;
     bool in_script = false;
     bool in_style = false;
@@ -1214,13 +1584,24 @@ static void layout_tab_document(BrowserTab* t, int view_w) {
     bool in_svg = false;
     bool pending_space = false;
 
+    int btn_nth = 0;
+    int inp_nth = 0;
+    int dom_stack[16];
+    int dom_sp = 0;
+    int skip_text_depth = 0;
+    int hidden_depth = 0;
+    bool rendered_dyn[JS_MAX_DOM_NODES];
+    mem_zero(rendered_dyn, sizeof(rendered_dyn));
+
     char word[256];
     int wi = 0;
 
     auto flush_word = [&]() {
         if (wi > 0) {
             word[wi] = '\0';
-            layout_push_word(&ctx, word, pending_space);
+            if (skip_text_depth == 0 && hidden_depth == 0) {
+                layout_push_word(&ctx, word, pending_space);
+            }
             wi = 0;
             pending_space = false;
         }
@@ -1294,6 +1675,108 @@ static void layout_tab_document(BrowserTab* t, int view_w) {
             }
 
             if (in_script || in_style || in_noscript || in_svg || in_head || in_title) {
+                continue;
+            }
+
+            // On closing tracked containers, flush dynamically appended DOM children inside parent
+            if (is_close) {
+                if (skip_text_depth > 0 && (str_eq(tname, "button") || str_eq(tname, "p") || str_eq(tname, "h1") ||
+                    str_eq(tname, "h2") || str_eq(tname, "h3") || str_eq(tname, "h4") || str_eq(tname, "span") ||
+                    str_eq(tname, "li"))) {
+                    skip_text_depth--;
+                }
+                if (hidden_depth > 0) hidden_depth--;
+                if (dom_sp > 0 && (str_eq(tname, "ul") || str_eq(tname, "ol") || str_eq(tname, "div") ||
+                    str_eq(tname, "section") || str_eq(tname, "p") || str_eq(tname, "main"))) {
+                    int closing_id = dom_stack[--dom_sp];
+                    if (t->js_rt && closing_id >= 0) {
+                        JsDomNode* pnode = js_dom_get_node(t->js_rt, closing_id);
+                        if (pnode) {
+                            int ch = pnode->first_child;
+                            int g = 0;
+                            while (ch >= 0 && g++ < JS_MAX_DOM_NODES) {
+                                if (ch >= t->initial_dom_count && !rendered_dyn[ch]) {
+                                    layout_emit_dynamic_node(&ctx, t->js_rt, ch, rendered_dyn);
+                                }
+                                JsDomNode* cn = js_dom_get_node(t->js_rt, ch);
+                                ch = cn ? cn->next_sibling : -1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Match opening tags against hydrated BlankJS DOM nodes
+            JsDomNode* matched_dom = NULL;
+            if (!is_close && t->js_rt) {
+                char id_attr[48] = {0};
+                extract_attr(tag_buf + tp, "id", id_attr, sizeof(id_attr));
+                int found_id = -1;
+                if (str_eq(tname, "button")) {
+                    found_id = find_dom_node_for_layout(t->js_rt, id_attr, "button", &btn_nth, t->initial_dom_count);
+                } else if (str_eq(tname, "input")) {
+                    found_id = find_dom_node_for_layout(t->js_rt, id_attr, "input", &inp_nth, t->initial_dom_count);
+                } else if (id_attr[0]) {
+                    found_id = find_dom_node_for_layout(t->js_rt, id_attr, NULL, NULL, t->initial_dom_count);
+                }
+                if (found_id >= 0) matched_dom = js_dom_get_node(t->js_rt, found_id);
+
+                if (str_eq(tname, "ul") || str_eq(tname, "ol") || str_eq(tname, "div") ||
+                    str_eq(tname, "section") || str_eq(tname, "p") || str_eq(tname, "main")) {
+                    if (dom_sp < 15) dom_stack[dom_sp++] = found_id;
+                }
+                if (matched_dom && matched_dom->hidden) {
+                    hidden_depth++;
+                }
+            }
+
+            if (hidden_depth > 0 && !is_close) {
+                continue;
+            }
+
+            // Interactive HTML Form Controls (<button>, <input>) backed by BlankJS DOM
+            if (str_eq(tname, "button")) {
+                flush_word();
+                if (!is_close) {
+                    const char* lbl = (matched_dom && matched_dom->text[0]) ? matched_dom->text : "Button";
+                    int bw = dui_text_width(lbl, 1) + 28;
+                    if (bw < 68) bw = 68;
+                    if (ctx.line_has_content && ctx.cur_x + bw + 8 > ctx.max_x) {
+                        layout_newline(&ctx, 6);
+                    } else if (ctx.line_has_content) {
+                        ctx.cur_x += 8;
+                    }
+                    uint32_t col = (matched_dom && matched_dom->color) ? matched_dom->color : THEME_ACCENT_CYAN;
+                    layout_emit_span(&ctx, lbl, 1, SPAN_BTN, col, bw);
+                    if (t->span_count > 0) {
+                        HtmlSpan* bsp = &t->spans[t->span_count - 1];
+                        bsp->dom_id = matched_dom ? matched_dom->id : -1;
+                        bsp->h = 30;
+                    }
+                    if (30 > ctx.line_h) ctx.line_h = 30;
+                    skip_text_depth++;
+                }
+                pending_space = false;
+                continue;
+            } else if (str_eq(tname, "input")) {
+                flush_word();
+                if (!is_close) {
+                    const char* val = matched_dom ? matched_dom->text : "";
+                    int iw = 220;
+                    if (ctx.line_has_content && ctx.cur_x + iw + 8 > ctx.max_x) {
+                        layout_newline(&ctx, 6);
+                    } else if (ctx.line_has_content) {
+                        ctx.cur_x += 8;
+                    }
+                    layout_emit_span(&ctx, val, 1, SPAN_INPUT, THEME_TEXT_PRIMARY, iw);
+                    if (t->span_count > 0) {
+                        HtmlSpan* isp = &t->spans[t->span_count - 1];
+                        isp->dom_id = matched_dom ? matched_dom->id : -1;
+                        isp->h = 30;
+                    }
+                    if (30 > ctx.line_h) ctx.line_h = 30;
+                }
+                pending_space = false;
                 continue;
             }
 
@@ -1412,6 +1895,42 @@ static void layout_tab_document(BrowserTab* t, int view_w) {
                     pending_space = true;
                 }
             }
+
+            // If JS modified a leaf element with an id="..." (e.g. <p id="counter">), emit live text & custom color!
+            if (!is_close && matched_dom && matched_dom->elem_id[0] && matched_dom->first_child < 0 &&
+                (str_eq(tname, "p") || str_eq(tname, "h1") || str_eq(tname, "h2") || str_eq(tname, "h3") ||
+                 str_eq(tname, "h4") || str_eq(tname, "span") || str_eq(tname, "li"))) {
+                if (matched_dom->text[0]) {
+                    int prev_cnt = t->span_count;
+                    const char* p = matched_dom->text;
+                    char w[256];
+                    int k = 0;
+                    bool lead = false;
+                    while (*p && t->span_count < MAX_HTML_SPANS - 4) {
+                        if (*p == ' ' || *p == '\t' || *p == '\n') {
+                            if (k > 0) {
+                                w[k] = '\0';
+                                layout_push_word(&ctx, w, lead);
+                                k = 0;
+                                lead = true;
+                            } else if (ctx.line_has_content) lead = true;
+                        } else if (k < 250) {
+                            w[k++] = *p;
+                        }
+                        p++;
+                    }
+                    if (k > 0) {
+                        w[k] = '\0';
+                        layout_push_word(&ctx, w, lead);
+                    }
+                    if (matched_dom->color != 0) {
+                        for (int s = prev_cnt; s < t->span_count; s++) {
+                            t->spans[s].color = matched_dom->color;
+                        }
+                    }
+                    skip_text_depth++;
+                }
+            }
             continue;
         }
 
@@ -1440,7 +1959,9 @@ static void layout_tab_document(BrowserTab* t, int view_w) {
             }
             if (ch == '\t') {
                 flush_word();
-                layout_emit_span(&ctx, "    ", 1, SPAN_PRE, THEME_ACCENT_TEAL, -1);
+                if (skip_text_depth == 0 && hidden_depth == 0) {
+                    layout_emit_span(&ctx, "    ", 1, SPAN_PRE, THEME_ACCENT_TEAL, -1);
+                }
                 continue;
             }
             if (ch >= 32 && ch <= 126) {
@@ -1482,7 +2003,21 @@ static void layout_tab_document(BrowserTab* t, int view_w) {
     }
 
     flush_word();
-    t->content_height = ctx.cur_y + 44;
+
+    // Emit any remaining dynamically created DOM elements appended directly to document.body
+    if (t->js_rt) {
+        int tot_dom = js_dom_get_node_count(t->js_rt);
+        for (int nid = t->initial_dom_count; nid < tot_dom; nid++) {
+            if (!rendered_dyn[nid]) {
+                JsDomNode* dn = js_dom_get_node(t->js_rt, nid);
+                if (dn && dn->parent_id == js_dom_get_body_id(t->js_rt)) {
+                    layout_emit_dynamic_node(&ctx, t->js_rt, nid, rendered_dyn);
+                }
+            }
+        }
+    }
+
+    t->content_height = ctx.cur_y + 48;
 }
 
 // ============================================================================
@@ -1541,6 +2076,9 @@ static void poll_network_transfers(BlankWindow* win) {
                 str_copy(t->error_msg, "Server returned an empty HTTP error response.", 128);
             } else {
                 t->page_mode = PAGE_HTTP;
+                if (content_looks_like_html(t)) {
+                    hydrate_tab_dom_and_scripts(t);
+                }
                 t->layout_dirty = true;
             }
 
@@ -1607,28 +2145,47 @@ static void render_start_page(BrowserTab* t, int vx, int vy, int vw, int vh, con
     NetStatus ns;
     net_get_status(&ns);
 
-    // Hero Glass Header Card
-    int hero_h = 112;
-    dui_glass_card(x0, sy + 18, inner_w, hero_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 220, true);
-    dui_draw_sys_icon(x0 + 22, sy + 42, 32, 6, THEME_ACCENT_CYAN);
-    dui_text(x0 + 66, sy + 32, "BlankOS Horizon Web", THEME_TEXT_PRIMARY, 2);
-    dui_text(x0 + 66, sy + 64, "Non-blocking HTTP/1.1 browser powered by UEFI SNP, TCP/IP, DNS & FAT32", THEME_TEXT_SECONDARY, 1);
+    // Lira Asymmetric 2fr + 1fr Bento Hero Row (no neon halos, crisp dot lattice + catchlight)
+    int hero_h = 118;
+    int gap = 14;
+    int side_w = (inner_w >= 620) ? (inner_w - gap) / 3 : 0;
+    int hero_w = (side_w > 0) ? (inner_w - gap - side_w) : inner_w;
 
-    // Live Network Status Pill on Hero Card
+    dui_bento_card(x0, sy + 18, hero_w, hero_h, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 224, true, false);
+    dui_dot_grid_overlay(x0 + 6, sy + 24, hero_w - 12, hero_h - 12, 24, 0x94A3B8, 12);
+    dui_rect_rounded(x0 + 20, sy + 38, 42, 42, THEME_RADIUS_MD, THEME_ACCENT_CYAN, 36);
+    dui_rect_rounded_outline(x0 + 20, sy + 38, 42, 42, THEME_RADIUS_MD, THEME_ACCENT_CYAN, 110);
+    dui_draw_sys_icon(x0 + 29, sy + 47, 24, 6, THEME_ACCENT_CYAN);
+    dui_text(x0 + 76, sy + 36, "BlankOS Horizon Web", THEME_TEXT_PRIMARY, 2);
+    dui_text_ellipsis(x0 + 76, sy + 68, hero_w - 96, "Freestanding HTTP/1.1 + BlankJS DOM Engine on UEFI SNP", THEME_TEXT_SECONDARY, 1);
+
+    // Live Network Status Pill inside Hero Card
     uint32_t pill_col = ns.dhcp_bound ? THEME_ACCENT_GREEN : (ns.link_up ? THEME_ACCENT_AMBER : THEME_ACCENT_ROSE);
-    const char* net_lbl = ns.dhcp_bound ? ns.ip_str : (ns.link_up ? "Link Up (No DHCP)" : (ns.nic_present ? "Link Down" : "No NIC"));
-    int pw = dui_text_width(net_lbl, 1) + 34;
-    int px = x0 + inner_w - pw - 18;
-    if (px > x0 + 280) {
-        dui_rect_rounded(px, sy + 32, pw, 26, THEME_RADIUS_PILL, THEME_SURFACE_INPUT, 230);
-        dui_rect_rounded_outline(px, sy + 32, pw, 26, THEME_RADIUS_PILL, pill_col, 180);
-        dui_circle(px + 14, sy + 45, 4, pill_col, 255);
-        dui_text(px + 24, sy + 38, net_lbl, THEME_TEXT_PRIMARY, 1);
+    const char* net_lbl = ns.dhcp_bound ? ns.ip_str : (ns.link_up ? "Link Up" : (ns.nic_present ? "Link Down" : "Offline"));
+    int pw = dui_text_width(net_lbl, 1) + 28;
+    int px = x0 + hero_w - pw - 16;
+    if (px > x0 + 260) {
+        dui_status_pill(px, sy + 28, net_lbl, pill_col, true);
     }
 
-    // Speed Dial Grid (2x3)
-    int grid_y = sy + 150;
-    dui_text(x0, grid_y, "QUICK LAUNCH & VERIFIED HTTP DESTINATIONS", THEME_TEXT_MUTED, 1);
+    if (side_w > 0) {
+        int sx0 = x0 + hero_w + gap;
+        bool hov_js_hero = allow_click && pt_in(in->mx, in->my, sx0, sy + 18, side_w, hero_h) && pt_in(in->mx, in->my, vx, vy, vw, vh);
+        dui_bento_card(sx0, sy + 18, side_w, hero_h, THEME_RADIUS_CARD,
+                       hov_js_hero ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, 224, true, hov_js_hero);
+        dui_status_pill(sx0 + 16, sy + 30, "BlankJS Live", THEME_ACCENT_IRIS, true);
+        dui_text(sx0 + 16, sy + 62, "JS + DOM Sandbox", THEME_TEXT_PRIMARY, 1);
+        dui_text_ellipsis(sx0 + 16, sy + 84, side_w - 32, "Interactive timers & Console ->", THEME_ACCENT_CYAN, 1);
+        if (hov_js_hero && in->left_pressed) {
+            play_system_sound((char*)"open");
+            navigate_tab(g_active_tab, "blank://js-demo", true);
+            return;
+        }
+    }
+
+    // Speed Dial Bento Grid (2x3)
+    int grid_y = sy + 154;
+    dui_text(x0, grid_y, "QUICK LAUNCH & VERIFIED DESTINATIONS", THEME_TEXT_MUTED, 1);
 
     typedef struct {
         const char* title;
@@ -1639,16 +2196,15 @@ static void render_start_page(BrowserTab* t, int vx, int vy, int vw, int vh, con
     } SpeedTile;
 
     static const SpeedTile tiles[6] = {
-        { "Example Domain",  "http://example.com/",  "http://example.com/",  6,  THEME_ACCENT_CYAN },
-        { "CERN Info Web",   "http://info.cern.ch/", "http://info.cern.ch/", 6,  THEME_ACCENT_TEAL },
-        { "NeverSSL Portal", "http://neverssl.com/", "http://neverssl.com/", 18, THEME_ACCENT_IRIS },
-        { "HTTP Forever",    "http://httpforever.com/", "http://httpforever.com/", 6, THEME_ACCENT_GREEN },
-        { "Network Pulse",   "Live SNP, TCP & Ping", "blank://pulse",        1,  THEME_ACCENT_AMBER },
-        { "Downloads",       "FAT32 \\DOWNLOADS\\",  "blank://downloads",    8,  THEME_ACCENT_ROSE }
+        { "BlankJS Lab",     "Interactive DOM & REPL", "blank://js-demo",        14, THEME_ACCENT_IRIS },
+        { "Example Domain",  "http://example.com/",    "http://example.com/",     6, THEME_ACCENT_CYAN },
+        { "CERN Info Web",   "http://info.cern.ch/",   "http://info.cern.ch/",    6, THEME_ACCENT_TEAL },
+        { "NeverSSL Portal", "http://neverssl.com/",   "http://neverssl.com/",   18, THEME_ACCENT_GREEN },
+        { "Network Pulse",   "Live SNP, TCP & Ping",   "blank://pulse",           1, THEME_ACCENT_AMBER },
+        { "Downloads",       "FAT32 \\DOWNLOADS\\",    "blank://downloads",       8, THEME_ACCENT_ROSE }
     };
 
     int cols = (inner_w >= 540) ? 3 : 2;
-    int gap = 14;
     int card_w = (inner_w - gap * (cols - 1)) / cols;
     int card_h = 84;
 
@@ -1659,15 +2215,16 @@ static void render_start_page(BrowserTab* t, int vx, int vy, int vw, int vh, con
         int cy0 = grid_y + 26 + r * (card_h + gap);
         bool hov = allow_click && pt_in(in->mx, in->my, cx0, cy0, card_w, card_h) && pt_in(in->mx, in->my, vx, vy, vw, vh);
 
-        dui_glass_card(cx0, cy0, card_w, card_h, THEME_RADIUS_MD,
-                       hov ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, hov ? 235 : 205, hov);
-        dui_rect_rounded(cx0 + 12, cy0 + 16, 36, 36, 10, tiles[i].accent, 36);
-        dui_draw_sys_icon(cx0 + 20, cy0 + 24, 20, tiles[i].icon_id, tiles[i].accent);
-        dui_text_ellipsis(cx0 + 58, cy0 + 18, card_w - 70, tiles[i].title, THEME_TEXT_PRIMARY, 1);
-        dui_text_ellipsis(cx0 + 58, cy0 + 40, card_w - 70, tiles[i].sub, THEME_TEXT_SECONDARY, 1);
+        dui_bento_card(cx0, cy0, card_w, card_h, THEME_RADIUS_LG,
+                       hov ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD, hov ? 236 : 210, hov, hov);
+        dui_rect_rounded(cx0 + 14, cy0 + 22, 38, 38, THEME_RADIUS_MD, tiles[i].accent, 34);
+        dui_rect_rounded_outline(cx0 + 14, cy0 + 22, 38, 38, THEME_RADIUS_MD, tiles[i].accent, 95);
+        dui_draw_sys_icon(cx0 + 23, cy0 + 31, 20, tiles[i].icon_id, tiles[i].accent);
+        dui_text_ellipsis(cx0 + 62, cy0 + 20, card_w - 76, tiles[i].title, THEME_TEXT_PRIMARY, 1);
+        dui_text_ellipsis(cx0 + 62, cy0 + 44, card_w - 76, tiles[i].sub, THEME_TEXT_SECONDARY, 1);
 
         if (hov && in->left_pressed) {
-            play_system_sound((char*)"click");
+            play_system_sound((char*)"open");
             navigate_tab(g_active_tab, tiles[i].url, true);
             return;
         }
@@ -1678,11 +2235,11 @@ static void render_start_page(BrowserTab* t, int vx, int vy, int vw, int vh, con
 
     // Active / Recent Downloads Summary Strip
     int dl_cnt = net_download_count();
-    dui_glass_card(x0, foot_y, inner_w, 64, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 210, false);
+    dui_bento_card(x0, foot_y, inner_w, 64, THEME_RADIUS_LG, THEME_SURFACE_INPUT, 215, false, false);
     dui_draw_sys_icon(x0 + 18, foot_y + 22, 20, 8, THEME_ACCENT_CYAN);
     if (dl_cnt == 0) {
-        dui_text(x0 + 48, foot_y + 14, "Real FAT32 Download Engine Ready", THEME_TEXT_PRIMARY, 1);
-        dui_text(x0 + 48, foot_y + 34, "Click 'Save' in toolbar or right-click any link to stream to \\DOWNLOADS\\", THEME_TEXT_SECONDARY, 1);
+        dui_text(x0 + 48, foot_y + 14, "Real FAT32 Download Engine + BlankJS Runtime Ready", THEME_TEXT_PRIMARY, 1);
+        dui_text_ellipsis(x0 + 48, foot_y + 34, inner_w - 200, "Press Ctrl+J for BlankJS Console or click 'Save' to stream to \\DOWNLOADS\\", THEME_TEXT_SECONDARY, 1);
     } else {
         const DownloadEntry* last_dl = net_get_download(dl_cnt - 1);
         char msg[128];
@@ -1691,11 +2248,12 @@ static void render_start_page(BrowserTab* t, int vx, int vy, int vw, int vh, con
         str_append(msg, " (", 128);
         str_append(msg, last_dl ? last_dl->status_text : "", 128);
         str_append(msg, ")", 128);
-        dui_text_ellipsis(x0 + 48, foot_y + 14, inner_w - 190, msg, THEME_TEXT_PRIMARY, 1);
-        dui_text(x0 + 48, foot_y + 34, "Click 'Open Downloads' to inspect or launch saved files", THEME_TEXT_SECONDARY, 1);
+        dui_text_ellipsis(x0 + 48, foot_y + 14, inner_w - 200, msg, THEME_TEXT_PRIMARY, 1);
+        dui_text(x0 + 48, foot_y + 34, "Click 'Downloads' to inspect or launch saved files", THEME_TEXT_SECONDARY, 1);
     }
-    if (dui_button(x0 + inner_w - 134, foot_y + 17, 118, 30, "Downloads", THEME_ACCENT_CYAN, false,
-                   in->mx, in->my, allow_click && in->left_pressed && pt_in(in->mx, in->my, vx, vy, vw, vh))) {
+    if (dui_button_tactile(x0 + inner_w - 134, foot_y + 16, 118, 32, "Downloads", THEME_ACCENT_CYAN, false,
+                           in->mx, in->my, allow_click && in->left_pressed && pt_in(in->mx, in->my, vx, vy, vw, vh))) {
+        play_system_sound((char*)"open");
         navigate_tab(g_active_tab, "blank://downloads", true);
         return;
     }
@@ -2007,7 +2565,7 @@ static void render_https_notice_page(BrowserTab* t, int vx, int vy, int vw, int 
     int card_h = 240;
     bool in_vp = allow_click && pt_in(in->mx, in->my, vx, vy, vw, vh);
 
-    dui_glass_card(card_x, card_y, card_w, card_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 230, true);
+    dui_bento_card(card_x, card_y, card_w, card_h, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 230, true, false);
     dui_rect_rounded(card_x + 24, card_y + 24, 44, 44, 12, THEME_ACCENT_AMBER, 38);
     dui_draw_sys_icon(card_x + 34, card_y + 34, 24, 19, THEME_ACCENT_AMBER);
 
@@ -2027,15 +2585,17 @@ static void render_https_notice_page(BrowserTab* t, int vx, int vy, int vw, int 
         str_copy(http_url, t->url, 512);
     }
 
-    if (dui_button(card_x + 24, card_y + 180, 176, 34, "Try HTTP Instead", THEME_ACCENT_CYAN, true,
-                   in->mx, in->my, in_vp && in->left_pressed)) {
+    if (dui_button_tactile(card_x + 24, card_y + 180, 176, 34, "Try HTTP Instead", THEME_ACCENT_CYAN, true,
+                           in->mx, in->my, in_vp && in->left_pressed)) {
+        play_system_sound((char*)"open");
         navigate_tab(g_active_tab, http_url, true);
         return;
     }
 
     if (t->hist_pos > 0) {
-        if (dui_button(card_x + 212, card_y + 180, 110, 34, "Go Back", THEME_SURFACE_ELEVATED, false,
-                       in->mx, in->my, in_vp && in->left_pressed)) {
+        if (dui_button_tactile(card_x + 212, card_y + 180, 110, 34, "Go Back", THEME_SURFACE_ELEVATED, false,
+                               in->mx, in->my, in_vp && in->left_pressed)) {
+            play_system_sound((char*)"tab");
             t->hist_pos--;
             navigate_tab(g_active_tab, t->history[t->hist_pos], false);
             return;
@@ -2054,7 +2614,7 @@ static void render_error_page(BrowserTab* t, int vx, int vy, int vw, int vh, con
     int card_h = 224;
     bool in_vp = allow_click && pt_in(in->mx, in->my, vx, vy, vw, vh);
 
-    dui_glass_card(card_x, card_y, card_w, card_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 230, true);
+    dui_bento_card(card_x, card_y, card_w, card_h, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 230, true, false);
     dui_rect_rounded(card_x + 24, card_y + 24, 44, 44, 12, THEME_ACCENT_ROSE, 38);
     dui_draw_sys_icon(card_x + 34, card_y + 34, 24, 12, THEME_ACCENT_ROSE);
 
@@ -2065,13 +2625,15 @@ static void render_error_page(BrowserTab* t, int vx, int vy, int vw, int vh, con
     dui_text_ellipsis(card_x + 38, card_y + 108, card_w - 76,
                       t->error_msg[0] ? t->error_msg : "Network connection or HTTP response error.", THEME_ACCENT_ROSE, 1);
 
-    if (dui_button(card_x + 24, card_y + 168, 120, 34, "Retry", THEME_ACCENT_CYAN, true,
-                   in->mx, in->my, in_vp && in->left_pressed)) {
+    if (dui_button_tactile(card_x + 24, card_y + 168, 120, 34, "Retry", THEME_ACCENT_CYAN, true,
+                           in->mx, in->my, in_vp && in->left_pressed)) {
+        play_system_sound((char*)"tool");
         navigate_tab(g_active_tab, t->url, false);
         return;
     }
-    if (dui_button(card_x + 156, card_y + 168, 150, 34, "Network Pulse", THEME_SURFACE_ELEVATED, false,
-                   in->mx, in->my, in_vp && in->left_pressed)) {
+    if (dui_button_tactile(card_x + 156, card_y + 168, 150, 34, "Network Pulse", THEME_SURFACE_ELEVATED, false,
+                           in->mx, in->my, in_vp && in->left_pressed)) {
+        play_system_sound((char*)"open");
         navigate_tab(g_active_tab, "blank://pulse", true);
         return;
     }
@@ -2085,7 +2647,7 @@ static void render_http_document(BrowserTab* t, int vx, int vy, int vw, int vh, 
         int card_w = (vw > 460) ? 420 : (vw - 40);
         int card_x = vx + (vw - card_w) / 2;
         int card_y = vy + 56;
-        dui_glass_card(card_x, card_y, card_w, 156, THEME_RADIUS_LG, THEME_SURFACE_CARD, 225, true);
+        dui_bento_card(card_x, card_y, card_w, 156, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 225, true, false);
 
         const char* stage = "Preparing Request...";
         float prog = 0.15f;
@@ -2159,6 +2721,54 @@ static void render_http_document(BrowserTab* t, int vx, int vy, int vw, int vh, 
         const char* txt = t->text_pool + sp->text_off;
         const char* href = (sp->href_off >= 0) ? (t->href_pool + sp->href_off) : NULL;
 
+        if (sp->flags & SPAN_BTN) {
+            bool press_ok = allow_click && in_vp && in->left_pressed;
+            if (dui_button_tactile(sx, sy, sp->w, 28, txt, sp->color ? sp->color : THEME_ACCENT_CYAN, true,
+                                   in->mx, in->my, press_ok)) {
+                play_system_sound((char*)"tool");
+                if (t->js_rt && sp->dom_id >= 0) {
+                    js_dispatch_click(t->js_rt, sp->dom_id);
+                    js_handle_outputs(t);
+                    if (js_dom_is_dirty(t->js_rt)) {
+                        js_dom_clear_dirty(t->js_rt);
+                        t->layout_dirty = true;
+                    }
+                }
+                return;
+            }
+            continue;
+        }
+
+        if (sp->flags & SPAN_INPUT) {
+            bool foc = (sp->dom_id >= 0 && t->active_input_dom_id == sp->dom_id);
+            bool hov = allow_click && in_vp && pt_in(in->mx, in->my, sx, sy, sp->w, 28);
+            dui_rect_rounded(sx, sy, sp->w, 28, THEME_RADIUS_SM, THEME_SURFACE_INPUT, 240);
+            dui_rect_rounded_outline(sx, sy, sp->w, 28, THEME_RADIUS_SM,
+                                     foc ? THEME_BORDER_FOCUS : (hov ? THEME_BORDER_SPECULAR : THEME_BORDER_SUBTLE),
+                                     foc ? 245 : 190);
+            const char* show_txt = txt;
+            if (t->js_rt && sp->dom_id >= 0) {
+                JsDomNode* idn = js_dom_get_node(t->js_rt, sp->dom_id);
+                if (idn) show_txt = idn->text;
+            }
+            dui_push_clip(sx + 6, sy + 2, sp->w - 12, 24);
+            dui_text(sx + 8, sy + 6, show_txt[0] ? show_txt : "Type here...",
+                     show_txt[0] ? THEME_TEXT_PRIMARY : THEME_TEXT_MUTED, 1);
+            if (foc && ((in->frame_ms / 450) % 2 == 0)) {
+                int cw_t = dui_text_width(show_txt, 1);
+                if (cw_t > sp->w - 18) cw_t = sp->w - 18;
+                dui_rect(sx + 9 + cw_t, sy + 6, 2, 16, THEME_ACCENT_CYAN, 255);
+            }
+            dui_pop_clip();
+            if (hov && in->left_pressed) {
+                t->active_input_dom_id = sp->dom_id;
+                g_omni_focused = false;
+                g_console_input_focused = false;
+                play_system_sound((char*)"tab");
+            }
+            continue;
+        }
+
         bool link_hov = false;
         if ((sp->flags & SPAN_LINK) && href && allow_click && in_vp) {
             if (pt_in(in->mx, in->my, sx - 2, sy, sp->w + 4, sp->h)) {
@@ -2186,7 +2796,7 @@ static void render_http_document(BrowserTab* t, int vx, int vy, int vw, int vh, 
                     if (in->ctrl_held) {
                         start_file_download(href, NULL);
                     } else {
-                        play_system_sound((char*)"click");
+                        play_system_sound((char*)"open");
                         navigate_tab(g_active_tab, href, true);
                     }
                     return;
@@ -2221,6 +2831,9 @@ static void browser_close(BlankWindow* win) {
     g_tab_count = 0;
     g_active_tab = 0;
     g_omni_focused = false;
+    g_console_open = false;
+    g_console_input_focused = false;
+    g_js_alert_ticks = 0;
     g_dl_popover_open = false;
     g_ctx_open = false;
     g_scrollbar_drag = false;
@@ -2235,8 +2848,9 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
         navigate_tab(g_active_tab, pending_url, true);
     }
 
-    // 2. Non-blocking HTTP & download polling
+    // 2. Non-blocking HTTP & download polling + BlankJS timers
     poll_network_transfers(win);
+    if (g_js_alert_ticks > 0) g_js_alert_ticks--;
 
     BlankInputState local_in = *raw_in;
     BlankInputState* in = &local_in;
@@ -2244,6 +2858,7 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
     // Auto-collapse sidebar on very narrow windows
     bool show_sidebar = g_sidebar_open && (cw >= 640);
     int sb_w = show_sidebar ? SIDEBAR_W : 0;
+    int console_h = g_console_open ? 156 : 0;
 
     int tab_y = cy;
     int tool_y = cy + TAB_BAR_H;
@@ -2251,11 +2866,22 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
     int vx = cx + sb_w;
     int vy = bmk_y + BOOKMARKS_H;
     int vw = cw - sb_w;
-    int vh = ch - (TAB_BAR_H + TOOLBAR_H + BOOKMARKS_H);
+    int vh = ch - (TAB_BAR_H + TOOLBAR_H + BOOKMARKS_H) - console_h;
     if (vw < 120) vw = 120;
     if (vh < 80) vh = 80;
 
     BrowserTab* active = &g_tabs[g_active_tab];
+
+    if (active->js_rt && active->page_mode == PAGE_HTTP) {
+        if (js_tick_timers(active->js_rt, in->frame_ms)) {
+            active->layout_dirty = true;
+        }
+        js_handle_outputs(active);
+        if (js_dom_is_dirty(active->js_rt)) {
+            js_dom_clear_dirty(active->js_rt);
+            active->layout_dirty = true;
+        }
+    }
 
     // Update window title to match active tab cleanly
     if (win) {
@@ -2290,6 +2916,12 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
         } else if (g_dl_popover_open) {
             g_dl_popover_open = false;
             in->has_key = false;
+        } else if (g_console_input_focused) {
+            g_console_input_focused = false;
+            in->has_key = false;
+        } else if (active->active_input_dom_id >= 0) {
+            active->active_input_dom_id = -1;
+            in->has_key = false;
         } else if (g_omni_focused) {
             g_omni_focused = false;
             g_omni_sel_all = false;
@@ -2299,35 +2931,82 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
     }
 
     // ========================================================================
-    // Keyboard Input Handling (Omnibar, Shortcuts, Viewport Scrolling)
+    // Keyboard Input Handling (Omnibar, Console REPL, <input> DOM, Scrolling)
     // ========================================================================
     if (in->has_key) {
         if (in->ctrl_held) {
             if (in->key_char == 'l') {
                 g_omni_focused = true;
                 g_omni_sel_all = true;
+                g_console_input_focused = false;
+                active->active_input_dom_id = -1;
+                in->has_key = false;
+            } else if (in->key_char == 'j') {
+                g_console_open = !g_console_open;
+                g_console_input_focused = g_console_open;
+                if (g_console_open) g_omni_focused = false;
+                play_system_sound((char*)"tab");
                 in->has_key = false;
             } else if (in->key_char == 't') {
                 create_new_tab("blank://start", true);
-                play_system_sound((char*)"click");
+                play_system_sound((char*)"open");
                 in->has_key = false;
             } else if (in->key_char == 'w') {
                 close_tab_at(g_active_tab);
-                play_system_sound((char*)"click");
+                play_system_sound((char*)"close");
                 in->has_key = false;
             } else if (in->key_char == 'r') {
                 navigate_tab(g_active_tab, active->url, false);
-                play_system_sound((char*)"click");
+                play_system_sound((char*)"tool");
                 in->has_key = false;
             } else if (in->key_char == 'a' && g_omni_focused) {
                 g_omni_sel_all = true;
                 in->has_key = false;
             }
+        } else if (g_console_open && g_console_input_focused) {
+            if (in->key_char == '\n') {
+                g_console_input[g_console_input_len] = '\0';
+                if (g_console_input_len > 0) {
+                    if (!active->js_rt) active->js_rt = js_runtime_create();
+                    if (active->js_rt) {
+                        js_eval(active->js_rt, g_console_input, NULL, 0);
+                        js_handle_outputs(active);
+                        if (js_dom_is_dirty(active->js_rt)) {
+                            js_dom_clear_dirty(active->js_rt);
+                            active->layout_dirty = true;
+                        }
+                    }
+                    g_console_input_len = 0;
+                    g_console_input[0] = '\0';
+                    play_system_sound((char*)"tool");
+                }
+            } else if (in->key_char == '\b' || in->scan_code == BLANK_SCAN_DELETE) {
+                if (g_console_input_len > 0) g_console_input[--g_console_input_len] = '\0';
+            } else if (in->key_char >= 32 && in->key_char < 127) {
+                if (g_console_input_len < 252) {
+                    g_console_input[g_console_input_len++] = in->key_char;
+                    g_console_input[g_console_input_len] = '\0';
+                }
+            }
+            in->has_key = false;
+        } else if (active->active_input_dom_id >= 0 && active->js_rt && !g_omni_focused) {
+            JsDomNode* idn = js_dom_get_node(active->js_rt, active->active_input_dom_id);
+            if (idn) {
+                int il = str_len(idn->text);
+                if (in->key_char == '\b' || in->scan_code == BLANK_SCAN_DELETE) {
+                    if (il > 0) { idn->text[--il] = '\0'; active->layout_dirty = true; }
+                } else if (in->key_char >= 32 && in->key_char < 127 && il < 500) {
+                    idn->text[il++] = in->key_char;
+                    idn->text[il] = '\0';
+                    active->layout_dirty = true;
+                }
+            }
+            in->has_key = false;
         } else if (g_omni_focused) {
             if (in->key_char == '\n') {
                 g_omni_buf[g_omni_len] = '\0';
                 navigate_tab(g_active_tab, g_omni_buf, true);
-                play_system_sound((char*)"click");
+                play_system_sound((char*)"open");
             } else if (in->key_char == '\b' || in->scan_code == BLANK_SCAN_DELETE) {
                 if (g_omni_sel_all) {
                     g_omni_len = 0;
@@ -2390,7 +3069,7 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
     dui_rect_rounded_outline(sb_btn_x + 5, sb_btn_y + 5, 16, 14, 2, THEME_TEXT_SECONDARY, 200);
     if (hov_sb && in->left_pressed) {
         g_sidebar_open = !g_sidebar_open;
-        play_system_sound((char*)"click");
+        play_system_sound((char*)"tab");
     }
 
     // Tab Pills
@@ -2436,14 +3115,14 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
         if (!overlay_blocks_bg && in->left_pressed) {
             if (hov_x) {
                 close_tab_at(i);
-                play_system_sound((char*)"click");
+                play_system_sound((char*)"close");
                 break;
             } else if (hov_tab) {
                 g_active_tab = i;
                 sync_omnibar_from_active_tab();
                 g_omni_focused = false;
                 g_omni_sel_all = false;
-                play_system_sound((char*)"click");
+                play_system_sound((char*)"tab");
             }
         }
     }
@@ -2457,7 +3136,7 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
         dui_draw_sys_icon(nx + 5, ny + 5, 14, 13, hov_new ? THEME_ACCENT_CYAN : THEME_TEXT_SECONDARY);
         if (hov_new && in->left_pressed) {
             create_new_tab("blank://start", true);
-            play_system_sound((char*)"click");
+            play_system_sound((char*)"open");
         }
     }
 
@@ -2483,7 +3162,7 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
     if (hov_back && in->left_pressed) {
         active->hist_pos--;
         navigate_tab(g_active_tab, active->history[active->hist_pos], false);
-        play_system_sound((char*)"click");
+        play_system_sound((char*)"tab");
     }
 
     // Forward >
@@ -2494,7 +3173,7 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
     if (hov_fwd && in->left_pressed) {
         active->hist_pos++;
         navigate_tab(g_active_tab, active->history[active->hist_pos], false);
-        play_system_sound((char*)"click");
+        play_system_sound((char*)"tab");
     }
 
     // Reload / Stop
@@ -2509,7 +3188,7 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
         } else {
             navigate_tab(g_active_tab, active->url, false);
         }
-        play_system_sound((char*)"click");
+        play_system_sound((char*)"tool");
     }
 
     // Right-side Toolbar Action Pills (Save, Src, DL)
@@ -2539,8 +3218,27 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
         in->left_pressed = false;
     }
 
-    // View Source Toggle Pill (for HTTP pages)
+    // BlankJS Console Toggle Pill (Ctrl+J)
     int cur_rx = dl_btn_x - 6;
+    {
+        int js_w = 38;
+        int js_x = cur_rx - js_w;
+        bool hov_js = !overlay_blocks_bg && pt_in(in->mx, in->my, js_x, by, js_w, 28);
+        dui_rect_rounded(js_x, by, js_w, 28, 8,
+                         g_console_open ? THEME_ACCENT_IRIS : (hov_js ? THEME_SURFACE_HOVER : THEME_SURFACE_CARD),
+                         g_console_open ? 78 : 210);
+        if (g_console_open) dui_rect_rounded_outline(js_x, by, js_w, 28, 8, THEME_ACCENT_IRIS, 210);
+        dui_text(js_x + 11, by + 7, "JS", g_console_open ? THEME_ACCENT_IRIS : THEME_TEXT_CYAN_LIGHT, 1);
+        if (hov_js && in->left_pressed) {
+            g_console_open = !g_console_open;
+            g_console_input_focused = g_console_open;
+            if (g_console_open) g_omni_focused = false;
+            play_system_sound((char*)"tab");
+        }
+        cur_rx = js_x - 6;
+    }
+
+    // View Source Toggle Pill (for HTTP pages)
     if (active->page_mode == PAGE_HTTP && active->raw_len > 0) {
         int src_w = 42;
         int src_x = cur_rx - src_w;
@@ -2554,7 +3252,7 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
             active->view_source = !active->view_source;
             active->layout_dirty = true;
             active->scroll_y = 0;
-            play_system_sound((char*)"click");
+            play_system_sound((char*)"tab");
         }
         cur_rx = src_x - 6;
     }
@@ -2588,6 +3286,9 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
     if (is_loading) {
         badge_lbl = "NET";
         badge_col = THEME_ACCENT_AMBER;
+    } else if (str_ieq(active->url, "blank://js-demo") || str_istarts_with(g_omni_buf, "javascript:")) {
+        badge_lbl = "JS";
+        badge_col = THEME_ACCENT_IRIS;
     } else if (str_istarts_with(g_omni_buf, "https://")) {
         badge_lbl = "TLS!";
         badge_col = THEME_ACCENT_ROSE;
@@ -2617,7 +3318,7 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
             dui_rect(draw_tx + full_w + 1, by + 6, 2, 16, THEME_ACCENT_CYAN, 255);
         }
     } else {
-        dui_text(txt_x, by + 7, "Enter http:// URL or blank://start ...", THEME_TEXT_MUTED, 1);
+        dui_text(txt_x, by + 7, "Enter http:// URL or blank://js-demo ...", THEME_TEXT_MUTED, 1);
         if (g_omni_focused && ((in->frame_ms / 450) % 2 == 0)) {
             dui_rect(txt_x + 1, by + 6, 2, 16, THEME_ACCENT_CYAN, 255);
         }
@@ -2626,6 +3327,8 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
 
     if (!overlay_blocks_bg && in->left_pressed) {
         if (hov_omni) {
+            g_console_input_focused = false;
+            active->active_input_dom_id = -1;
             if (!g_omni_focused) {
                 g_omni_focused = true;
                 g_omni_sel_all = true;
@@ -2645,8 +3348,9 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
     dui_line(cx, bmk_y + BOOKMARKS_H - 1, cx + cw, bmk_y + BOOKMARKS_H - 1, THEME_BORDER_SUBTLE, 180);
 
     typedef struct { const char* label; const char* url; } Bookmark;
-    static const Bookmark bmks[6] = {
+    static const Bookmark bmks[7] = {
         { "Start",       "blank://start" },
+        { "JS Lab",      "blank://js-demo" },
         { "Net Pulse",   "blank://pulse" },
         { "Downloads",   "blank://downloads" },
         { "Example.com", "http://example.com/" },
@@ -2655,7 +3359,7 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
     };
 
     int bkx = cx + 10;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 7; i++) {
         int bw = dui_text_width(bmks[i].label, 1) + 18;
         if (bkx + bw > cx + cw - 10) break;
         bool act_b = str_ieq(active->url, bmks[i].url);
@@ -2667,7 +3371,7 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
         dui_text(bkx + 9, bmk_y + 6, bmks[i].label, act_b ? THEME_ACCENT_CYAN : THEME_TEXT_SECONDARY, 1);
         if (hov_b && in->left_pressed) {
             navigate_tab(g_active_tab, bmks[i].url, true);
-            play_system_sound((char*)"click");
+            play_system_sound((char*)"open");
         }
         bkx += bw + 6;
     }
@@ -2689,23 +3393,23 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
     // 4. Collapsible Glass Sidebar
     // ========================================================================
     if (show_sidebar) {
-        dui_rect(cx, vy, sb_w, vh, THEME_BG_DEEP, 215);
-        dui_line(cx + sb_w - 1, vy, cx + sb_w - 1, vy + vh, THEME_BORDER_SUBTLE, 200);
+        dui_rect(cx, vy, sb_w, vh + console_h, THEME_BG_DEEP, 215);
+        dui_line(cx + sb_w - 1, vy, cx + sb_w - 1, vy + vh + console_h, THEME_BORDER_SUBTLE, 200);
 
-        dui_push_clip(cx, vy, sb_w, vh);
+        dui_push_clip(cx, vy, sb_w, vh + console_h);
         int sy0 = vy + 12;
 
         dui_text(cx + 14, sy0, "SPACES", THEME_TEXT_MUTED, 1);
         sy0 += 20;
-        const char* sp_lbls[3] = { "Start Page", "Network Pulse", "Downloads" };
-        const char* sp_urls[3] = { "blank://start", "blank://pulse", "blank://downloads" };
-        const int sp_icons[3]  = { 6, 1, 8 };
-        for (int i = 0; i < 3; i++) {
+        const char* sp_lbls[4] = { "Start Page", "JS Sandbox", "Network Pulse", "Downloads" };
+        const char* sp_urls[4] = { "blank://start", "blank://js-demo", "blank://pulse", "blank://downloads" };
+        const int sp_icons[4]  = { 6, 14, 1, 8 };
+        for (int i = 0; i < 4; i++) {
             bool act = str_ieq(active->url, sp_urls[i]);
             if (dui_icon_pill(cx + 10, sy0, sb_w - 20, 28, sp_lbls[i], sp_icons[i], act,
                               in->mx, in->my, !overlay_blocks_bg && in->left_pressed)) {
                 navigate_tab(g_active_tab, sp_urls[i], true);
-                play_system_sound((char*)"click");
+                play_system_sound((char*)"open");
             }
             sy0 += 32;
         }
@@ -2726,11 +3430,11 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
         }
 
         // Bottom Network Mini-Card inside Sidebar
-        if (vh >= 340) {
+        if (vh + console_h >= 340) {
             NetStatus ns;
             net_get_status(&ns);
-            int card_y = vy + vh - 66;
-            dui_rect_rounded(cx + 10, card_y, sb_w - 20, 56, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 220);
+            int card_y = vy + vh + console_h - 66;
+            dui_bento_card(cx + 10, card_y, sb_w - 20, 56, THEME_RADIUS_MD, THEME_SURFACE_INPUT, 224, false, false);
             dui_circle(cx + 22, card_y + 18, 4, ns.dhcp_bound ? THEME_ACCENT_GREEN : (ns.link_up ? THEME_ACCENT_AMBER : THEME_ACCENT_ROSE), 255);
             dui_text(cx + 32, card_y + 11, ns.dhcp_bound ? "SNP Online" : (ns.link_up ? "Link Up" : "Offline"), THEME_TEXT_PRIMARY, 1);
             dui_text_ellipsis(cx + 20, card_y + 32, sb_w - 40, ns.dhcp_bound ? ns.ip_str : "No DHCP IP", THEME_TEXT_SECONDARY, 1);
@@ -2814,14 +3518,129 @@ static void browser_render(BlankWindow* win, int cx, int cy, int cw, int ch, con
         dui_text_ellipsis(lx + 10, ly + 4, lw - 20, hovered_href, THEME_ACCENT_CYAN, 1);
     }
 
+    // Floating Alert Banner from window.alert()
+    if (g_js_alert_ticks > 0 && g_js_alert_banner[0]) {
+        int aw = dui_text_width(g_js_alert_banner, 1) + 96;
+        if (aw > vw - 36) aw = vw - 36;
+        if (aw < 220) aw = 220;
+        int ax = vx + (vw - aw) / 2;
+        int ay = vy + 14;
+        dui_shadow(ax, ay, aw, 36, THEME_RADIUS_PILL, 6);
+        dui_bento_card(ax, ay, aw, 36, THEME_RADIUS_PILL, THEME_SURFACE_ELEVATED, 245, true, false);
+        dui_status_pill(ax + 8, ay + 6, "JS alert", THEME_ACCENT_AMBER, true);
+        dui_text_ellipsis(ax + 84, ay + 11, aw - 98, g_js_alert_banner, THEME_TEXT_PRIMARY, 1);
+    }
+
     dui_pop_clip();
+
+    // ========================================================================
+    // 5B. BlankJS DevTools Console & Live REPL Drawer
+    // ========================================================================
+    if (g_console_open) {
+        int csy = vy + vh;
+        dui_rect(vx, csy, vw, console_h, THEME_BG_BASE, 244);
+        dui_line(vx, csy, vx + vw, csy, THEME_BORDER_SPECULAR, 210);
+
+        // Drawer Header
+        dui_rect(vx, csy, vw, 28, THEME_SURFACE_CARD, 220);
+        dui_line(vx, csy + 27, vx + vw, csy + 27, THEME_BORDER_SUBTLE, 180);
+        dui_text(vx + 12, csy + 7, "BlankJS Console  (Ctrl+J)", THEME_TEXT_CYAN_LIGHT, 1);
+
+        if (dui_button_tactile(vx + vw - 134, csy + 3, 62, 22, "Clear", THEME_SURFACE_ELEVATED, false,
+                               in->mx, in->my, !overlay_blocks_bg && in->left_pressed)) {
+            if (active->js_rt) js_console_clear(active->js_rt);
+            play_system_sound((char*)"tab");
+        }
+        if (dui_button_tactile(vx + vw - 66, csy + 3, 56, 22, "Close", THEME_SURFACE_ELEVATED, false,
+                               in->mx, in->my, !overlay_blocks_bg && in->left_pressed)) {
+            g_console_open = false;
+            g_console_input_focused = false;
+            play_system_sound((char*)"close");
+        }
+
+        // Scrollback Console Output Lines (latest 5 lines)
+        dui_push_clip(vx + 8, csy + 30, vw - 16, console_h - 68);
+        int log_y = csy + 32;
+        if (!active->js_rt || js_console_count(active->js_rt) == 0) {
+            dui_text(vx + 12, log_y + 4, "Tip: type expressions like 2 + 2, document.title, or document.getElementById('status').textContent = 'Hi!'",
+                     THEME_TEXT_MUTED, 1);
+        } else {
+            int tot = js_console_count(active->js_rt);
+            int start = (tot > 5) ? (tot - 5) : 0;
+            for (int li = start; li < tot; li++) {
+                const JsConsoleLine* cl = js_console_get(active->js_rt, li);
+                if (!cl) continue;
+                uint32_t lcol = THEME_TEXT_PRIMARY;
+                const char* pfx = "> ";
+                if (cl->level == 1) { lcol = THEME_ACCENT_AMBER; pfx = "! "; }
+                else if (cl->level == 2) { lcol = THEME_ACCENT_ROSE; pfx = "x "; }
+                else if (cl->level == 3) { lcol = THEME_ACCENT_CYAN; pfx = "i "; }
+                else if (cl->level == 4) { lcol = THEME_ACCENT_TEAL; pfx = "<- "; }
+                char line_txt[160];
+                str_copy(line_txt, pfx, sizeof(line_txt));
+                str_append(line_txt, cl->text, sizeof(line_txt));
+                dui_text_ellipsis(vx + 10, log_y, vw - 22, line_txt, lcol, 1);
+                log_y += 17;
+            }
+        }
+        dui_pop_clip();
+
+        // REPL Prompt Bar at bottom of drawer
+        int ry = csy + console_h - 34;
+        int rw = vw - 86;
+        if (rw < 120) rw = 120;
+        bool hov_repl = !overlay_blocks_bg && pt_in(in->mx, in->my, vx + 10, ry, rw, 26);
+        dui_rect_rounded(vx + 10, ry, rw, 26, THEME_RADIUS_PILL, THEME_SURFACE_INPUT, 245);
+        dui_rect_rounded_outline(vx + 10, ry, rw, 26, THEME_RADIUS_PILL,
+                                 g_console_input_focused ? THEME_BORDER_FOCUS : THEME_BORDER_SUBTLE, 210);
+        dui_text(vx + 20, ry + 6, ">", THEME_ACCENT_CYAN, 1);
+        dui_push_clip(vx + 32, ry + 2, rw - 42, 22);
+        if (g_console_input_len > 0) {
+            dui_text(vx + 34, ry + 6, g_console_input, THEME_TEXT_PRIMARY, 1);
+            if (g_console_input_focused && ((in->frame_ms / 450) % 2 == 0)) {
+                int cw_r = dui_text_width(g_console_input, 1);
+                dui_rect(vx + 35 + cw_r, ry + 5, 2, 16, THEME_ACCENT_CYAN, 255);
+            }
+        } else {
+            dui_text(vx + 34, ry + 6, "Evaluate JS expression...", THEME_TEXT_MUTED, 1);
+            if (g_console_input_focused && ((in->frame_ms / 450) % 2 == 0)) {
+                dui_rect(vx + 35, ry + 5, 2, 16, THEME_ACCENT_CYAN, 255);
+            }
+        }
+        dui_pop_clip();
+
+        if (hov_repl && in->left_pressed) {
+            g_console_input_focused = true;
+            g_omni_focused = false;
+            active->active_input_dom_id = -1;
+        }
+
+        if (dui_button_tactile(vx + 16 + rw, ry, 62, 26, "Run", THEME_ACCENT_CYAN, true,
+                               in->mx, in->my, !overlay_blocks_bg && in->left_pressed)) {
+            g_console_input[g_console_input_len] = '\0';
+            if (g_console_input_len > 0) {
+                if (!active->js_rt) active->js_rt = js_runtime_create();
+                if (active->js_rt) {
+                    js_eval(active->js_rt, g_console_input, NULL, 0);
+                    js_handle_outputs(active);
+                    if (js_dom_is_dirty(active->js_rt)) {
+                        js_dom_clear_dirty(active->js_rt);
+                        active->layout_dirty = true;
+                    }
+                }
+                g_console_input_len = 0;
+                g_console_input[0] = '\0';
+                play_system_sound((char*)"tool");
+            }
+        }
+    }
 
     // ========================================================================
     // 6. Live Download Popover (Floating above viewport)
     // ========================================================================
     if (g_dl_popover_open) {
         dui_shadow(dl_pop_x, dl_pop_y, dl_pop_w, dl_pop_h, THEME_RADIUS_LG, 8);
-        dui_glass_card(dl_pop_x, dl_pop_y, dl_pop_w, dl_pop_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 245, true);
+        dui_bento_card(dl_pop_x, dl_pop_y, dl_pop_w, dl_pop_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 245, true, false);
 
         dui_text(dl_pop_x + 16, dl_pop_y + 14, "Downloads (\\DOWNLOADS\\)", THEME_TEXT_PRIMARY, 1);
 

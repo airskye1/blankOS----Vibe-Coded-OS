@@ -618,45 +618,74 @@ static void terminal_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
             }
             net_http_close(g_term_http_id);
             g_term_http_id = -1;
-            play_system_sound((const char*)"success");
+            play_system_sound((char*)"success");
         } else if (tr->state == HTTP_ERROR) {
             term_push_line(tr->error_msg[0] ? tr->error_msg : "HTTP transfer error", THEME_ACCENT_ROSE);
             net_http_close(g_term_http_id);
             g_term_http_id = -1;
-            play_system_sound((const char*)"error");
+            play_system_sound((char*)"error");
         }
     }
 
-    dui_rect(cx, cy, cw, ch, THEME_BG_VOID, 215);
+    dui_rect(cx, cy, cw, ch, THEME_BG_DEEP, 210);
 
-    // Subtle console header strip
-    int hdr_h = 34;
-    dui_rect(cx, cy, cw, hdr_h, THEME_SURFACE_BASE, 190);
-    dui_rect(cx, cy + hdr_h, cw, 1, THEME_BORDER_SUBTLE, 180);
+    bool click_avail = (in && in->left_pressed);
+    bool down = (in && in->left_down);
+    int mx = in ? in->mx : -1;
+    int my = in ? in->my : -1;
+
+    // Lira Bento Console Header Toolbar
+    int hdr_x = cx + 8;
+    int hdr_y = cy + 8;
+    int hdr_w = cw - 16;
+    int hdr_h = 40;
+    dui_bento_card(hdr_x, hdr_y, hdr_w, hdr_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 225, g_term_http_id >= 0);
+
+    dui_draw_sys_icon(hdr_x + 12, hdr_y + 13, 14, 7, THEME_ACCENT_GREEN);
+    dui_text(hdr_x + 32, hdr_y + 11, "blanksh", THEME_TEXT_PRIMARY, 1);
 
     NetStatus ns;
     net_get_status(&ns);
-    char hdr[80];
-    tm_copy(hdr, "blanksh  |  ", sizeof(hdr));
-    tm_cat(hdr, ns.dhcp_bound ? ns.ip_str : (ns.link_up ? "Link Up" : "Offline"), sizeof(hdr));
-    dui_text(cx + 12, cy + 9, hdr, THEME_ACCENT_GREEN, 1);
+    const char* net_lbl = ns.dhcp_bound ? ns.ip_str : (ns.link_up ? "Link Up" : "Offline");
+    uint32_t net_dot = ns.dhcp_bound ? THEME_ACCENT_GREEN : (ns.link_up ? THEME_ACCENT_AMBER : THEME_ACCENT_ROSE);
+    if (hdr_w >= 340) {
+        dui_status_pill(hdr_x + 100, hdr_y + 8, 132, 24, net_lbl, net_dot, THEME_SURFACE_INPUT, ns.link_up || ns.dhcp_bound);
+    }
+    if (hdr_w >= 510) {
+        if (g_term_http_id >= 0) {
+            dui_status_pill(hdr_x + 240, hdr_y + 8, 106, 24, "HTTP Live", THEME_ACCENT_AMBER, THEME_SURFACE_INPUT, true);
+        } else {
+            dui_status_pill(hdr_x + 240, hdr_y + 8, 102, 24, "Ready", THEME_ACCENT_CYAN, THEME_SURFACE_INPUT, false);
+        }
+    }
 
-    bool click_avail = (in && in->left_pressed);
-    int mx = in ? in->mx : -1;
-    int my = in ? in->my : -1;
-    if (dui_button(cx + cw - 72, cy + 5, 62, 24, "Clear", THEME_SURFACE_ELEVATED, false, mx, my, click_avail)) {
+    if (dui_button_tactile(hdr_x + hdr_w - 134, hdr_y + 8, 56, 24, "Help", THEME_SURFACE_ELEVATED, false, mx, my, down, click_avail)) {
+        click_avail = false;
+        term_exec("help");
+        play_system_sound((char*)"tool");
+    }
+    if (dui_button_tactile(hdr_x + hdr_w - 72, hdr_y + 8, 62, 24, "Clear", THEME_SURFACE_ELEVATED, false, mx, my, down, click_avail)) {
         click_avail = false;
         g_term_count = 0;
         g_term_scroll = 0;
-        play_system_sound((const char*)"click");
+        play_system_sound((char*)"close");
     }
 
-    // Console body geometry
-    int pad_x = 12;
-    int body_y = cy + hdr_h + 6;
-    int body_h = ch - hdr_h - 14;
+    // Console Bento Output Container
+    int body_x = cx + 8;
+    int body_y = hdr_y + hdr_h + 8;
+    int body_w = cw - 16;
+    int body_h = ch - hdr_h - 24;
+    if (body_h < 60) body_h = 60;
+
+    dui_bento_card(body_x, body_y, body_w, body_h, THEME_RADIUS_LG, THEME_BG_VOID, 235, true);
+    dui_dot_grid_overlay(body_x + 8, body_y + 8, body_w - 16, body_h - 16, 22, THEME_BORDER_SUBTLE, 24);
+
+    int pad_x = 14;
+    int text_y = body_y + 10;
+    int text_h = body_h - 20;
     int line_h = 19;
-    int vis_rows = (body_h - 8) / line_h;
+    int vis_rows = text_h / line_h;
     if (vis_rows < 2) vis_rows = 2;
 
     // Reserve bottom row for prompt or HTTP progress
@@ -664,7 +693,7 @@ static void terminal_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
     int max_scroll = g_term_count - scroll_rows;
     if (max_scroll < 0) max_scroll = 0;
 
-    if (in && in->scroll_y != 0 && term_pt_in(mx, my, cx, body_y, cw, body_h)) {
+    if (in && in->scroll_y != 0 && term_pt_in(mx, my, body_x, body_y, body_w, body_h)) {
         g_term_scroll -= in->scroll_y * 2;
     }
 
@@ -728,16 +757,16 @@ static void terminal_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
     if (g_term_scroll > max_scroll) g_term_scroll = max_scroll;
     if (g_term_scroll < 0) g_term_scroll = 0;
 
-    dui_push_clip(cx + 4, body_y, cw - 8, body_h);
+    dui_push_clip(body_x + 4, text_y, body_w - 8, text_h);
     int drawn_rows = 0;
     for (int i = 0; i < scroll_rows && (g_term_scroll + i) < g_term_count; i++) {
         TermLine* tl = &g_term_lines[g_term_scroll + i];
-        int ly = body_y + i * line_h;
-        dui_text(cx + pad_x, ly, tl->text, tl->color, 1);
+        int ly = text_y + i * line_h;
+        dui_text(body_x + pad_x, ly, tl->text, tl->color, 1);
         drawn_rows++;
     }
 
-    int py = body_y + drawn_rows * line_h;
+    int py = text_y + drawn_rows * line_h;
     if (g_term_http_id >= 0) {
         const HttpTransfer* tr = net_http_get(g_term_http_id);
         char prog[80], nb[16];
@@ -745,11 +774,11 @@ static void terminal_render(BlankWindow* win, int cx, int cy, int cw, int ch, co
         tm_copy(prog, "[HTTP] Transferring... ", sizeof(prog));
         tm_cat(prog, nb, sizeof(prog));
         tm_cat(prog, " B (Ctrl+C to abort)", sizeof(prog));
-        dui_text(cx + pad_x, py, prog, THEME_ACCENT_AMBER, 1);
+        dui_text(body_x + pad_x, py, prog, THEME_ACCENT_AMBER, 1);
     } else {
         const char* pfx = "horizon$ ";
-        dui_text(cx + pad_x, py, pfx, THEME_ACCENT_GREEN, 1);
-        int px_start = cx + pad_x + dui_text_width(pfx, 1);
+        dui_text(body_x + pad_x, py, pfx, THEME_ACCENT_GREEN, 1);
+        int px_start = body_x + pad_x + dui_text_width(pfx, 1);
         dui_text(px_start, py, g_term_input, THEME_TEXT_PRIMARY, 1);
 
         bool blink = !in || (((in->frame_ms / 450) % 2) == 0);

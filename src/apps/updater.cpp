@@ -319,7 +319,7 @@ static void start_http_manifest_check(void) {
     }
     s_xfer_id = net_http_start(s_update_url, NULL);
     if (s_xfer_id >= 0) {
-        play_system_sound((char*)"click");
+        play_system_sound((char*)"tool");
         s_copy(s_http_result, "Connecting to update manifest server...", sizeof(s_http_result));
         s_http_color = THEME_ACCENT_CYAN;
     } else {
@@ -368,7 +368,8 @@ static void updater_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, c
 
     // Top Hero Integrity Card with Animated Verification Ring
     int hero_h = 98;
-    dui_glass_card(px, py, pw, hero_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 228, false);
+    dui_bento_card(px, py, pw, hero_h, THEME_RADIUS_CARD, THEME_SURFACE_CARD, 234, (s_verify_step >= 3 && verified_cnt == 3));
+    dui_dot_grid_overlay(px + 8, py + 6, pw - 16, hero_h - 12, 14, THEME_BORDER_SPECULAR, 24);
 
     int ring_cx = px + 54;
     int ring_cy = py + hero_h / 2;
@@ -409,13 +410,13 @@ static void updater_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, c
     dui_text_ellipsis(px + 106, py + 64, pw - 266, bak_line,
                       s_bak_exists ? THEME_ACCENT_GREEN : THEME_TEXT_MUTED, 1);
 
-    if (dui_button(px + pw - 148, py + 14, 134, 30, "Re-Verify Files", THEME_SURFACE_ELEVATED, false,
-                   in->mx, in->my, in->left_pressed)) {
-        play_system_sound((char*)"click");
+    if (dui_button_tactile(px + pw - 148, py + 14, 134, 30, "Re-Verify Files", THEME_SURFACE_ELEVATED, false,
+                           in->mx, in->my, in->left_down, in->left_pressed)) {
+        play_system_sound((char*)"tool");
         start_full_verification();
     }
-    if (dui_button(px + pw - 148, py + 52, 134, 30, "Backup .BAK", THEME_ACCENT_GREEN, true,
-                   in->mx, in->my, in->left_pressed)) {
+    if (dui_button_tactile(px + pw - 148, py + 52, 134, 30, "Backup .BAK", THEME_ACCENT_GREEN, true,
+                           in->mx, in->my, in->left_down, in->left_pressed)) {
         create_bootx64_backup();
     }
 
@@ -425,14 +426,17 @@ static void updater_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, c
     for (int i = 0; i < 3; i++) {
         VerifiedFile* vf = &s_files[i];
         int fy = list_y + i * (card_h + 7);
-        dui_glass_card(px, fy, pw, card_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 218, false);
+        dui_bento_card(px, fy, pw, card_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 228, vf->found);
 
         float fprog = vf->checked ? (vf->found ? 1.0f : 0.35f) : 0.1f;
         uint32_t fcol = !vf->checked ? THEME_ACCENT_CYAN : (vf->found ? THEME_ACCENT_GREEN : THEME_ACCENT_ROSE);
         dui_progress_ring(px + 28, fy + card_h / 2, 13, 4, fprog, THEME_SURFACE_INPUT, fcol);
 
         dui_text(px + 52, fy + 9, vf->label, THEME_TEXT_PRIMARY, 1);
-        dui_text(px + 220, fy + 9, vf->disp_path, THEME_ACCENT_CYAN, 1);
+        dui_text_ellipsis(px + 220, fy + 9, pw - 338, vf->disp_path, THEME_ACCENT_CYAN, 1);
+        dui_status_pill(px + pw - 110, fy + 6, 96, 22,
+                        !vf->checked ? "Queued" : (vf->found ? "Verified" : "Missing"),
+                        fcol, THEME_SURFACE_ELEVATED, vf->found);
 
         if (vf->found) {
             char bbuf[20], szline[64];
@@ -458,8 +462,12 @@ static void updater_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, c
     int http_h = ch - (http_y - cy) - 10;
     if (http_h < 92) http_h = 92;
 
-    dui_glass_card(px, http_y, pw, http_h, THEME_RADIUS_MD, THEME_SURFACE_CARD, 220, false);
+    dui_bento_card(px, http_y, pw, http_h, THEME_RADIUS_LG, THEME_SURFACE_CARD, 230, s_url_focused || s_xfer_id >= 0);
     dui_text(px + 14, http_y + 10, "OPTIONAL HTTP UPDATE MANIFEST CHECK", THEME_ACCENT_GREEN, 1);
+    dui_status_pill(px + pw - 114, http_y + 6, 100, 22,
+                    (s_xfer_id >= 0) ? "Fetching" : "HTTP/1.1",
+                    (s_xfer_id >= 0) ? THEME_ACCENT_CYAN : THEME_ACCENT_GREEN,
+                    THEME_SURFACE_ELEVATED, s_xfer_id >= 0);
 
     int inp_x = px + 14;
     int inp_y = http_y + 32;
@@ -488,13 +496,13 @@ static void updater_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, c
         }
     }
 
-    if (dui_button(inp_x + inp_w + 8, inp_y, 122, inp_h, "Check Updates", THEME_ACCENT_GREEN, true,
-                   in->mx, in->my, in->left_pressed)) {
+    if (dui_button_tactile(inp_x + inp_w + 8, inp_y, 122, inp_h, "Check Updates", THEME_ACCENT_GREEN, true,
+                           in->mx, in->my, in->left_down, in->left_pressed)) {
         start_http_manifest_check();
     }
-    if (dui_button(px + pw - 114, inp_y, 100, inp_h, "Restart OS", THEME_SURFACE_ELEVATED, false,
-                   in->mx, in->my, in->left_pressed)) {
-        play_system_sound((char*)"click");
+    if (dui_button_tactile(px + pw - 114, inp_y, 100, inp_h, "Restart OS", THEME_SURFACE_ELEVATED, false,
+                           in->mx, in->my, in->left_down, in->left_pressed)) {
+        play_system_sound((char*)"close");
         os_restart();
     }
 
@@ -527,7 +535,7 @@ static void updater_on_frame(BlankWindow* win, int cx, int cy, int cw, int ch, c
                     s_cat(s_http_result, snippet, sizeof(s_http_result));
                 }
                 s_http_color = THEME_ACCENT_GREEN;
-                play_system_sound((char*)"notify");
+                play_system_sound((char*)"success");
                 net_http_close(s_xfer_id);
                 s_xfer_id = -1;
             } else if (tr->state == HTTP_ERROR) {
